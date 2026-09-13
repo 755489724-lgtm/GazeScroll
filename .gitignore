@@ -1,0 +1,42 @@
+# ===== 构建产物 =====
+build/
+/app/build/
+*/build/
+.gradle/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+release/
+
+# ===== 本机配置（含 SDK 路径，绝对不能上传）=====
+local.properties
+
+# ===== IDE =====
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.DS_Store
+Thumbs.db
+*~
+
+# ===== 签名文件与密钥（绝对不能上传）=====
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*.bks
+keystore.properties
+signing.properties
+secrets.properties
+
+# ===== 其他 =====
+.cxx/
+.externalNativeBuild/
+*.log
+*.hprof

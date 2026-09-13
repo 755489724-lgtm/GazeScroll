@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Eye almond -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,38C40,38 28,45 22,54C28,63 40,70 54,70C68,70 80,63 86,54C80,45 68,38 54,38Z" />
+    <!-- Pupil, painted with the adaptive-icon background colour -->
+    <path
+        android:fillColor="#FF0F5132"
+        android:pathData="M54,46A8,8 0 1,1 53.99,46Z" />
+</vector>

@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Status / onboarding. Only meaningful while something is still missing. -->
+        <TextView
+            android:id="@+id/tvHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:focusable="true"
+            android:lineSpacingMultiplier="1.35"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnRestartService"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/btn_restart_service"
+            android:textSize="12sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/settings_blink_count"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgBlinkCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbBlink1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_blink_1"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbBlink2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_blink_2"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbBlink3"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_blink_3"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchHeadPose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/settings_head_pose"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchHeadInvert"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_head_invert"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_targets_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_targets_hint"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <!-- Populated in code so uninstalled apps can be greyed out. -->
+        <LinearLayout
+            android:id="@+id/llTargetApps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
+
+        <TextView
+            android:id="@+id/tvTargetsNone"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="4dp"
+            android:text="@string/settings_targets_none"
+            android:textColor="@color/state_cooldown"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_sensitivity_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/settings_blink_sensitivity"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgBlinkSensitivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbBlinkHigh"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_blink_high"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbBlinkMedium"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_blink_medium"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbBlinkLow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_blink_low"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/settings_head_sensitivity"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgHeadSensitivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbHeadHigh"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_head_high"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbHeadMedium"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_head_medium"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbHeadLow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_head_low"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/settings_live_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:lineSpacingMultiplier="1.3"
+            android:text="@string/settings_live_hint"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvLiveValues"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:fontFamily="monospace"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_live_empty"
+            android:textColor="@color/on_surface"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_footer"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

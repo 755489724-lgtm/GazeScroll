@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Only the app theme is left: the UI is a single TextView, so the HUD /
+      parameter / section styles that used to live here are gone with it.
+    -->
+    <style name="Theme.GazeScroll" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:textColorPrimary">@color/on_surface</item>
+        <item name="android:textColorSecondary">@color/on_surface_dim</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+    </style>
+</resources>

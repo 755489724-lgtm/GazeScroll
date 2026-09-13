@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Front camera for blink detection. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Keep blink detection alive while Douyin is in the foreground.
+         FOREGROUND_SERVICE_CAMERA is required to use the camera FGS type on API 34. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <!-- Android 13+ needs this for the foreground-service notification to show. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      Development permission, granted over adb (`pm grant`). It lets the app
+      write `enabled_accessibility_services` itself, which is how the
+      accessibility fallback gets enabled without the user fighting the
+      "restricted settings" block in HyperOS.
+    -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
+    <!--
+      Special permission, granted over adb (`appops set <pkg> GET_USAGE_STATS allow`).
+      This is the primary foreground-app detector: HyperOS never delivers
+      accessibility window events for third-party packages such as Douyin.
+    -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <uses-feature
+        android:name="android.hardware.camera.front"
+        android:required="true" />
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="true" />
+
+    <!--
+      Package visibility (targetSdk 30+). Needed for:
+        - Shizuku: status text and "open Shizuku"
+        - the paging-target list: without these entries getPackageInfo() throws
+          for every one of them and they would all look "not installed".
+    -->
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="com.ss.android.ugc.aweme" />
+        <package android:name="com.ss.android.ugc.aweme.lite" />
+        <package android:name="com.sina.weibo" />
+        <package android:name="com.xingin.xhs" />
+        <package android:name="tv.danmaku.bili" />
+    </queries>
+
+    <application
+        android:name=".GazeApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GazeScroll">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Owns the CameraX pipeline and the blink detector; type=camera is required on API 34. -->
+        <service
+            android:name=".GazeCameraService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
+
+        <!-- Fallback gesture injector. Enabled by AccessibilityBootstrap. -->
+        <service
+            android:name=".GazeAccessibilityService"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!--
+          Shizuku's binder provider. This is how the app receives the Shizuku
+          service binder; it is the app's OWN provider (authority <pkg>.shizuku)
+          that Shizuku connects back to.
+
+          android:permission is a *protection* on the provider (only holders of
+          INTERACT_ACROSS_USERS_FULL may access it); the app itself does not need
+          that permission.
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    </application>
+
+</manifest>

@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal accessibility configuration.
+
+  Two jobs: canPerformGestures lets us dispatch the swipe, and the window
+  events are how we learn which app is in the foreground.
+  typeWindowsChanged needs flagRetrieveInteractiveWindows; it fires on every app
+  switch, including bringing an already-running app back to the front.
+
+  canRetrieveWindowContent is required for getRootInActiveWindow(), which is
+  the most reliable way left to learn the foreground package on HyperOS: it
+  filters accessibility *events* from third-party apps, and it rejects the
+  GET_USAGE_STATS appop. The app only ever reads the package name, never any
+  screen text.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="100" />

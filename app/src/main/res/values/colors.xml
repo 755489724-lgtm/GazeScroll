@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#0F5132</color>
+
+    <color name="bg">#FF101418</color>
+    <color name="surface">#FF1B2027</color>
+    <color name="on_surface">#FFE6EAF0</color>
+    <color name="on_surface_dim">#FF9AA6B2</color>
+    <color name="accent">#FF34D399</color>
+
+    <color name="state_idle">#FF9AA6B2</color>
+    <color name="state_ready">#FF34D399</color>
+    <color name="state_cooldown">#FFFBBF24</color>
+
+    <!-- Overlay zone colours (translucent so the app underneath stays readable). -->
+    <color name="zone_trigger_fill">#33EF4444</color>
+    <color name="zone_trigger_stroke">#99EF4444</color>
+    <color name="zone_release_fill">#3322C55E</color>
+    <color name="zone_release_stroke">#9922C55E</color>
+    <color name="zone_marker">#FFFFD54F</color>
+    <color name="zone_label">#FFEDEFF2</color>
+</resources>

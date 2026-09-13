@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">万能翻页</string>
+
+    <string name="accessibility_service_label">万能翻页 · 手势服务</string>
+
+    <string name="notif_channel_name">万能翻页</string>
+    <string name="notif_channel_desc">保持前置摄像头检测在后台运行</string>
+    <string name="notif_title_active">万能翻页运行中</string>
+    <string name="notif_title_standby">万能翻页已待机（等待目标应用）</string>
+    <string name="notif_text_active">眨眼 / 点头仰头即可翻页 · 点这里打开设置</string>
+    <string name="notif_text_standby">勾选的目标应用回到前台后自动恢复 · 点这里打开设置</string>
+    <string name="notif_action_stop">停止</string>
+    <string name="notif_action_restart">重启</string>
+
+    <string name="btn_restart_service">手动重启服务（检测不到人脸 / 画面卡住时点这里）</string>
+    <string name="restart_requested">已请求重建相机，约 2 秒后恢复</string>
+
+    <string name="hint_first_run">请授予摄像头和通知权限。\n完成后可返回桌面，翻页将在后台运行。\n\n点这一行：没有 Shizuku 就打开它；有就申请 Shizuku 权限；都没有则自动启用无障碍服务。\n\n相机权限：%1$s\n通知权限：%2$s\nShizuku：%3$s\n翻页方式：%4$s\n前台服务：%5$s</string>
+
+    <string name="hint_ready">万能翻页已就绪，正在后台运行。\n\n相机权限：已授予\n通知权限：已授予\nShizuku：%1$s\n翻页方式：%2$s\n前台服务：%3$s\n当前前台：%4$s</string>
+
+    <string name="settings_title">翻页触发方式</string>
+    <string name="settings_blink_count">眨眼几次触发一次翻页</string>
+    <string name="settings_blink_1">眨眼 1 次（最灵敏，容易误触）</string>
+    <string name="settings_blink_2">眨眼 2 次（默认，推荐）</string>
+    <string name="settings_blink_3">眨眼 3 次（最不容易误触）</string>
+    <string name="settings_head_pose">开启「点头 / 仰头」翻页（默认关闭）</string>
+    <string name="settings_head_invert">反转俯仰方向（点头仰头反了就打开）</string>
+    <string name="settings_footer">点头向下 = 上一个视频；仰头向上 = 下一个视频。\n头部动作要在 0.5 秒内完成、并保持 0.2 秒才会触发，触发后冷却 2 秒。\n基准线自动学习（滑动窗口中位数），不需要手动校准。\n\n改完设置会立即保存并生效，可以返回桌面了。</string>
+
+    <string name="settings_targets_title">生效的应用（节能）</string>
+    <string name="settings_targets_hint">翻页功能仅在勾选的应用在前台时生效，退出这些应用将自动休眠以节省电量。\n未安装的应用会置灰不可选。\n全部不勾选 = 关闭节能，任何界面都生效（识别不准时的逃生开关）。</string>
+    <string name="settings_targets_none">没有勾选任何应用，翻页不会生效。</string>
+    <string name="target_not_installed">%1$s（未安装）</string>
+
+    <string name="settings_sensitivity_title">灵敏度</string>
+    <string name="settings_blink_sensitivity">眨眼灵敏度（戴眼镜请选「高」）</string>
+    <string name="settings_blink_high">高 · 闭眼阈值 0.60（戴眼镜推荐）</string>
+    <string name="settings_blink_medium">中 · 闭眼阈值 0.55（默认）</string>
+    <string name="settings_blink_low">低 · 闭眼阈值 0.45（最防误触）</string>
+    <string name="settings_head_sensitivity">点头 / 仰头灵敏度</string>
+    <string name="settings_head_high">高 · 6°（轻点即可）</string>
+    <string name="settings_head_medium">中 · 8°（默认）</string>
+    <string name="settings_head_low">低 · 12°（需要明显动作）</string>
+
+    <string name="settings_live_title">实时数值（用来挑灵敏度）</string>
+    <string name="settings_live_hint">对着前置摄像头自然睁眼，看「睁眼」时的数值；再眨一下，看「闭眼」时能降到多少。\n把灵敏度阈值选在两者之间即可。</string>
+    <string name="settings_live_empty">（未检测到人脸）</string>
+
+    <string name="shizuku_missing">未检测到 Shizuku，已改用无障碍服务方式翻页</string>
+    <string name="shizuku_opened">已打开 Shizuku，请在其中启动服务后回来申请权限</string>
+    <string name="shizuku_launch_failed">无法打开 Shizuku</string>
+    <string name="shizuku_already_granted">Shizuku 已授权，可以开始翻页了</string>
+    <string name="bootstrap_tried">已尝试自动启用翻页方式，当前：%1$s</string>
+</resources>

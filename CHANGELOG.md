@@ -3,7 +3,104 @@
 本项目遵循「一版一改、实机验证」的节奏：每个版本都先在小米 13（HyperOS 3.0.308.0）上
 跑通才发版，所以下面每一条的结论都来自实机日志或参数化实测，而不是推测。
 
-版本号规则：`vX.Y`，`versionCode` 与版本号同步递增（当前 v5.4 / 54）。
+版本号规则：`vX.Y`，`versionCode` 与版本号同步递增（当前 v5.5 / 55）。
+
+---
+
+## [5.5] - 2026-09-15
+
+### 修复：仰头/点头阈值被两层系数放大，导致「点头费劲」
+
+这是用户两条抱怨（**近距离点头费劲**、**俯视时点头难受**）的**共同根因**。v5.4 的公式是：
+
+```
+阈值 = 用户设定值 × 静止锁定系数 × 距离系数
+```
+
+两个系数叠在一起，实测日志直接抓到（`GazeSelfCheck` + 诊断行）：
+
+```
+faceRatio=0.32 dist=远 staticLock=false  →  pitchTh=8.0°   yawTh=20.0°
+faceRatio=0.32 dist=远 staticLock=true   →  pitchTh=12.0°  yawTh=30.0°   ← 静止锁定 ×1.5
+```
+
+也就是说：
+- **30cm 时**距离系数 ×2，点头阈值 6° → 12°，要走两倍幅度；
+- **静止时**静止锁定又 ×1.5，阈值再涨一半；
+- 用户设定的「扭头 中 20°」实际生效值是 **30°**。
+
+**关键认识**：抑制静止噪声**根本不需要放大幅度阈值**。噪声**有幅度但没有速度**，
+[最低速度门限]已经在拦它。幅度阈值放大只会连带把真实动作一起挡掉——它不区分
+"这是噪声还是动作"。
+
+**修复**：把幅度阈值上的两层系数全部摘掉，改为
+
+```
+俯仰阈值 = 用户设定值 × 俯视增益        （8° 就是 8°，6° 就是 6°）
+偏航阈值 = 用户设定值 × 距离系数        （"中 20°" 就是 20°）
+```
+
+而 [staticLockFactor] **改用到速度门限上**——这才是它该管的地方：静止时要求动作更快，
+而不是要求幅度更大。真实动作的速度是噪声的十几倍，所以这条对正常点头/仰头几乎零成本。
+
+距离缩放仍然作用于**所有防误触参数**（静止峰峰值门限、速度门限、偏航阈值），
+所以用户已验证有效的「30cm 静止防误触」**一道防线没少**，只是不再靠"让动作更难做"来防误触。
+
+诊断行新增 `pitchTh` / `yawTh` / `downGazeActive` / `nodBoost`，阈值是否被意外放大一眼可见。
+
+### 优化：俯视状态下点头更轻松
+
+俯视时头部本来就低着，再往下点的**可用行程**比平视时短，所以同样幅度的动作只能产生
+更小的角度变化。现在检测到俯视姿态后，把点头阈值压到 **0.75 倍**（略大于六折的力度即可触发）。
+
+- 只压**幅度**阈值：速度门限与静止锁定一律不动 → "动作要快"这条门槛没放松，
+  噪声依然过不来（噪声有幅度没有速度）。
+- 离开俯视 6 秒后自动恢复 1.0（避免刷视频时头一抬一低就反复切换灵敏度）。
+- 日志：`posture: looking down detected (...) -> downGaze active, nod sensitivity boosted, threshold adjusted to 6.0°`
+- 诊断字段：`downGazeActive` / `nodBoost`。
+
+### 修复：息屏再开后需下拉状态栏（第三条路径）
+
+v5.4 修了"恢复没被触发"和"恢复被错误标志挡住"，这一版找到**第三条**——在注入链上：
+
+`AccessibilityBootstrap.repairIfNeeded()` 的第一句是
+`if (GazeAccessibilityService.isConnected()) return`，而 `isConnected()` 只是
+`instance != null`。**实例存在 ≠ 连接可用**：长时间息屏后无障碍连接可能已经失效，
+但 `instance` 仍是旧引用。那种状态下：
+
+- `repairIfNeeded()` 认为"已连接"，**什么都不做**；
+- `dispatchGesture` 注入失败，只记一行日志就结束；
+- 服务在跑、通知正常、摄像头也在分析，**但手势根本到不了目标 App**。
+
+这正是"下拉状态栏就好了"的成因——下拉会产生一批窗口事件，让系统重新激活那个失效的连接。
+
+修复：
+- 新增 `AccessibilityBootstrap.forceRebind()`：**无条件**把无障碍条目关掉再打开，
+  不等用户去下拉（`repairIfNeeded` 因为会提前返回，做不到这件事）。
+- 新增**注入失败反馈回路**：连续 2 次注入失败就自动强制重连
+  （`injFailures` 出现在自检日志里），成功一次即清零，避免偶发失败累积成误判。
+- 亮屏恢复时也会检查一次无障碍绑定。
+
+### 新增：全链路自检日志（便于定位偶发失效）
+
+每 30 秒（以及亮屏时）打**一行**，把所有可能卡住的环节列全：
+
+```
+GazeSelfCheck: periodic powerInteractive=true screenActive=true running=true
+  shouldAnalyze=true analyzing=true targetActive=true forceActive=true foreground=...
+  cameraProvider=true cameraBound=true framesAgoMs=34 stale=false graceMs=0
+  restartAttempts=0 probeFailures=0 rebinding=false a11yEnabled=true a11yConnected=true
+  swipeReady=true backend=无障碍服务 injFailures=0 occlRemainMs=0 hardLock=false detectorArmed=true
+```
+
+判读方法：
+| 现象 | 含义 |
+| --- | --- |
+| `powerInteractive=false` 而 `screenActive=true` | 电源状态错了（自校正未生效） |
+| `a11yConnected=false` | 无障碍断开，注入必定失败 |
+| `swipeReady=false` | 注入后端不可用 |
+| `stale=true` 且 `cameraProvider=true` | 相机句柄在但没画面，需重绑 |
+| `detectorArmed=false` | 摄像头在跑但检测器没被喂数据 |
 
 ---
 

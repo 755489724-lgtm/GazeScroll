@@ -83,6 +83,44 @@ object AccessibilityBootstrap {
     }
 
     /**
+     * 强制把无障碍服务重新绑定一次（v5.5）。
+     *
+     * ## 为什么需要它，以及它和 [repairIfNeeded] 的区别
+     *
+     * [repairIfNeeded] 第一句就是 `if (GazeAccessibilityService.isConnected()) return`，
+     * 而 `isConnected()` 只是 `instance != null`。**实例存在不等于连接可用**：
+     * 长时间息屏 / 系统省电回收后，无障碍连接可能已经失效，但 `instance` 仍是旧的引用。
+     *
+     * 那种状态下：
+     *  - `repairIfNeeded()` 认为"已连接"，**什么都不做**；
+     *  - `dispatchGesture` 注入失败，只记一行日志就结束了；
+     *  - 于是服务在跑、通知正常、摄像头也在分析，**但手势根本到不了目标 App**。
+     *
+     * 这正是"息屏再开后必须下拉状态栏"的成因——下拉会产生一批窗口事件，让系统重新激活
+     * 那个失效的连接。这里不等用户去下拉，直接把"关掉再打开"这件事做掉。
+     */
+    fun forceRebind(ctx: Context, reason: String) {
+        if (ShizukuSwipeDispatcher.hasPermission()) return
+        if (!canWriteSecureSettings(ctx)) {
+            Log.w(TAG, "forceRebind($reason): no WRITE_SECURE_SETTINGS, cannot rebind")
+            return
+        }
+        Log.w(TAG, "forceRebind($reason): toggling accessibility entry to force a rebind")
+        runCatching {
+            Settings.Secure.putString(
+                ctx.contentResolver,
+                KEY_ENABLED_SERVICES,
+                currentEntries(ctx)
+                    .filterNot { it.equals(componentId(ctx), ignoreCase = true) }
+                    .joinToString(":"),
+            )
+        }.onFailure { Log.w(TAG, "forceRebind: disable failed", it) }
+
+        val appContext = ctx.applicationContext
+        handler.postDelayed({ enableService(appContext) }, REBIND_DELAY_MS)
+    }
+
+    /**
      * Makes sure the service is enabled AND actually bound.
      *
      * Skips straight through when Shizuku is the active backend, since the

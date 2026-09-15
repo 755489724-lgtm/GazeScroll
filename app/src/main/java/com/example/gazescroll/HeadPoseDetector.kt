@@ -154,6 +154,25 @@ class HeadPoseDetector(
         private const val DOWN_GAZE_AFTER_MS = 2000L
 
         /**
+         * 俯视增益的生效窗口与强度（v5.5）。
+         *
+         * 用户反馈「俯视看手机时再做点头动作很别扭，希望更轻松」。俯视时头部本来就低着，
+         * 再往下点的**可用行程**比平视时短，所以同样幅度的动作只能产生更小的角度变化。
+         *
+         * 这里把点头阈值压到 [DOWN_GAZE_NOD_BOOST]（0.75 = 六折多一点的力度就能触发）。
+         * 只压**幅度**阈值，[effectivePitchSpeedGate] 与静止锁定一律不动 —— 也就是说
+         * "动作要快"这条门槛没放松，噪声依然过不来（噪声有幅度但没有速度）。
+         *
+         * 离开俯视后 6 秒内仍算生效（避免刷视频时头一抬一低就反复切换灵敏度），
+         * 超时自动恢复 1.0。
+         */
+        private const val DOWN_GAZE_ACTIVE_WINDOW_MS = 6000L
+        private const val DOWN_GAZE_NOD_BOOST = 0.75f
+
+        /** 俯视增益的上下限，防止配置异常把它压得太低。 */
+        private const val MIN_DOWN_GAZE_NOD_BOOST = 0.55f
+
+        /**
          * 回中锁定的**最长**持续时间（v5.2）。
          *
          * 没有这条兜底时，锁会永久卡住：人的自然姿势长期偏离基准线（实测偏差 6.5°），
@@ -235,15 +254,25 @@ class HeadPoseDetector(
      * 静止锁定放大系数（v4.8）。
      *
      * 连续 [STATIC_WINDOW_MS] 内俯仰/偏航的峰峰值都小于 [STATIC_RANGE_DEG]，说明用户
-     * 是静止的，这时把判定阈值乘上这个系数——静止时出现的「动作」几乎一定是检测噪声
-     * （ML Kit 在光照变化、轻微遮挡下会有 1~3° 的抖动）。
+     * 是静止的。
      *
-     * 用户反馈的「一动不动也会误触下滑」正是这类噪声。**不需要**靠整体调低灵敏度来换
-     * 稳定性：真的一动，锁定立刻解除，手感完全不受影响。
+     * ## v5.5：它现在放大的是**速度门限**，不再是幅度阈值
+     *
+     * v5.2~v5.4 把 [staticLockFactor] 乘在**幅度阈值**上，于是静止时点头要 9°~12° 而不是
+     * 6°，用户反馈「点头很费劲」。但放大幅度是错的工具：它不区分"这是噪声还是动作"，
+     * 只会把所有真实动作一起挡掉。
+     *
+     * 正确的工具是速度：噪声**有幅度但没有速度**。所以现在静止锁定同时放大
+     *  - [STATIC_RANGE_DEG]（静止判定的峰峰值门限，本来就该随距离放大），
+     *  - **最低速度门限**（[effectivePitchSpeedGate] / [effectiveYawSpeedGate]）。
+     *
+     * 真的一动，锁定立刻解除、速度门限回到基准值，所以**动作幅度手感完全不变**，
+     * 只是静止时那点抖动过不了速度这一关。
      */
     @Volatile
     var staticLockEnabled: Boolean = true
 
+    /** 静止时速度门限的放大倍数（不再是幅度阈值的倍数，见上）。 */
     @Volatile
     var staticLockFactor: Float = 1.8f
 
@@ -285,6 +314,20 @@ class HeadPoseDetector(
     /** 当前生效的静止峰峰值门限（已按距离调整）；界面与日志显示用。 */
     @Volatile
     var staticRangeDeg: Float = STATIC_RANGE_DEG
+        private set
+
+    /**
+     * 当前生效的俯仰 / 偏航动作阈值（v5.5），日志显示用。
+     *
+     * 专门暴露出来是为了**一眼验证解耦生效**：
+     * 近距离时 `pitchThresholdDeg` 应保持不变（不再随距离放大），而 `yawThresholdDeg` 会翻倍。
+     */
+    @Volatile
+    var pitchThresholdDeg: Float = 8f
+        private set
+
+    @Volatile
+    var yawThresholdDeg: Float = 20f
         private set
 
     /**
@@ -376,6 +419,9 @@ class HeadPoseDetector(
     /** 姿势偏离持续到这一刻仍没变成动作，就认定是新姿势并校正基准线。 */
     private var biasSinceMs = 0L
 
+    /** 最近一次判定为俯视的时刻，用于俯视增益的自动失效（v5.5）。 */
+    private var lastDownGazeAtMs = 0L
+
     /** 累计执行过多少次姿势偏置校正，仅用于诊断。 */
     @Volatile
     var biasRecenterCount: Int = 0
@@ -384,6 +430,19 @@ class HeadPoseDetector(
     /** 累计识别到多少次俯视姿态并完成补偿，仅用于诊断（v5.4）。 */
     @Volatile
     var downGazeCount: Int = 0
+        private set
+
+    /**
+     * 当前是否处于俯视姿态（v5.5）。以 [DOWN_GAZE_ACTIVE_WINDOW_MS] 内出现过俯视判定为准，
+     * 离开该窗口后自动失效，所以"回到平视"时灵敏度会自己恢复。
+     */
+    @Volatile
+    var downGazeActive: Boolean = false
+        private set
+
+    /** 俯视时对点头阈值的乘数（<1 表示更容易触发）。 */
+    @Volatile
+    var nodDownGazeBoost: Float = 1f
         private set
 
     // ---- 速度估计：用最近两个样本的差值判断「这是不是一次快速动作」 ----
@@ -411,6 +470,11 @@ class HeadPoseDetector(
         lastFaceAtMs = 0L
         lastAngleDeg = null
         lastYawDeg = null
+        // 俯视增益一并清掉，避免"重置后仍带着一段时间的低阈值"。
+        biasSinceMs = 0L
+        lastDownGazeAtMs = 0L
+        downGazeActive = false
+        nodDownGazeBoost = 1f
     }
 
     /** Throw away the learned baselines; the next samples establish new ones. */
@@ -536,8 +600,9 @@ class HeadPoseDetector(
             return
         }
 
-        // 距离系数每帧只算一次，俯仰与偏航共用（v5.4）。
+        // 距离系数每帧只算一次，仅供偏航（扭头）使用；俯仰自 v5.5 起与距离解耦。
         val boost = distanceBoost()
+        refreshDownGazeBoost(nowMs)
         if (pitchReady) evaluatePitch(pitchDeg!!, nowMs, boost)
         if (turnEnabled && yawReady) evaluateYaw(yawDeg!!, nowMs, boost)
     }
@@ -597,23 +662,58 @@ class HeadPoseDetector(
         }
     }
 
-    /** 静止锁定 + 距离，对动作阈值的联合放大系数。 */
-    private fun thresholdScale(distanceBoost: Float): Float =
-        (if (staticLocked) staticLockFactor else 1f) * distanceBoost
+    /**
+     * **偏航**（扭头）阈值：只乘距离系数。
+     *
+     * v5.5 起不再乘静止锁定 —— 见 [pitchThresholdNow] 的说明。防静止误触交给速度门限，
+     * 幅度阈值保持用户设定值（"中 20°" 就真是 20°）。
+     */
+    private fun turnThresholdNow(distanceBoost: Float): Float =
+        turnThresholdDeg * distanceBoost
+
+    /**
+     * 俯仰（点头/仰头）的动作阈值（v5.5 起既与距离解耦、也与静止锁定解耦）。
+     *
+     * ## 为什么把这两层放大都去掉
+     *
+     * v5.4 的公式是 `基础 × 静止锁定系数 × 距离系数`，两个系数叠在一起，
+     * 用户实测的两条抱怨正好指向它：
+     *
+     *  - **近距离点头费劲**：30cm 时距离系数 ×2，阈值 6° → 12°，要走两倍幅度；
+     *  - **静止时点头也费劲**：静止锁定 ×1.5，阈值又变成 9°~12°。
+     *
+     * 关键认识是：**抑制静止噪声根本不需要放大幅度阈值**。噪声**有幅度但没有速度**，
+     * 而[最低速度门限][effectivePitchSpeedGate]已经在拦它了；[静止锁定]同时还在把
+     * 速度门限和静止峰峰值门限一起放大。幅度阈值放大只会连带把真实动作也挡掉——
+     * 它不区分"这是噪声还是动作"。
+     *
+     * 所以现在俯仰幅度阈值 = `用户设定值 × 俯视增益`，干净、可预期：
+     * 用户把灵敏度设成 6°，那就是 6°（俯视时 4.5°）。
+     *
+     * 误触防线一道没少：静止峰峰值门限、最低速度门限、近距离静止硬锁定、
+     * 遮挡抑制、回中锁定全部保留，且仍然按距离缩放。
+     */
+    private fun pitchThresholdNow(): Float = thresholdDeg * nodDownGazeBoost
 
     /** 按距离缩放后的静止峰峰值门限。 */
     private fun effectiveStaticRange(): Float = STATIC_RANGE_DEG * distanceBoost()
 
     /**
-     * 按距离缩放后的最低速度门限（v5.2）。
+     * 按距离缩放后的最低速度门限（v5.2 引入，v5.5 叠加静止锁定）。
      *
      * 50cm 下是 0.012°/ms（实测真实动作 0.037~0.136°/ms，有三倍以上余量）；
      * 30cm 下提到 0.024°/ms，仍然远低于真实动作，但把静止时的角度噪声挡在外面。
+     *
+     * v5.5：静止锁定时再乘 [staticLockFactor] —— 这是"静止防误触"现在的**主要手段**，
+     * 取代了 v5.4 的"放大幅度阈值"。真实动作的速度是噪声的十几倍，所以这一条对
+     * 正常点头/仰头几乎没有成本，却能干净地把噪声挡掉。
      */
-    private fun effectivePitchSpeedGate(): Float = MIN_PITCH_VELOCITY * distanceBoost()
+    private fun effectivePitchSpeedGate(): Float =
+        MIN_PITCH_VELOCITY * distanceBoost() * (if (staticLocked) staticLockFactor else 1f)
 
-    /** 按距离缩放后的偏航速度门限。 */
-    private fun effectiveYawSpeedGate(): Float = MIN_YAW_VELOCITY * distanceBoost()
+    /** 按距离缩放后的偏航速度门限（同样叠加静止锁定）。 */
+    private fun effectiveYawSpeedGate(): Float =
+        MIN_YAW_VELOCITY * distanceBoost() * (if (staticLocked) staticLockFactor else 1f)
 
     /**
      * 判定「峰值是否保持住了」所需的时间（v4.8）。
@@ -637,8 +737,11 @@ class HeadPoseDetector(
         val signedPitch = if (invertPitch) -delta else delta
         val magnitude = abs(signedPitch)
         // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
-        // v5.4：距离系数由调用方传入，与偏航共用同一份，保证两条轴一致。
-        val threshold = thresholdDeg * thresholdScale(distanceBoost)
+        // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
+        // v5.5：俯仰幅度阈值**不乘**距离系数（距离缩放交给静止门限与速度门限），
+        //       只乘静止锁定与俯视增益，这样近距离点头不再需要两倍幅度。
+        val threshold = pitchThresholdNow()
+        pitchThresholdDeg = threshold
         lastSignedPitch = signedPitch
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedPitch - lastLoggedPitch) >= 3f) {
@@ -800,11 +903,14 @@ class HeadPoseDetector(
         if (relative <= -DOWN_GAZE_MIN_DEG && heldMs >= DOWN_GAZE_AFTER_MS) {
             downGazeCount++
             val corrected = applyBaselineShift(pitchDeg, baseline, nowMs)
+            markDownGazeActive(nowMs)
             Log.i(
                 TAG,
                 "posture: looking down detected (held ${heldMs}ms, " +
                     "relative ${"%.1f".format(relative)}°), baseline gradually shifted to " +
-                    "${"%.1f".format(corrected)}° (#${downGazeCount})",
+                    "${"%.1f".format(corrected)}° (#${downGazeCount}) " +
+                    "-> downGaze active, nod sensitivity boosted, threshold adjusted to " +
+                    "${"%.1f".format(pitchThresholdNow())}°",
             )
             return
         }
@@ -821,6 +927,27 @@ class HeadPoseDetector(
                     "${"%.1f".format(threshold)}°, lastReject=$reject)",
             )
         }
+    }
+
+    /**
+     * 标记「当前处于俯视姿态」并刷新俯视增益（v5.5）。
+     *
+     * 用时间戳 + 窗口而不是布尔量，这样"回到平视"不需要任何显式通知就会自动恢复：
+     * 只要超过 [DOWN_GAZE_ACTIVE_WINDOW_MS] 没有新的俯视判定，增益就回到 1.0。
+     */
+    private fun markDownGazeActive(nowMs: Long) {
+        lastDownGazeAtMs = nowMs
+        downGazeActive = true
+        nodDownGazeBoost = DOWN_GAZE_NOD_BOOST.coerceAtLeast(MIN_DOWN_GAZE_NOD_BOOST)
+    }
+
+    /** 每帧检查俯视增益是否该失效（回到平视）。 */
+    private fun refreshDownGazeBoost(nowMs: Long) {
+        if (!downGazeActive) return
+        if (nowMs - lastDownGazeAtMs <= DOWN_GAZE_ACTIVE_WINDOW_MS) return
+        downGazeActive = false
+        nodDownGazeBoost = 1f
+        Log.i(TAG, "posture: back to level gaze — nod sensitivity restored to normal")
     }
 
     /**
@@ -941,7 +1068,8 @@ class HeadPoseDetector(
         val magnitude = abs(signedYaw)
         // 静止锁定同样作用于扭头，压制「手在脸旁晃动」这类横向噪声；
         // v5.4 起再乘距离系数，近距离下阈值同步放大。
-        val turnThreshold = turnThresholdDeg * thresholdScale(distanceBoost)
+        val turnThreshold = turnThresholdNow(distanceBoost)
+        yawThresholdDeg = turnThreshold
         lastSignedYaw = signedYaw
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedYaw - lastLoggedYaw) >= 5f) {

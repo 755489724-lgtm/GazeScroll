@@ -132,6 +132,12 @@ class GazeCameraService : LifecycleService() {
         /** 相机获取失败的退避重试间隔（v5.4）。 */
         private val WAKE_RETRY_DELAYS_MS = longArrayOf(500L, 1000L, 2000L)
 
+        /** 全链路自检日志的间隔（v5.5）。 */
+        private const val SELF_CHECK_INTERVAL_MS = 30_000L
+
+        /** 连续注入失败达到这个次数就强制重连无障碍服务（v5.5）。 */
+        private const val MAX_INJECTION_FAILURES = 2
+
         /** 硬锁定只在这么近的距离启用（脸高占画面比例）。 */
         private const val HARD_LOCK_NEAR_RATIO = 0.55f
 
@@ -207,8 +213,7 @@ class GazeCameraService : LifecycleService() {
                 return
             }
             svc.onLivenessProbe()
-        }
-    }
+        }    }
     private val running = AtomicBoolean(false)
 
     private var analysisExecutor: ExecutorService? = null
@@ -291,6 +296,15 @@ class GazeCameraService : LifecycleService() {
 
     /** 亮屏恢复时相机获取的重试计数（v5.4）。 */
     private var wakeRetryAttempt = 0
+
+    /** 是否已经排了一次重试（v5.5），避免成功/失败/超时三条路径重复排程。 */
+    private var retryScheduled = false
+
+    /** 上次打全链路自检日志的时刻（v5.5）。 */
+    private var lastSelfCheckAtMs = 0L
+
+    /** 连续注入失败次数（v5.5），用于触发无障碍强制重连。 */
+    private var injectionFailures = 0
 
     private var frameWatchdog: Runnable? = null
 
@@ -458,12 +472,15 @@ class GazeCameraService : LifecycleService() {
                 "foreground=${AppStateManager.foregroundPackage})",
         )
         wakeRetryAttempt = 0
+        retryScheduled = false
         if (!running.get()) {
             // 服务不在（被系统回收）：交给活跃探针去拉起来。
             Log.i("GazeCameraService", "$trigger: service not running — will be restarted by probe")
             return
         }
-        rebuildPipelineNow("$trigger reactivation")
+        dumpSelfCheck("$trigger")
+        ensureAccessibilityBound(trigger)
+        rebuildPipelineNow("$trigger full pipeline restart")
     }
 
     /**
@@ -484,52 +501,72 @@ class GazeCameraService : LifecycleService() {
     }
 
     /**
-     * 获取 CameraX provider，失败按 500 / 1000 / 2000ms 退避重试。
+     * 获取 CameraX provider，失败按 500 / 1000 / 2000ms 退避重试（v5.5 重写）。
      *
      * 相机在息屏后可能需要一段时间才真正可用（HAL 重新打开、被别的进程占着），
      * 一次失败就放弃正是"偶发失效"的来源之一。
+     *
+     * 重写要点：`addListener` 的两条路径（成功/异常）与超时兜底**都会**走到这里，
+     * 所以用一个 `retryScheduled` 标志保证一次失败只排一次重试，不会因为两条路径都触发
+     * 而少吃一次尝试。首次是立即尝试，之后才按 [WAKE_RETRY_DELAYS_MS] 退避。
      */
     private fun bindCameraWithRetry(reason: String) {
         if (!running.get()) return
-        val attempt = wakeRetryAttempt
-        if (attempt >= WAKE_RETRY_DELAYS_MS.size) {
-            Log.w("GazeCameraService", "camera bind gave up after ${attempt + 1} attempts ($reason)")
+        if (cameraProvider != null) {
+            // 已经有 provider 了（重试期间被别的路径补上），直接绑定即可。
+            retryScheduled = false
+            rebind()
             return
         }
+        if (wakeRetryAttempt >= WAKE_RETRY_DELAYS_MS.size) {
+            Log.w(
+                "GazeCameraService",
+                "camera bind gave up after ${wakeRetryAttempt} retries ($reason)",
+            )
+            return
+        }
+
+        val attempt = wakeRetryAttempt + 1
+        val delay = if (wakeRetryAttempt == 0) 0L else WAKE_RETRY_DELAYS_MS[wakeRetryAttempt - 1]
         wakeRetryAttempt++
+        retryScheduled = false
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = runCatching { future.get() }.getOrNull()
             if (provider != null) {
-                wakeRetryAttempt = 0
                 cameraProvider = provider
+                wakeRetryAttempt = 0
+                retryScheduled = false
                 rebind()
                 Log.i(
                     "GazeCameraService",
-                    "camera provider ready (attempt $wakeRetryAttempt/$attempt) ($reason) " +
-                        "bound=$cameraBound",
+                    "camera rebind attempt #$attempt succeeded, bound=$cameraBound ($reason)",
                 )
             } else {
-                scheduleBindRetry(reason)
+                scheduleBindRetry(reason, attempt)
             }
         }, ContextCompat.getMainExecutor(this))
-        // addListener 只在 future 完成时回调；失败路径靠下面这个超时兜底。
+        // addListener 只在 future 完成时回调；失败或迟迟不回调时靠这里的超时兜底。
         mainHandler.postDelayed({
-            if (cameraProvider == null && running.get()) scheduleBindRetry(reason)
-        }, WAKE_RETRY_DELAYS_MS[attempt])
+            if (cameraProvider == null) scheduleBindRetry(reason, attempt)
+        }, 1500L)
     }
 
-    private fun scheduleBindRetry(reason: String) {
-        if (!running.get()) return
-        if (wakeRetryAttempt > WAKE_RETRY_DELAYS_MS.size) return
+    private fun scheduleBindRetry(reason: String, attempt: Int) {
+        if (!running.get() || cameraProvider != null) return
+        if (retryScheduled) return
+        retryScheduled = true
         val delay = WAKE_RETRY_DELAYS_MS[
-            (wakeRetryAttempt - 1).coerceIn(0, WAKE_RETRY_DELAYS_MS.size - 1),
+            (attempt - 1).coerceIn(0, WAKE_RETRY_DELAYS_MS.size - 1)
         ]
         Log.w(
             "GazeCameraService",
-            "camera bind failed, retrying in ${delay}ms (attempt $wakeRetryAttempt, $reason)",
+            "camera rebind attempt #$attempt failed, retrying in ${delay}ms ($reason)",
         )
-        mainHandler.postDelayed({ bindCameraWithRetry(reason) }, delay)
+        mainHandler.postDelayed({
+            retryScheduled = false
+            bindCameraWithRetry(reason)
+        }, delay)
     }
 
     /**
@@ -1020,6 +1057,7 @@ class GazeCameraService : LifecycleService() {
             if (!ok) {
                 // Backend may have been unbound (app force-stopped / killed).
                 SwipeInjector.repair(this)
+                onInjectionFailure("swipe $direction")
             }
             GazeRuntime.publish {
                 val count = it.triggers + 1
@@ -1035,6 +1073,8 @@ class GazeCameraService : LifecycleService() {
                     },
                 )
             }
+            // 注入成功就把失败计数清零，这样"偶发一次"不会累积成误判。
+            if (ok) injectionFailures = 0
         }
     }
 
@@ -1155,6 +1195,7 @@ class GazeCameraService : LifecycleService() {
             if (!ok) {
                 // 后端可能刚被解绑（App 被强停 / 被杀），给它一次自愈机会。
                 SwipeInjector.repair(this)
+                onInjectionFailure("tap center")
             }
             GazeRuntime.publish {
                 val count = it.mouthTapCount + 1
@@ -1223,6 +1264,11 @@ class GazeCameraService : LifecycleService() {
                 // v5.4：俯视姿态补偿与一般姿势校正的次数。
                 " downGaze=${headPoseDetector?.downGazeCount ?: 0}" +
                 " biasRecenter=${headPoseDetector?.biasRecenterCount ?: 0}" +
+                // v5.5：俯仰/偏航阈值的解耦验证 —— 近距离时前者不变、后者翻倍即为正确。
+                " pitchTh=${"%.1f".format(headPoseDetector?.pitchThresholdDeg ?: 0f)}°" +
+                " yawTh=${"%.1f".format(headPoseDetector?.yawThresholdDeg ?: 0f)}°" +
+                " downGazeActive=${headPoseDetector?.downGazeActive ?: false}" +
+                " nodBoost=${"%.2f".format(headPoseDetector?.nodDownGazeBoost ?: 1f)}" +
                 " mouthForced=${mouthDetector?.forcedReloads ?: 0}" +
                 " mouthRejected=${mouthDetector?.rejectedSamples ?: 0}" +
                 " occl=${frame.occlusionReason?.label ?: "none"}" +
@@ -1441,6 +1487,15 @@ class GazeCameraService : LifecycleService() {
         // 后面所有恢复逻辑都会被这一个条件挡住。
         syncPowerState()
 
+        // 定期把全链路状态打一行（每 30 秒），这样"又失效了"时可以直接回看当时卡在哪一环。
+        val nowForDiag = SystemClock.elapsedRealtime()
+        if (nowForDiag - lastSelfCheckAtMs >= SELF_CHECK_INTERVAL_MS) {
+            lastSelfCheckAtMs = nowForDiag
+            dumpSelfCheck("periodic")
+        }
+        // 无障碍绑定兜底：长时间待机后系统可能把它解绑，那样所有注入都会失败。
+        ensureAccessibilityBound("periodic")
+
         if (!shouldAnalyze()) return
         val now = SystemClock.elapsedRealtime()
         // 刚恢复 / 刚绑定：正在打开相机，不算故障。
@@ -1521,6 +1576,104 @@ class GazeCameraService : LifecycleService() {
         } else {
             updateCameraState()
         }
+    }
+
+    /**
+     * 记录一次注入失败，连续失败就强制重连无障碍服务（v5.5）。
+     *
+     * ## 为什么要有这条反馈回路
+     *
+     * 之前注入失败只打印一行日志就结束了。但**"实例存在"不等于"连接可用"**：
+     * 长时间息屏后无障碍连接可能失效而 `instance` 仍是旧引用，此时
+     * `repairIfNeeded()` 因为 `isConnected()==true` 直接返回、什么都不做，
+     * 于是失败会一直失败下去——用户只能靠下拉状态栏去"手动激活"。
+     *
+     * 现在连续失败 [MAX_INJECTION_FAILURES] 次就主动把无障碍条目关掉再打开，
+     * 强制系统重新绑定，不等用户动手。
+     */
+    private fun onInjectionFailure(what: String) {
+        injectionFailures++
+        Log.w(
+            "GazeCameraService",
+            "injection failed ($what), consecutive=$injectionFailures " +
+                "(a11yConnected=${GazeAccessibilityService.isConnected()} " +
+                "backend=${SwipeInjector.activeBackend(this)})",
+        )
+        if (injectionFailures < MAX_INJECTION_FAILURES) return
+        injectionFailures = 0
+        Log.w("GazeCameraService", "too many injection failures — forcing an accessibility rebind")
+        GazeRuntime.publish { it.copy(note = "手势注入反复失败，正在重连无障碍服务…") }
+        runCatching { AccessibilityBootstrap.forceRebind(this, "injection failures") }
+    }
+
+    /**
+     * 全链路自检（v5.5）。
+     *
+     * 用**一行**把每个可能卡住的环节都打出来，便于在被报告"又失效了"时立刻定位是哪一环：
+     *
+     * ```
+     * SelfCheck powerInteractive=true screenActive=true running=true shouldAnalyze=true
+     *   analyzing=true targetActive=true forceActive=false foreground=com.ss.android.ugc.aweme
+     *   cameraProvider=true cameraBound=true framesAgoMs=66 stale=false graceMs=0
+     *   rebinding=false probeFailures=0 lastFrame=66ms
+     *   a11yEnabled=true a11yConnected=true a11yInstanceNull=false swipeReady=true
+     *   occlRemainMs=0 hardLock=false detectorArmed=true
+     * ```
+     *
+     * 判读方法：
+     *  - `powerInteractive=false` 却 `screenActive=true` → 电源状态错了（自校正没跑或没生效）
+     *  - `a11yConnected=false` → 无障碍服务断开，注入必定失败
+     *  - `swipeReady=false` → 注入后端不可用（Shizuku 没装 + 无障碍没连上）
+     *  - `stale=true` 且 `cameraProvider=true` → 相机句柄还在但没画面，需要重绑
+     *  - `detectorArmed=false` → 摄像头在跑但检测器没被喂数据（流水线断在中段）
+     */
+    private fun dumpSelfCheck(trigger: String) {
+        val power = getSystemService(PowerManager::class.java)
+        val now = SystemClock.elapsedRealtime()
+        val framesAgo = if (lastFrameAtMs == 0L) -1L else now - lastFrameAtMs
+        val stale = framesAgo < 0 || framesAgo > FRAME_TIMEOUT_MS
+        Log.i(
+            "GazeSelfCheck",
+            "$trigger powerInteractive=${power?.isInteractive} screenActive=$screenActive " +
+                "running=${running.get()} shouldAnalyze=${shouldAnalyze()} " +
+                "analyzing=${!analyzer!!.paused} targetActive=${AppStateManager.targetActive} " +
+                "forceActive=${AppStateManager.forceActive} " +
+                "foreground=${AppStateManager.foregroundPackage} " +
+                "globalPaging=${AppStateManager.globalPaging} " +
+                "cameraProvider=${cameraProvider != null} cameraBound=$cameraBound " +
+                "framesAgoMs=$framesAgo stale=$stale " +
+                "graceMs=${(analysisGraceUntilMs - now).coerceAtLeast(0L)} " +
+                "restartAttempts=$restartAttempts probeFailures=$probeFailures " +
+                "rebinding=${wakeRetryAttempt > 0} " +
+                "a11yEnabled=${AccessibilityBootstrap.isServiceEnabled(this)} " +
+                "a11yConnected=${GazeAccessibilityService.isConnected()} " +
+                "swipeReady=${SwipeInjector.isReady(this)} " +
+                "backend=${SwipeInjector.activeBackend(this)} " +
+                "injFailures=$injectionFailures " +
+                "occlRemainMs=${(occlusionUntilMs - now).coerceAtLeast(0L)} " +
+                "hardLock=$staticHardLock detectorArmed=$headPoseActive",
+        )
+    }
+
+    /**
+     * 无障碍服务重连兜底（v5.5）。
+     *
+     * 长时间待机后系统可能把无障碍服务解绑（`instance` 变 null），而设置里的开关仍然是
+     * "已启用"。此时**所有手势注入都会失败**——这正好是"下拉状态栏就好了"的现象：
+     * 下拉动作会引发一批窗口/无障碍事件，把绑定重新激活。
+     *
+     * 这里提前把它做掉：只要开关是开的、实例却是空的，就主动请求系统重新绑定。
+     */
+    private fun ensureAccessibilityBound(trigger: String) {
+        if (GazeAccessibilityService.isConnected()) return
+        if (!AccessibilityBootstrap.isServiceEnabled(this)) return
+        Log.w(
+            "GazeCameraService",
+            "$trigger: accessibility service enabled in settings but NOT connected " +
+                "— requesting rebind",
+        )
+        runCatching { AccessibilityBootstrap.repairIfNeeded(this) }
+            .onFailure { Log.w("GazeCameraService", "a11y rebind failed: ${it.message}") }
     }
 
     private fun checkFrames() {

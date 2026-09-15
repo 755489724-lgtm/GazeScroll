@@ -354,6 +354,27 @@ class HeadPoseDetector(
         /** 单帧变化小于这个度数就不算一个方向（噪声死区）。 */
         private const val SHAKE_DELTA_DEADBAND_DEG = 0.4f
 
+        // ------------------- v5.17：轻通道的「运动起点」参考值 --
+
+        /** 稳定判定的样本数。 */
+        private const val SETTLED_WINDOW_SAMPLES = 3
+
+        /**
+         * 连续 [SETTLED_WINDOW_SAMPLES] 帧的峰峰值小于这个度数，就认为"头是稳的"，
+         * 把当前值记作 [settledPitch]（轻通道的运动起点）。
+         *
+         * 取 1.0° 是因为实测 30cm 处静止时的逐帧噪声就是 0.5~1°，再小就永远记不下起点。
+         */
+        private const val SETTLED_RANGE_DEG = 1.0f
+
+        /**
+         * 单帧最大可信台阶（v5.17）：相邻两帧的位移超过这个度数就不算"渐进动作"。
+         *
+         * 实测轻点头每帧只走 1~2°、有意仰头每帧 2~5°，所以 4° 不会误伤正常动作；
+         * 而 ⑥ 静止段那两次误触是单帧跳 5~10°，正好被它挡住（见跳变确认处的说明）。
+         */
+        private const val JUMP_MAX_RAMP_STEP_DEG = 4.0f
+
         /**
          * 路径效率的**判决门限已废弃**（v5.12 引入，v5.16 起不再用于判定）。
          *
@@ -873,6 +894,21 @@ class HeadPoseDetector(
     private var previousFramePitch = 0f
     private var previousFramePitchAtMs = 0L
 
+    // ---- 运动起点的稳定值（v5.17）：轻通道的参考点 ----
+    private val settleRing = FloatArray(SETTLED_WINDOW_SAMPLES)
+    private var settleIndex = 0
+    private var settleCount = 0
+
+    /**
+     * 运动开始前的稳定读数（v5.17），轻通道用它当参考点。
+     *
+     * 只有在头部稳定（连续 [SETTLED_WINDOW_SAMPLES] 帧峰峰值 < [SETTLED_RANGE_DEG]）时才更新，
+     * 所以它天然是"这次动作的起点"，不会像 45 帧中位数基线那样滞后。
+     */
+    @Volatile
+    var settledPitch: Float = 0f
+        private set
+
     /**
      * `faceRatio` 的 EMA 平滑值（v5.9），距离档判定的依据；日志/界面显示用。
      *
@@ -1002,6 +1038,10 @@ class HeadPoseDetector(
         shakeReversals = 0
         // v5.14：闭眼不可信期也清零。
         eyeUnreliableUntilMs = 0L
+        // v5.17：轻通道的运动起点重新学。
+        settleCount = 0
+        settleIndex = 0
+        settledPitch = 0f
     }
 
     /** Throw away the learned baselines; the next samples establish new ones. */
@@ -1371,7 +1411,32 @@ class HeadPoseDetector(
         // 仲裁只关心速度大小，所以符号沿用 evaluateYaw 的翻正规则即可（镜像 + 可选用户反转）。
         val yawDelta = yawDeg?.minus(baselineYawDeg)
         val signedYawNow = yawDelta?.let { if (invertYaw) it else -it }
-        val magnitude = abs(signedPitch)
+
+        // ---- v5.17：轻通道改用「相对**运动起点**的位移」判方向与幅度 ----
+        //
+        // 用户报的「轻轻点头，没有下滑，倒是变成了**上滑**」，根因就在基准线上：
+        //
+        // ```
+        // 04:18:23.300  rawPitch=11.28°  base=5.12°  → signed=-6.2° → nodDown（下滑）✓
+        // 04:18:25.316  rawPitch=2.82°   base=9.52°  → signed=+6.7° → tiltUp（上滑）✗
+        // ```
+        //
+        // `baselineDeg` 是 45 帧中位数，**本身在追用户的姿势**（上面 2 秒内就从 5.12 跳到 9.52，
+        // 因为中途丢过一次脸、基线重学）。轻点头的位移只有 5~8°，与滞后的基线一比，
+        // "起点落在基线的哪一侧"就决定了方向 —— **小幅度动作必然判反**。
+        //
+        // 所以轻通道（近距离 + 俯视）改用 [settledPitch]（运动开始前的稳定值）作参考点：
+        // 位移 = 当前值 − 稳定值，方向 = 位移符号，幅度 = 位移大小。
+        // 这样"点头 = 向低头方向移动 2.5°"就是一句能兑现的话，与基线漂到哪无关。
+        //
+        // 只作用于轻通道：远距离、仰头方向、以及回中锁定/仲裁/晃动等其它逻辑
+        // 仍然用原来相对基线的量，行为不变。
+        val lightDelta = pitchDeg - settledPitch
+        val signedLight = if (invertPitch) -lightDelta else lightDelta
+        val useLight = nearDistance && lookingDown && signedLight < 0f
+        // 判定用的有符号量与幅度：轻通道用位移，其余用相对基线。
+        val signed = if (useLight) signedLight else signedPitch
+        val magnitude = abs(signed)
         // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
         // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
         // v5.5：俯仰幅度阈值**不乘**距离系数（距离缩放交给静止门限与速度门限），
@@ -1381,21 +1446,23 @@ class HeadPoseDetector(
         //
         // 注意 lastAppliedNodBoost 只能在**本方向**算完之后赋值：诊断行要与 pitchTh 自洽，
         // 所以先把反方向阈值算完，最后才记录本帧实际生效的增益。
-        val threshold = pitchThresholdNow(signedPitch)
+        val threshold = pitchThresholdNow(signed)
         pitchThresholdDeg = threshold
         // 反方向阈值一并算出来给诊断行：用户直接能看到"低头 5.4° / 抬头 8.0°"。
-        pitchThresholdUpDeg = pitchThresholdNow(-signedPitch)
-        lastAppliedNodBoost = nearNodDownBoost(signedPitch)
+        pitchThresholdUpDeg = pitchThresholdNow(-signed)
+        lastAppliedNodBoost = nearNodDownBoost(signed)
         lastSignedPitch = signedPitch
 
-        // v5.13：轻点头通道的生效条件与 ×0.50 增益**完全一致**（近距离 + 俯视 + 低头），
-        // 所以"阈值被压到 3.0°"和"速度门槛降到 0.013"永远同时生效，不会出现只松一半。
-        val lightNodAllowed = nearDistance && lookingDown && signedPitch < 0f
+        // v5.13：轻点头通道的生效条件与 ×0.42 增益**完全一致**（近距离 + 俯视 + 低头**位移**），
+        // 所以"阈值被压到 2.5°"和"速度门槛降到 0.009"永远同时生效，不会只松一半。
+        val lightNodAllowed = useLight
 
         // ---- v5.9：逐帧上下文（必须在任何提前返回**之前**维护，否则轨迹会缺帧）----
         pushContext(signedPitch, signedYawNow, nowMs)
         // v5.12：晃动判定的缓冲同理，必须在提前返回之前维护。
         pushShakeSample(signedPitch)
+        // v5.17：维护"运动起点"的稳定值（轻通道的参考点）。
+        updateSettled(signedPitch)
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedPitch - lastLoggedPitch) >= 3f) {
             Log.i(
@@ -1453,7 +1520,13 @@ class HeadPoseDetector(
             // 渐进动作（前一帧已经在阈值以上方向移动）**零延迟**放行，
             // 只有跳变型才要求再撑过一帧 —— 于是不会重犯 v5.9 拖慢全部动作的错。
             val cameFromRamp = nowMs - previousFramePitchAtMs <= JUMP_RAMP_WINDOW_MS &&
-                abs(previousFramePitch) >= threshold * ONSET_FRACTION
+                abs(previousFramePitch) >= threshold * ONSET_FRACTION &&
+                // v5.17：还要求"台阶"不大。实测 ⑥ 静止段有两次误触是
+                // 「抖动 + 单帧跳 5~10°」，前一帧恰好已在阈值附近（被晃动判据拦下了），
+                // 于是"渐进"成立、跳变确认没要求再撑一帧 —— 加上台阶限制就堵住了。
+                // 代价只是"极快的大幅动作"也要多撑一帧（约 90ms），轻点头不受影响
+                // （实测轻点头每帧只走 1~2°）。
+                abs(signedPitch - previousFramePitch) <= JUMP_MAX_RAMP_STEP_DEG
             if (!cameFromRamp && nowMs - pitchReachedAtMs < JUMP_CONFIRM_MS) {
                 return@run "jump-confirm"
             }
@@ -1477,17 +1550,17 @@ class HeadPoseDetector(
 
         pitchYieldedToYaw = reject == "yaw-dominant-arbitration"
 
-        updatePostureRecenter(pitchDeg, baselineDeg, magnitude, threshold, reject, nowMs)
+        updatePostureRecenter(pitchDeg, baselineDeg, abs(signedPitch), threshold, reject, nowMs)
 
         if (reject != null) {
             // 只在「看起来像一次动作」时才记录，避免每帧刷屏。
             if (magnitude >= threshold * 0.8f) {
                 // v5.7：日志要能一眼看出方向 —— 原来两个方向都打 "nodDown candidate"，
                 // 排查「近距离仰视误触」时会把仰头候选误读成点头。
-                val dir = if (signedPitch < 0f) "nodDown" else "tiltUp"
+                val dir = if (signed < 0f) "nodDown" else "tiltUp"
                 Log.i(
                     TAG,
-                    "$dir candidate rejected: pitch=${"%.1f".format(signedPitch)}° " +
+                    "$dir candidate rejected: pitch=${"%.1f".format(signed)}° " +
                         "speed=${"%.4f".format(velocity)}°/ms gate=${"%.4f".format(speedGate)}°/ms " +
                         "threshold=${"%.1f".format(threshold)}° " +
                         "dist=${if (nearDistance) "near" else "far"} " +
@@ -1518,7 +1591,7 @@ class HeadPoseDetector(
         // 回中锁定（v5.0）：记下这次的方向，反方向要等头部回到中性区才放行，
         // 这样「仰头之后把头放回去」不会被当成一次点头。v5.2 加了 400ms 兜底，
         // 避免姿势偏置导致它永久卡死。
-        recenterLockDirection = if (signedPitch < 0) -1 else 1
+        recenterLockDirection = if (signed < 0) -1 else 1
         recenterLocked = true
         recenterNeutralSinceMs = 0L
         recenterLockedAtMs = nowMs
@@ -1530,20 +1603,22 @@ class HeadPoseDetector(
         val boosted = nearDistance
         val boostNote = if (boosted) {
             " (boosted, dist=near posture=${if (lookingDown) "down" else "flat"} " +
-                "threshold=${"%.1f".format(threshold)}°)"
+                "threshold=${"%.1f".format(threshold)} " +
+                // v5.17：轻通道打出"起点 → 终点"，方向与幅度一眼可核对。
+                "light=${if (useLight) "yes(${"%.1f".format(settledPitch)}→${"%.1f".format(signed)})" else "no"}°)"
         } else {
             ""
         }
-        if (signedPitch < 0) {
+        if (signed < 0) {
             Log.i(
                 TAG,
-                "nodDown triggered$boostNote pitch=${"%.1f".format(signedPitch)}° " +
+                "nodDown triggered$boostNote pitch=${"%.1f".format(signed)}° " +
                     "latency=${latencyMs}ms ($how, v=${"%.3f".format(velocity)}°/ms)$staticNote$ctxNote",
             )
             onEvent(
                 HeadEvent.NodDown(
-                    signedPitch,
-                    "低头 ${signedPitch.toInt()}°（${latencyMs}ms 内触发）",
+                    signed,
+                    "低头 ${signed.toInt()}°（${latencyMs}ms 内触发）",
                 ),
             )
         } else {
@@ -1551,16 +1626,16 @@ class HeadPoseDetector(
             // 这样"近距离仰视误触"的每一次误触都能直接读出当时的速度与阈值。
             Log.i(
                 TAG,
-                "tiltUp triggered: pitch=${"%.1f".format(signedPitch)}° " +
+                "tiltUp triggered: pitch=${"%.1f".format(signed)}° " +
                     "speed=${"%.4f".format(velocity)}°/ms threshold=${"%.1f".format(threshold)}° " +
                     "dist=${if (nearDistance) "near" else "mid/far"} " +
-                    "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} " +
+                    "boost=${"%.2f".format(nearNodDownBoost(signed))} " +
                     "latency=${latencyMs}ms ($how)$staticNote$ctxNote",
             )
             onEvent(
                 HeadEvent.TiltUp(
-                    signedPitch,
-                    "仰头 ${signedPitch.toInt()}°（${latencyMs}ms 内触发）",
+                    signed,
+                    "仰头 ${signed.toInt()}°（${latencyMs}ms 内触发）",
                 ),
             )
         }
@@ -2167,9 +2242,34 @@ class HeadPoseDetector(
     }
 
     /** 记录一帧有符号俯仰，供晃动判定使用（v5.12）。 */
-    private fun pushShakeSample(signedPitch: Float) {        shakePitch[shakeIndex] = signedPitch
+    private fun pushShakeSample(signedPitch: Float) {
+        shakePitch[shakeIndex] = signedPitch
         shakeIndex = (shakeIndex + 1) % SHAKE_WINDOW_SAMPLES
         if (shakeCount < SHAKE_WINDOW_SAMPLES) shakeCount++
+    }
+
+    /**
+     * 维护轻通道的"运动起点"（v5.17）：只在头部稳定时更新 [settledPitch]。
+     *
+     * 稳定的判据是"最近 [SETTLED_WINDOW_SAMPLES] 帧峰峰值 < [SETTLED_RANGE_DEG]"，
+     * 于是动作一开始它就冻结在起点上，动作结束、头停下来之后又重新对齐 ——
+     * 这正是"位移"该有的参考点。它不会像 45 帧中位数基线那样滞后好几度。
+     */
+    private fun updateSettled(signedPitch: Float) {
+        settleRing[settleIndex] = signedPitch
+        settleIndex = (settleIndex + 1) % SETTLED_WINDOW_SAMPLES
+        if (settleCount < SETTLED_WINDOW_SAMPLES) {
+            settleCount++
+            if (settleCount < SETTLED_WINDOW_SAMPLES) return
+        }
+        var min = Float.MAX_VALUE
+        var max = -Float.MAX_VALUE
+        for (i in 0 until SETTLED_WINDOW_SAMPLES) {
+            val v = settleRing[i]
+            if (v < min) min = v
+            if (v > max) max = v
+        }
+        if (max - min < SETTLED_RANGE_DEG) settledPitch = (min + max) / 2f
     }
 
     /**

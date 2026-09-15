@@ -1322,6 +1322,11 @@ class GazeCameraService : LifecycleService() {
                 " pitchTh=${"%.1f".format(headPoseDetector?.pitchThresholdDeg ?: 0f)}°" +
                 " pitchThUp=${"%.1f".format(headPoseDetector?.pitchThresholdUpDeg ?: 0f)}°" +
                 " yawTh=${"%.1f".format(headPoseDetector?.yawThresholdDeg ?: 0f)}°" +
+                // v5.8：yaw 与 pitch 的实时读数一起打出来，扭头是"没到阈值"还是"带出了俯仰"
+                // 一眼可见；pitchYielded 表示俯仰因为扭头信号更强而让位。
+                " yawNow=${"%.1f".format(headPoseDetector?.lastSignedYaw ?: 0f)}°" +
+                " pitchNow=${"%.1f".format(headPoseDetector?.lastSignedPitch ?: 0f)}°" +
+                " pitchYielded=${headPoseDetector?.pitchYieldedToYaw ?: false}" +
                 " downGazeActive=${headPoseDetector?.downGazeActive ?: false}" +
                 // v5.6：绝对几何的距离/姿态判定 —— chinRatio 是俯视判据的原始读数。
                 " chinRatio=${headPoseDetector?.smoothedChinRatio?.let { "%.3f".format(it) } ?: "-"}" +

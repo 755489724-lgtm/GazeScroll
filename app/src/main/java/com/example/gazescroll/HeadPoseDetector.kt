@@ -116,6 +116,14 @@ class HeadPoseDetector(
         private const val VELOCITY_SAMPLE_MS = 200L
 
         /**
+         * 方向仲裁的速度判据系数（v5.8）。
+         *
+         * 仲裁**只看速度**，见 [isYawMovingNow] 的说明：幅度在两个轴之间
+         * 没有鉴别力（扭头时偏航幅度本来就大），第一版加了幅度兜底反而挡掉了合格的扭头。
+         */
+        private const val ARBITRATION_VELOCITY_FRACTION = 0.4f
+
+        /**
          * 回中锁定期间，判定「头部已经回到中性区」的阈值系数（v5.0）。
          *
          * 用动作阈值的一个比例（而不是绝对角度），这样用户把灵敏度调高调低时，
@@ -274,9 +282,31 @@ class HeadPoseDetector(
     @Volatile
     var turnThresholdDeg: Float = 20f
 
-    /** 扭头也必须「快」，否则慢慢偏头也会被当成动作。 */
+    /**
+     * 扭头也必须「快」，否则慢慢偏头也会被当成动作。
+     *
+     * v5.8：默认值从 600ms 提到 **900ms**（实机日志驱动）。
+     *
+     * 原因是这个窗口对扭头来说**先天太紧**，而它对俯仰是合适的：
+     *  - 俯仰起点很容易定准 —— 点头一开始就是俯仰角在变；
+     *  - 扭头的起点则常常**先有一段几乎不动的准备**（脖子先转、脸还没跟上），
+     *    这段被算进 rise，于是正常的一次扭头会超窗，被 `slow-rise` 直接判死。
+     *
+     * 实机日志里这是**最多的一类扭头拒绝**，而且症状正好是用户说的"第一下打不中"：
+     *
+     * ```
+     * turnL candidate rejected: yaw=54.4° speed=0.1496°/ms threshold=20.0° reason=slow-rise
+     * turnL candidate rejected: yaw=39.4°  speed=0.1116°/ms reason=slow-rise   // 连续 8 帧
+     * ```
+     *
+     * 54° 的扭头、0.1496°/ms 的速度（远高于 0.015 的速度门限）显然是一次真实动作，
+     * 却被当成"慢慢蹭"。**"慢"不该由这个窗口定义，速度门限已经在管这件事了** ——
+     * 这跟 v5.5「不要用幅度阈值挡噪声」是同一个道理：用错工具会连真实动作一起挡掉。
+     *
+     * 放宽到 900ms 后，速度门限仍然是唯一负责"够不够快"的判据，不会放行真正的慢偏头。
+     */
     @Volatile
-    var turnMotionWindowMs: Long = 600L
+    var turnMotionWindowMs: Long = 900L
 
     /** 扭头到位后要保持的时间（比点头略短，扭头更容易稳住）。 */
     @Volatile
@@ -524,6 +554,16 @@ class HeadPoseDetector(
     var pitchThresholdUpDeg: Float = 0f
         private set
 
+    /**
+     * 本帧的点头/仰头是否因为「扭头信号明显更强」而让位（v5.8），仅用于诊断。
+     *
+     * 这是「近距离俯视扭头变上下滑」修复里仲裁机制的可观测结果：
+     * 正常点头时它恒为 false，只有真的在扭头却同时带出俯仰时才会短暂为 true。
+     */
+    @Volatile
+    var pitchYieldedToYaw: Boolean = false
+        private set
+
     /** 当前姿态标签，仅用于日志/界面。 */
     @Volatile
     var postureLabel: String = "未知"
@@ -564,9 +604,19 @@ class HeadPoseDetector(
     private var prevSignedYaw = 0f
     private var prevSignedYawAtMs = 0L
 
-    /** 本帧算出的符号化读数，供下一帧估速度用。 */
-    private var lastSignedPitch = 0f
-    private var lastSignedYaw = 0f
+    /**
+     * 本帧算出的符号化读数，供下一帧估速度用。
+     *
+     * v5.8 起对外开放（`private set`）：诊断行要同时打出 yaw 与 pitch 的实时值，
+     * 才能一眼分辨「扭头根本没到阈值」和「扭头带出了俯仰」。
+     */
+    @Volatile
+    var lastSignedPitch = 0f
+        private set
+
+    @Volatile
+    var lastSignedYaw = 0f
+        private set
 
     @Synchronized
     fun reset() {
@@ -723,7 +773,7 @@ class HeadPoseDetector(
         // v5.6：先更新距离/姿态判定，再让 v5.4 的时间型俯视增益失效，最后才评估动作。
         updateDistanceAndPosture(nowMs)
         refreshDownGazeBoost(nowMs)
-        if (pitchReady) evaluatePitch(pitchDeg!!, nowMs, boost)
+        if (pitchReady) evaluatePitch(pitchDeg!!, yawDeg, nowMs, boost)
         if (turnEnabled && yawReady) evaluateYaw(yawDeg!!, nowMs, boost)
     }
 
@@ -783,13 +833,29 @@ class HeadPoseDetector(
     }
 
     /**
-     * **偏航**（扭头）阈值：只乘距离系数。
+     * **偏航**（扭头）阈值 = 用户设定值，**与距离解耦**（v5.8）。
      *
-     * v5.5 起不再乘静止锁定 —— 见 [pitchThresholdNow] 的说明。防静止误触交给速度门限，
-     * 幅度阈值保持用户设定值（"中 20°" 就真是 20°）。
+     * ## v5.8 修的是什么（「近距离俯视扭头不好使」）
+     *
+     * v5.4 起这里乘了距离系数，近距离（`faceRatio >= 0.45`）时**翻倍**：
+     * 用户设的「中 20°」在 30cm 处实际是 **40°**。实机日志正好抓在门限上：
+     *
+     * ```
+     * 01:57:37.093 turn triggered yaw=40.5° latency=102ms (fast)
+     * GazeDiag: faceRatio=0.51 dist=中 ... yawTh=40.0° speedGate=0.0240°/ms
+     * ```
+     *
+     * 而用户的扭头幅度就是 40~52° —— **刚好卡在门上，稍微小一点就完全不触发**。
+     *
+     * 这和 v5.5 在俯仰轴上修掉的是**同一个错误**：当年也想用"放大幅度阈值"来挡近距离噪声，
+     * 后来证明那是错的方法（噪声有幅度但没有速度，该挡它的是速度门限）。
+     * 俯仰轴改过之后没有回头改偏航轴，这条就一直留着。
+     *
+     * 所以现在两个轴统一：**幅度阈值 = 用户设定值**（俯仰再乘单向的近距离点头增益），
+     * 距离缩放只作用于**速度门限**与静止门限。远距离行为完全不变（系数本来就是 1.0），
+     * 只有"近距离够不到"这个毛病被修掉。
      */
-    private fun turnThresholdNow(distanceBoost: Float): Float =
-        turnThresholdDeg * distanceBoost
+    private fun turnThresholdNow(): Float = turnThresholdDeg
 
     /**
      * 俯仰（点头/仰头）的动作阈值（v5.5 起既与距离解耦、也与静止锁定解耦）。
@@ -859,9 +925,19 @@ class HeadPoseDetector(
 
     // ------------------------------------------------------------- 俯仰：点头 --
 
-    private fun evaluatePitch(pitchDeg: Float, nowMs: Long, distanceBoost: Float) {
+    private fun evaluatePitch(
+        pitchDeg: Float,
+        yawDeg: Float?,
+        nowMs: Long,
+        distanceBoost: Float,
+    ) {
         val delta = pitchDeg - baselineDeg
         val signedPitch = if (invertPitch) -delta else delta
+        // v5.8：把本帧的偏航也翻正，供方向仲裁判断"用户是不是正在扭头"。
+        // 必须在这里算，因为俯仰是先于偏航评估的 —— 用上一帧的偏航会让仲裁失灵。
+        // 仲裁只关心速度大小，所以符号沿用 evaluateYaw 的翻正规则即可（镜像 + 可选用户反转）。
+        val yawDelta = yawDeg?.minus(baselineYawDeg)
+        val signedYawNow = yawDelta?.let { if (invertYaw) it else -it }
         val magnitude = abs(signedPitch)
         // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
         // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
@@ -924,8 +1000,17 @@ class HeadPoseDetector(
             if (!fast && nowMs - pitchReachedAtMs < requiredHoldMs()) return@run "hold-not-met"
             // 最低速度门限：噪声有幅度但没有速度，所以再加一道与幅度无关的门。
             if (!fast && velocity < speedGate) return@run "speed-gate"
+            // v5.8 方向仲裁：偏航正在明显转动 → 这次让位给扭头。
+            // 近距离俯视扭头会同时带出一个俯仰分量（实测 ±3~±10°），而俯仰阈值被单向
+            // 增益压到 0.68 倍（4.1°/5.4°），不让位的话"想扭头"永远先变成上下滑。
+            // 真正的点头不带偏航角速度，所以对纯点头零影响。
+            if (signedYawNow != null && isYawMovingNow(signedYawNow, nowMs)) {
+                return@run "yaw-dominant-arbitration"
+            }
             null
         }
+
+        pitchYieldedToYaw = reject == "yaw-dominant-arbitration"
 
         updatePostureRecenter(pitchDeg, baselineDeg, magnitude, threshold, reject, nowMs)
 
@@ -1190,6 +1275,49 @@ class HeadPoseDetector(
     private fun nearNodDownBoost(signedPitch: Float): Float =
         if (nearDistance && signedPitch < 0f) NEAR_DOWN_NOD_BOOST else 1f
 
+    /**
+     * 方向仲裁：本帧的偏航信号是否明显强于俯仰信号（v5.8）。
+     *
+     * ## 为什么需要它（「近距离俯视时扭头变成上下滑」）
+     *
+     * 近距离俯视时，俯仰阈值被单向增益压到 0.68 倍（灵敏度 6° → 4.1°，8° → 5.4°），
+     * 而真人在俯视姿态下扭头，头部并不会纯绕 Y 轴旋转 —— 脖子带着一个俯仰分量，
+     * 实测就有 −3~−7°。扭头这件动作在俯仰轴上长得**和点头一模一样**。
+     * 而 [onHeadPose] 里点头是先于扭头评估的，于是它抢先一步把翻页变成了上下滑。
+     * 实机日志：
+     *
+     * ```
+     * 02:00:25.848 nodDown triggered pitch=-12.0°
+     * 02:00:25.850 turnR candidate rejected: yaw=23.5° ... reason=below-threshold
+     * ```
+     *
+     * ## 判据为什么**只看速度**
+     *
+     * 关键区别不在幅度，而在**角速度归属**：
+     *
+     *  - 真正的扭头是绕 Y 轴转动 → **偏航角速度必然明显**（实测 0.13~0.25°/ms）；
+     *  - 真正的点头是绕 X 轴转动 → **偏航角速度几乎为零**；
+     *  - 而"扭头带出的俯仰分量"在偏航轴上一定带着那个转动速度。
+     *
+     * ⚠️ 所以**绝不能加幅度兜底判据**。第一版就是加了 `yaw >= 阈值×0.6` 才出的错：
+     * 扭头时偏航幅度本来就大，于是"我正在扭头"被误判成"俯仰更强"，反而把合格的扭头
+     * 挡掉了 —— 日志里的 `yaw=30.7° speed=0.2481°/ms reason=pitch-dominant-arbitration`
+     * 就是它干的。**幅度在这里没有鉴别力，速度才有。**
+     *
+     * 门限取 [MIN_YAW_VELOCITY] 的 [ARBITRATION_VELOCITY_FRACTION] 倍而不是它本身：
+     * 这个值已经远高于静止噪声（噪声没有速度），又远低于真实扭头（0.13~0.25），
+     * 所以在"动作刚起"的那一帧就能认出这是扭头，不用等到幅度堆起来。
+     *
+     * @param signedYawNow 本帧刚算出的有符号偏航偏移；null 表示这一帧没有偏航读数
+     */
+    /** 偏航是否正在明显转动（v5.8）：所有**俯仰候选**的否决判据。见上一条的说明。 */
+    private fun isYawMovingNow(currentYaw: Float, nowMs: Long): Boolean =
+        yawVelocityWith(currentYaw, nowMs) >= MIN_YAW_VELOCITY * ARBITRATION_VELOCITY_FRACTION
+
+    /** 扭头候选让位给俯仰。同样只看速度——幅度在两个轴之间没有鉴别力。 */
+    private fun isPitchDominantOverYaw(nowMs: Long): Boolean =
+        abs(pitchVelocity(nowMs)) >= MIN_PITCH_VELOCITY * ARBITRATION_VELOCITY_FRACTION
+
     /** 维护 `chinRatio` 的滑动中位数，供离线标定俯视门限（v5.6）。 */
     private fun pushChinSample(value: Float) {
         chinWindow[chinIndex] = value
@@ -1318,6 +1446,30 @@ class HeadPoseDetector(
         return abs(lastSignedYaw - prevSignedYaw) / dt
     }
 
+    /**
+     * 用**本帧刚拿到的**偏航读数算角速度（v5.8）。
+     *
+     * ## 为什么必须有这一个
+     *
+     * [onHeadPose] 里俯仰是**先于**偏航评估的，所以俯仰在做仲裁判断时，
+     * `prevSignedYaw` 还停在**上一帧**。第一版仲裁就是因此失灵的：
+     *
+     * ```
+     * 02:02:10.536 nodDown triggered (boosted, near threshold=4.1°) pitch=-9.9°
+     * 02:02:10.537 turnR rejected: yaw=28.3° speed=0.1792°/ms reason=pitch-dominant-arbitration
+     * ```
+     *
+     * 同一个瞬间，扭头侧读到的偏航速度是 0.1792°/ms（明显在转头），
+     * 而俯仰侧却把这帧当成"没有扭头"而放行了点头 —— 自己的耦合检测反而失灵。
+     * 所以仲裁要用本帧读数现算，不能读上一帧。
+     */
+    private fun yawVelocityWith(currentYaw: Float, nowMs: Long): Float {
+        val previousAt = prevSignedYawAtMs
+        if (previousAt == 0L || nowMs - previousAt > VELOCITY_SAMPLE_MS) return 0f
+        val dt = (nowMs - previousAt).coerceAtLeast(1L)
+        return abs(currentYaw - prevSignedYaw) / dt
+    }
+
     /** 把本帧读数变成下一帧的「前一点」。 */
     private fun updatePitchVelocitySample(signedPitch: Float, nowMs: Long) {
         prevSignedPitch = signedPitch
@@ -1331,16 +1483,21 @@ class HeadPoseDetector(
 
     // ----------------------------------------------------------- 偏航：左右扭头 --
 
-    private fun evaluateYaw(yawDeg: Float, nowMs: Long, distanceBoost: Float) {
+    private fun evaluateYaw(
+        yawDeg: Float,
+        nowMs: Long,
+        @Suppress("UNUSED_PARAMETER") distanceBoost: Float,
+    ) {
         // 前面是前置摄像头，画面是镜像的：往自己右边扭头，画面里的脸是往它的左边转，
         // ML Kit 给出的偏航角符号因此与物理方向相反，这里先翻正。
         val delta = yawDeg - baselineYawDeg
         val mirrored = -delta
         val signedYaw = if (invertYaw) -mirrored else mirrored
         val magnitude = abs(signedYaw)
-        // 静止锁定同样作用于扭头，压制「手在脸旁晃动」这类横向噪声；
-        // v5.4 起再乘距离系数，近距离下阈值同步放大。
-        val turnThreshold = turnThresholdNow(distanceBoost)
+        // 静止锁定同样作用于扭头，压制「手在脸旁晃动」这类横向噪声。
+        // v5.8：不再乘距离系数 —— 近距离把「中 20°」变成 40°，用户根本够不到。
+        // 距离缩放改由 [effectiveYawSpeedGate] 承担（与俯仰轴的设计一致）。
+        val turnThreshold = turnThresholdNow()
         yawThresholdDeg = turnThreshold
         lastSignedYaw = signedYaw
 
@@ -1368,37 +1525,58 @@ class HeadPoseDetector(
 
         // 速度在提前返回之前算一次，理由同俯仰：刚进动作那一帧才是最快的。
         val velocity = yawVelocity(nowMs)
-
-        if (yawOnsetAtMs == 0L) yawOnsetAtMs = nowMs
-        if (magnitude < turnThreshold) {
-            updateYawVelocitySample(signedYaw, nowMs)
-            return
-        }
-
-        if (yawReachedAtMs == 0L) {
-            yawReachedAtMs = nowMs
-            val riseMs = nowMs - yawOnsetAtMs
-            yawArmed = riseMs <= turnMotionWindowMs
-            if (!yawArmed) {
-                Log.i(TAG, "ignored slow turn: rise ${riseMs}ms > ${turnMotionWindowMs}ms")
-            }
-        }
-        if (!yawArmed) {
-            updateYawVelocitySample(signedYaw, nowMs)
-            return
-        }
-
-        // 与俯仰一致：够快立刻触发，否则才要求保持。
+        // 在 run 块**外面**算一次：后面触发分支也要用它（以前它只在快通道判断里用，
+        // 现在候选拒绝日志同样要用，写在块里会作用域不够）。
         val fast = velocity >= FAST_YAW_VELOCITY
-        if (!fast && nowMs - yawReachedAtMs < requiredTurnHoldMs()) {
-            updateYawVelocitySample(signedYaw, nowMs)
-            return
+
+        // v5.8：所有「不触发」的原因都收敛到一个变量，并在退出前打进日志。
+        // 以前扭头**完全没有候选日志**（只有成功触发才打），于是「近距离扭头不好使」
+        // 只能靠猜——到底是没到阈值、被封顶，还是被俯仰抢了先，日志里一个字都没有。
+        val reject: String? = run {
+            if (yawOnsetAtMs == 0L) yawOnsetAtMs = nowMs
+            if (magnitude < turnThreshold) return@run "below-threshold"
+
+            if (yawReachedAtMs == 0L) {
+                yawReachedAtMs = nowMs
+                val riseMs = nowMs - yawOnsetAtMs
+                yawArmed = riseMs <= turnMotionWindowMs
+                if (!yawArmed) {
+                    Log.i(TAG, "ignored slow turn: rise ${riseMs}ms > ${turnMotionWindowMs}ms")
+                }
+            }
+            if (!yawArmed) return@run "slow-rise"
+
+            // 与俯仰一致：够快立刻触发，否则才要求保持。
+            if (!fast && nowMs - yawReachedAtMs < requiredTurnHoldMs()) return@run "hold-not-met"
+
+            // 最低速度门限，理由同俯仰：噪声有幅度但没有速度。
+            if (!fast && velocity < effectiveYawSpeedGate()) return@run "speed-gate"
+
+            // v5.8：方向仲裁 —— 同一帧里俯仰信号明显更强时，这次扭头让位给点头/仰头。
+            // 近距离俯视下扭头会同时带出一个俯仰分量，而俯仰阈值在近距离被压到 0.68 倍，
+            // 于是「想扭头却变成上下滑」。反过来：真正的点头不会带出多少偏航。
+            if (isPitchDominantOverYaw(nowMs)) return@run "pitch-dominant-arbitration"
+
+            null
         }
 
-        // 最低速度门限，理由同俯仰：噪声有幅度但没有速度（近距离同样放大）。
-        if (!fast && velocity < effectiveYawSpeedGate()) {
-            clearTurn()
-            yawSign = sign
+        if (reject != null) {
+            // 只在「看起来像一次动作」时才记录，避免每帧刷屏（与俯仰同一策略）。
+            if (magnitude >= turnThreshold * 0.8f) {
+                Log.i(
+                    TAG,
+                    "turn${if (sign < 0) "L" else "R"} candidate rejected: " +
+                        "yaw=${"%.1f".format(magnitude)}° pitch=${"%.1f".format(lastSignedPitch)}° " +
+                        "speed=${"%.4f".format(velocity)}°/ms gate=${"%.4f".format(effectiveYawSpeedGate())}°/ms " +
+                        "pitchSpeed=${"%.4f".format(pitchVelocity(nowMs))}°/ms " +
+                        "threshold=${"%.1f".format(turnThreshold)}° " +
+                        "dist=${if (nearDistance) "near" else "far"} " +
+                        "posture=${if (lookingDown) "down" else "flat"} " +
+                        "reason=$reject",
+                )
+            }
+            // 被锁或速度不足时保留计时段，免得用户动作做到一半就被重置掉。
+            if (reject == "pitch-dominant-arbitration") clearTurn()
             updateYawVelocitySample(signedYaw, nowMs)
             return
         }

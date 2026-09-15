@@ -1,0 +1,28 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<map>
+    <boolean name="setupComplete" value="true" />
+    <set name="targetPackages">
+        <string>com.ss.android.ugc.aweme</string>
+        <string>com.xingin.xhs</string>
+        <string>tv.danmaku.bili</string>
+        <string>com.sina.weibo</string>
+    </set>
+    <boolean name="headPoseEnabled" value="true" />
+    <float name="headPoseAngleThreshold" value="6.0" />
+    <boolean name="headPoseInvertPitch" value="true" />
+    <long name="headPoseHoldMs" value="200" />
+    <int name="blinkTriggerCount" value="3" />
+    <boolean name="globalCooldownEnabled" value="true" />
+    <long name="globalCooldownMs" value="2000" />
+    <boolean name="horizontalSwipeEnabled" value="true" />
+    <float name="horizontalSwipeAngleThreshold" value="20.0" />
+    <boolean name="horizontalSwipeInvertYaw" value="false" />
+    <boolean name="mouthTapEnabled" value="true" />
+    <string name="mouthSensitivity">MEDIUM</string>
+    <boolean name="adaptiveSwipeEnabled" value="true" />
+    <float name="listSwipeDistance" value="0.26" />
+    <boolean name="globalPagingEnabled" value="false" />
+    <boolean name="headVolumeEnabled" value="false" />
+    <string name="headVolumeScope">SAME_AS_PAGING</string>
+    <boolean name="staticLockEnabled" value="true" />
+</map>

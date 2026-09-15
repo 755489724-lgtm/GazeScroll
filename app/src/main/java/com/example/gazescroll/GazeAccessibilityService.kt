@@ -30,8 +30,27 @@ class GazeAccessibilityService : AccessibilityService() {
         private const val SWIPE_FROM_RATIO = 0.8f
         private const val SWIPE_TO_RATIO = 0.2f
 
+        /**
+         * 水平滑动的起止位置（占屏幕宽度比例）。留出边缘手势区，避免被系统的
+         * 返回手势截走。
+         */
+        private const val H_FROM_RATIO = 0.80f
+        private const val H_TO_RATIO = 0.20f
+
         /** Spec: the gesture lasts 100 ms. */
         const val DEFAULT_SWIPE_MS = 100L
+
+        /** 屏幕中央点击的默认时长；足够短，平台会当成一次 tap 而不是滑动。 */
+        const val TAP_DURATION_MS = 60L
+
+        /**
+         * 纵向滑动的路径点数（v5.1）。
+         *
+         * 一条直线 ≡ 一个采样点，很多 App 的滚动识别只看得到「一次跳变」而不认；补足中间
+         * 点后系统会派发多次 MOVE 事件，与真实手指一致。6 个点在 150ms 的手势里约每 25ms
+         * 一次更新，足够让 VelocityTracker 算出速度。
+         */
+        private const val SWIPE_WAYPOINTS = 6
 
         @Volatile
         var instance: GazeAccessibilityService? = null
@@ -99,37 +118,104 @@ class GazeAccessibilityService : AccessibilityService() {
         swipe(SwipeDirection.UP, durationMs)
 
     /**
-     * Swipe straight down the middle of the screen in [direction].
+     * Swipe through the screen in [direction] (vertical or horizontal).
+     *
+     * @param fallbackDurationMs 横向滑动的时长；纵向在没有 [verticalProfile] 时也用它
+     * @param verticalProfile 自适应给出的纵向幅度 / 时长（见 [AdaptiveSwipe]）
      *
      * Returns false when the system refused the gesture (another gesture in
      * flight, or the service is not connected).
      */
-    fun swipe(direction: SwipeDirection, durationMs: Long = DEFAULT_SWIPE_MS): Boolean {
+    fun swipe(
+        direction: SwipeDirection,
+        fallbackDurationMs: Long = DEFAULT_SWIPE_MS,
+        verticalProfile: VerticalSwipeProfile? = null,
+    ): Boolean {
         val bounds = screenBounds()
         val w = bounds.width().toFloat()
         val h = bounds.height().toFloat()
         if (w <= 0f || h <= 0f) return false
 
-        val (fromRatio, toRatio) = when (direction) {
-            SwipeDirection.UP -> SWIPE_FROM_RATIO to SWIPE_TO_RATIO
-            SwipeDirection.DOWN -> SWIPE_TO_RATIO to SWIPE_FROM_RATIO
+        val path = Path()
+        val durationMs: Long
+        if (direction.isHorizontal) {
+            // 横向不参与自适应，保持 v4.4 以来的固定参数。
+            durationMs = fallbackDurationMs
+            val y = h * 0.5f
+            val fromX = w * if (direction == SwipeDirection.LEFT) H_FROM_RATIO else H_TO_RATIO
+            val toX = w * if (direction == SwipeDirection.LEFT) H_TO_RATIO else H_FROM_RATIO
+            path.moveTo(fromX, y)
+            path.lineTo(toX, y)
+        } else {
+            // 纵向：幅度和时长按前台应用动态决定；比例乘屏幕高度，不写死像素。
+            val profile = verticalProfile ?: VerticalSwipeProfile(
+                name = "fixed",
+                fromRatio = SWIPE_FROM_RATIO,
+                toRatio = SWIPE_TO_RATIO,
+                durationMs = fallbackDurationMs,
+            )
+            durationMs = profile.durationMs
+            val (fromRatio, toRatio) = profile.pathFor(direction)
+            val x = w * 0.5f
+            val y1 = h * fromRatio
+            val y2 = h * toRatio
+
+            // 关键：**不要只画一条直线**。
+            //
+            // `dispatchGesture` 的一条直线相当于「一个采样点从起点直接跳到终点」，而多数
+            // App 的滚动手势识别（VelocityTracker + touch slop）期望的是多次坐标更新。
+            // 单段直线在自家设置页、桌面、微博都够用，但在抖音这类对输入更挑剔的全屏
+            // 播放器里会被忽略——现象正是「日志显示 swipe ok=true，但页面纹丝不动」。
+            //
+            // 这里补上均匀分布的中间点，让系统按真实手指轨迹派发多次 MOVE 事件。
+            path.moveTo(x, y1)
+            for (i in 1 until SWIPE_WAYPOINTS) {
+                val t = i.toFloat() / SWIPE_WAYPOINTS
+                path.lineTo(x, y1 + (y2 - y1) * t)
+            }
         }
 
-        val path = Path().apply {
-            moveTo(w * 0.5f, h * fromRatio)
-            lineTo(w * 0.5f, h * toRatio)
-        }
         val stroke = GestureDescription.StrokeDescription(
             path,
             0L,
-            durationMs.coerceIn(60L, 1000L),
+            durationMs.coerceIn(30L, 2000L),
         )
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         val ok = runCatching { dispatchGesture(gesture, null, null) }.getOrDefault(false)
         android.util.Log.i(
             "GazeA11y",
-            "swipe $direction (w/2, ${h * fromRatio}) -> (w/2, ${h * toRatio}) ${durationMs}ms = $ok",
+            "swipe $direction pts=${if (direction.isHorizontal) 2 else SWIPE_WAYPOINTS} " +
+                "${durationMs}ms = $ok",
         )
+        return ok
+    }
+
+    /**
+     * 在屏幕中央注入一次单击（v4.6 的「张嘴点击」用）。
+     *
+     * 用 `dispatchGesture` 实现，路径起点终点都在屏幕中心、duration 很短，等价于一次
+     * 点击。抖音这类全屏播放器收到后就是暂停 / 播放。
+     *
+     * 返回 false 说明系统拒绝了这次手势（服务未连接、或另一个手势还在飞行中）。
+     */
+    fun tapCenter(durationMs: Long = TAP_DURATION_MS): Boolean {
+        val bounds = screenBounds()
+        val w = bounds.width().toFloat()
+        val h = bounds.height().toFloat()
+        if (w <= 0f || h <= 0f) return false
+
+        val path = Path().apply {
+            moveTo(w * 0.5f, h * 0.5f)
+            lineTo(w * 0.5f, h * 0.5f)
+        }
+        val stroke = GestureDescription.StrokeDescription(
+            path,
+            0L,
+            durationMs.coerceIn(20L, 500L),
+        )
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val ok = runCatching { dispatchGesture(gesture, null, null) }.getOrDefault(false)
+        android.util.Log.i("GazeA11y", "tap center (${w / 2}, ${h / 2}) = $ok")
         return ok
     }
 

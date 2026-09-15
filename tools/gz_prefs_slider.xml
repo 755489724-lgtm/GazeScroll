@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<map>
+    <boolean name="setupComplete" value="true" />
+    <set name="targetPackages">
+        <string>com.ss.android.ugc.aweme</string>
+        <string>com.sina.weibo</string>
+    </set>
+    <boolean name="headPoseEnabled" value="true" />
+    <float name="headPoseAngleThreshold" value="6.0" />
+    <boolean name="headPoseInvertPitch" value="true" />
+    <boolean name="globalCooldownEnabled" value="true" />
+    <long name="globalCooldownMs" value="2000" />
+    <boolean name="horizontalSwipeEnabled" value="true" />
+    <float name="horizontalSwipeAngleThreshold" value="20.0" />
+    <boolean name="mouthTapEnabled" value="true" />
+    <string name="mouthSensitivity">MEDIUM</string>
+    <boolean name="adaptiveSwipeEnabled" value="true" />
+    <float name="listSwipeDistance" value="0.26" />
+</map>

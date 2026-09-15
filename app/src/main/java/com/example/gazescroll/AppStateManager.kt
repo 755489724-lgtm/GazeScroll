@@ -97,9 +97,18 @@ object AppStateManager {
     var foregroundPackage: String? = null
         private set
 
-    /** True while a selected target app is in the foreground. */
+    /** True while a selected target app is in the foreground (or global paging is on). */
     @Volatile
     var targetActive: Boolean = true
+        private set
+
+    /**
+     * 全局使用翻页（v4.7）。打开后白名单检查整个跳过，桌面 / 任何应用都算「允许翻页」。
+     *
+     * 从 [AppPrefs] 读入，[refresh] 和每次轮询都会重新同步，所以用户在设置里一开就生效。
+     */
+    @Volatile
+    var globalPaging: Boolean = false
         private set
 
     /** Diagnostics: true once either usage-stats route returned something. */
@@ -114,7 +123,7 @@ object AppStateManager {
     @Volatile
     var forceActive: Boolean = false
 
-    private val listeners = CopyOnWriteArrayList<(Boolean) -> Unit>()
+    private val listeners = CopyOnWriteArrayList<(Boolean, String) -> Unit>()
     private val handler = Handler(Looper.getMainLooper())
 
     private var appContext: Context? = null
@@ -132,13 +141,19 @@ object AppStateManager {
 
     private val settleRunnable = Runnable { commitPending() }
 
-    /** Immediately fires the current value, so a new listener starts in sync. */
-    fun addListener(listener: (Boolean) -> Unit) {
+    /**
+     * Immediately fires the current value, so a new listener starts in sync.
+     *
+     * 回调带一个 [reason]：`enter` / `leave` / `refresh`。服务据此决定要不要做一次
+     * 「强恢复」——v4.7 修的正是「从桌面切回目标应用却要手动滑一下才生效」，
+     * 所以每次**真实进入**都重新武装整条流水线，而不是只依赖一个布尔值的变化。
+     */
+    fun addListener(listener: (Boolean, String) -> Unit) {
         listeners.add(listener)
-        runCatching { listener(targetActive) }
+        runCatching { listener(targetActive, "initial") }
     }
 
-    fun removeListener(listener: (Boolean) -> Unit) {
+    fun removeListener(listener: (Boolean, String) -> Unit) {
         listeners.remove(listener)
     }
 
@@ -193,19 +208,34 @@ object AppStateManager {
         appContext = ctx.applicationContext
         handler.removeCallbacks(settleRunnable)
         pendingPackage = foregroundPackage
+        syncGlobalPaging(ctx)
         // Force it through even though the package is unchanged: the answer to
         // "is this a target?" is exactly what just changed.
-        commitPending(force = true)
+        commitPending(force = true, reason = "refresh")
+    }
+
+    /** 把「全局使用翻页」开关从设置里同步进来。 */
+    private fun syncGlobalPaging(ctx: Context) {
+        globalPaging = AppPrefs.isGlobalPagingEnabled(ctx)
+    }
+
+    /** 当前前台应用是否允许翻页（全局模式下一律允许）。 */
+    private fun isAllowed(ctx: Context, packageName: String?): Boolean {
+        if (globalPaging) return true
+        if (packageName == null) return true
+        val targets = AppPrefs.targetPackages(ctx)
+        // An empty selection means "always on": the on-demand gate is disabled
+        // entirely, which is the escape hatch if foreground detection misbehaves.
+        return targets.isEmpty() || packageName in targets
     }
 
     private fun propose(ctx: Context, packageName: String?) {
         appContext = ctx
         lastObservationAtMs = SystemClock.elapsedRealtime()
         pendingPackage = packageName
+        syncGlobalPaging(ctx)
 
-        val targets = AppPrefs.targetPackages(ctx)
-        val wouldBeActive = packageName == null || targets.isEmpty() ||
-            packageName in targets
+        val wouldBeActive = isAllowed(ctx, packageName)
 
         // Chain launch, with no settling at all: the moment a target app reaches
         // the front, make sure the camera service exists. Building it takes a
@@ -221,24 +251,35 @@ object AppStateManager {
         )
     }
 
-    private fun commitPending(force: Boolean = false) {
+    private fun commitPending(force: Boolean = false, reason: String = "change") {
         val ctx = appContext ?: return
         val packageName = pendingPackage
         if (!force && packageName == foregroundPackage) return
 
+        val previousPackage = foregroundPackage
+        val previousActive = targetActive
         foregroundPackage = packageName
-        val targets = AppPrefs.targetPackages(ctx)
-        // An empty selection means "always on": the on-demand gate is disabled
-        // entirely, which is the escape hatch if foreground detection ever
-        // misbehaves on a given device.
-        val active = packageName == null || targets.isEmpty() || packageName in targets
+        val active = isAllowed(ctx, packageName)
+        if (previousPackage != packageName) {
+            Log.i(TAG, "window changed: $previousPackage -> $packageName (allowed=$active)")
+        }
         Log.i(TAG, "foreground=$packageName (target=$active)")
-        if (active == targetActive) return
+
+        // 只有「允许翻页」的状态真的变了、或者前台应用换了才通知。
+        // 前台应用换了也要通知：服务需要重新武装检测器（v4.7 的恢复修复）。
+        val packageChanged = previousPackage != packageName
+        if (active == previousActive && !packageChanged && reason != "refresh") return
 
         targetActive = active
-        Log.i(TAG, "target state -> $active")
+        val effectiveReason = when {
+            reason == "refresh" -> "refresh"
+            active != previousActive -> if (active) "enter" else "leave"
+            packageChanged -> "package-change"
+            else -> "change"
+        }
+        Log.i(TAG, "target state -> $active (reason=$effectiveReason)")
         for (listener in listeners.toList()) {
-            runCatching { listener(active) }
+            runCatching { listener(active, effectiveReason) }
         }
     }
 
@@ -264,7 +305,7 @@ object AppStateManager {
         )
         lastObservationAtMs = now
         pendingPackage = null
-        commitPending(force = true)
+        commitPending(force = true, reason = "fail-open")
     }
 
     // ---------------------------------------------------------------- polling --
@@ -273,9 +314,26 @@ object AppStateManager {
         val ctx = appContext ?: return
         checkBlind()
 
+        // 设置页可能刚改了「全局使用翻页」，每次轮询都重新同步一次，
+        // 保证用户一打开开关就立刻生效，而不用等下一次窗口事件。
+        syncGlobalPaging(ctx)
+
         // Chain-launch watchdog: a target app is in front but the camera service
         // is gone (killed by the system, or never started) — bring it straight back.
         if (targetActive) GazeCameraService.ensureRunning(ctx)
+
+        // v5.3：**主动存活检查**，这条是「重开抖音必须下拉状态栏才生效」的根因修复。
+        //
+        // 以前整条恢复链只在「前台包名发生变化」时才会跑（见 commitPending 里的
+        // `packageName == foregroundPackage` 早退）。于是出现过这样的死角：
+        // 状态里记的前台已经是抖音（或这次切换根本没被观察到），包名没变 → 什么都不通知
+        // → onTargetEntered() 不执行 → 相机不重绑 → 功能静默失效。
+        //
+        // 下拉状态栏之所以"有效"，正是因为它**人为制造了一次包名变化**：
+        // 先变成 com.android.systemui，收起时再变回抖音，等于替我们触发了两次通知。
+        //
+        // 现在改成不依赖包名变化：只要「当前允许翻页」而流水线实际是死的，就强制重新武装。
+        if (targetActive) GazeCameraService.ensurePipelineAlive(ctx)
 
         // 1. The source that actually works here.
         val service = GazeAccessibilityService.instance

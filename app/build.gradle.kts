@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.gazescroll"
         minSdk = 26
         targetSdk = 34
-        versionCode = 42
-        versionName = "4.2"
+        versionCode = 53
+        versionName = "5.3"
     }
 
     buildTypes {
@@ -70,7 +70,7 @@ dependencies {
 
     // Shizuku — injects the swipe gesture with ADB (shell) privileges.
     // This replaces AccessibilityService, which MIUI/HyperOS blocks on
-    // sideloaded apps ("已拒绝此应用获取敏感权限").
+    // sideloaded apps (it refuses to grant sensitive permissions to them).
     //
     // 13.1.5 is the minimum usable version here: 13.1.5 fixed a
     // ShizukuProvider crash on Android 14 when the app targets API 34, so

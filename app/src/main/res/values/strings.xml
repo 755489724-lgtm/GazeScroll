@@ -27,7 +27,57 @@
     <string name="settings_blink_3">眨眼 3 次（最不容易误触）</string>
     <string name="settings_head_pose">开启「点头 / 仰头」翻页（默认关闭）</string>
     <string name="settings_head_invert">反转俯仰方向（点头仰头反了就打开）</string>
-    <string name="settings_footer">点头向下 = 上一个视频；仰头向上 = 下一个视频。\n头部动作要在 0.5 秒内完成、并保持 0.2 秒才会触发，触发后冷却 2 秒。\n基准线自动学习（滑动窗口中位数），不需要手动校准。\n\n改完设置会立即保存并生效，可以返回桌面了。</string>
+    <string name="settings_static_lock">静止防误触（人不动时自动抬高阈值，压掉静止误触）</string>
+
+    <string name="settings_cooldown_title">防误触冷却</string>
+    <string name="settings_cooldown_switch">启用冷却时间</string>
+    <string name="settings_cooldown_range">可调范围 0.5 ~ 5 秒（默认 1.5 秒）</string>
+    <string name="settings_cooldown_hint">摄像头是逐帧（约 15 帧/秒）检测的，一次点头或眨眼会连续命中好几帧，于是被当成好几次翻页，出现「一滑好几页」甚至上下乱跳。\n打开后：眨眼和点头「共用同一个冷却计时器」——任意一个动作触发翻页后，冷却期内所有动作一律忽略，冷却结束才响应下一次。\n一次动作仍然翻一页、重复触发明显变多，就把这个时间调大。</string>
+    <string name="settings_cooldown_live_off">冷却：已关闭（每个动作每一帧都可能触发翻页）</string>
+    <string name="settings_cooldown_live_idle">冷却：待命，现在可以触发</string>
+    <string name="settings_cooldown_live_active">冷却中… 还剩 %1$s</string>
+
+    <!-- v4.4 左右扭头滑动 -->
+    <string name="settings_horiz_title">左右扭头滑动</string>
+    <string name="settings_horiz_switch">启用「向左 / 向右扭头」滑动</string>
+    <string name="settings_horiz_hint">扭头到设定角度并保持一下，就向对应方向滑一次。前后左右共用同一个冷却时间，所以不会和上下翻页同时发出。\n默认关闭。开启后如果左右相反，请打开下面的「反转左右方向」。</string>
+    <string name="settings_horiz_threshold">扭头灵敏度</string>
+    <string name="settings_horiz_high">高 · 14°（轻轻偏头即可）</string>
+    <string name="settings_horiz_medium">中 · 20°（默认）</string>
+    <string name="settings_horiz_low">低 · 28°（需要明显扭头）</string>
+    <string name="settings_horiz_invert">反转左右方向（扭头方向反了就打开）</string>
+
+    <!-- v4.6 张嘴点击屏幕中央 -->
+    <string name="settings_mouth_title">张嘴 → 点击屏幕中央</string>
+    <string name="settings_mouth_switch">启用「张嘴点击屏幕中央」</string>
+    <string name="settings_mouth_hint">张嘴一次 = 在屏幕中央点一下。抖音这类全屏播放器收到单击就会暂停 / 播放，所以这个动作交给目标 App 去响应。\n它**不会**暂停本 App：张嘴之后眨眼、点头、左右扭头照常翻页，不受任何影响。\n判定用的是「嘴到鼻底的距离 ÷ 人脸高度」，并按你本人自然闭嘴时的水平自动校准，所以离手机远近、机型都不影响。\n防连发：必须「闭嘴之后再次张嘴」才算下一次，一直张着嘴只会点一下。这是控制指令，不受全局冷却限制。</string>
+    <string name="settings_mouth_sensitivity">张嘴灵敏度</string>
+    <string name="settings_mouth_high">高 · 5%（轻微张嘴即可）</string>
+    <string name="settings_mouth_medium">中 · 8%（默认）</string>
+    <string name="settings_mouth_low">低 · 12%（需要明显张大）</string>
+
+    <!-- v4.5 自适应滑动 + v4.6 柔度调节 -->
+    <string name="settings_adaptive_title">自适应滑动幅度</string>
+    <string name="settings_adaptive_switch">按应用自动调整上下滑动幅度</string>
+    <string name="settings_adaptive_hint">抖音是「一屏一个视频」，需要整屏滑动才能切换；微博、小红书是连续列表，同样幅度会一下滚过好几屏。\n打开后按当前前台应用自动切换：\n· 抖音 / 快手等：整屏 80% 快滑（130ms）\n· 微博 / 小红书 / 知乎等列表：按下面「滑动柔度」设定的幅度慢滑（默认 26% / 420ms）\n· 其他应用：40% / 300ms\n左右扭头滑动不参与自适应，保持原样。\n关闭后回到固定参数（80% / 100ms）。</string>
+    <string name="settings_adaptive_current">当前滑动配置：%1$s</string>
+    <string name="settings_adaptive_current_empty">当前滑动配置：等待前台应用信息…</string>
+
+    <string name="settings_softness_title">自定义滑动柔度（列表类应用）</string>
+    <string name="settings_softness_value">列表滑动幅度：%1$s</string>
+    <string name="settings_softness_range">可调范围 10% ~ 50% 屏高 · 拖动即时生效并自动保存</string>
+    <string name="settings_softness_reset">恢复默认</string>
+    <string name="settings_softness_reset_done">已恢复默认滑动幅度（26% 屏高）</string>
+
+    <!-- v4.7 全局使用翻页 -->
+    <string name="settings_global_paging_title">全局使用翻页</string>
+    <string name="settings_global_paging_switch">在任何界面都能翻页（含桌面）</string>
+    <string name="settings_global_paging_hint">打开后不再受「生效的应用」列表限制：桌面、系统设置、任何 App 里眨眼 / 点头 / 扭头都能翻页。\n代价是摄像头会一直工作，比节能模式费电。\n想在桌面偶尔翻一下时打开它；只想刷视频时省电就关掉。</string>
+    <string name="settings_global_paging_state_empty">当前状态：—</string>
+    <string name="settings_global_paging_state_on">当前状态：全局开启 · 摄像头持续运行 · 前台：%1$s</string>
+    <string name="settings_global_paging_state_off">当前状态：节能模式 · 仅在勾选的 %1$d 个应用里生效</string>
+
+    <string name="settings_footer">点头向下 = 上一个视频；仰头向上 = 下一个视频；左右扭头 = 左右滑动（需开启）。\n头部动作要在 0.5 秒内完成、并保持 0.2 秒才会触发。\n基准线自动学习（滑动窗口中位数），不需要手动校准。\n张嘴一次 = 点击屏幕中央（抖音等可暂停/播放视频），不会暂停本 App。\n\n改完设置会立即保存并生效，可以返回桌面了。</string>
 
     <string name="settings_targets_title">生效的应用（节能）</string>
     <string name="settings_targets_hint">翻页功能仅在勾选的应用在前台时生效，退出这些应用将自动休眠以节省电量。\n未安装的应用会置灰不可选。\n全部不勾选 = 关闭节能，任何界面都生效（识别不准时的逃生开关）。</string>

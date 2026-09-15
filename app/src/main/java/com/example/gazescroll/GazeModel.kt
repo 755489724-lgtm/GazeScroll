@@ -47,6 +47,21 @@ data class GazeSample(
 }
 
 /**
+ * 张嘴判定灵敏度。
+ *
+ * [fraction] 是「张嘴量占脸高的比例」阈值——张嘴量 = 当前（嘴到鼻底距离 / 脸高）减去
+ * 本人自然闭嘴时的水平。用比例而不是像素，是为了不受离手机远近和机型分辨率影响。
+ *
+ * 三个档位的取值来自实机标定：自然闭嘴时读数基本恒定，正常张嘴会比闭嘴高出 10% 脸高
+ * 以上，所以 5% / 8% / 12% 三档覆盖「容易触发」到「必须明显张大」。
+ */
+enum class MouthSensitivity(val label: String, val fraction: Float) {
+    HIGH("高（5%，轻微张嘴即可）", 0.05f),
+    MEDIUM("中（8%，默认）", 0.08f),
+    LOW("低（12%，需要明显张大）", 0.12f),
+}
+
+/**
  * Every tunable of the state machine. Defaults are exactly the numbers in the
  * product spec, and the debug UI lets a tester move them at runtime.
  */
@@ -77,8 +92,6 @@ data class GazeConfig(
      * Each gap must fall inside [BlinkDetector.blinkGapMinMs]..[blinkGapMaxMs].
      */
     val blinkTriggerCount: Int = 2,
-    /** Lockout after a blink-triggered swipe. */
-    val blinkCooldownMs: Long = 1500L,
 
     // ---- blink sensitivity (tuned for glasses) ----
 
@@ -101,11 +114,103 @@ data class GazeConfig(
     /** The baseline→peak rise must happen inside this window to count as a nod. */
     val headPoseMotionWindowMs: Long = 500L,
     /** …and the peak must then be held this long before it fires. */
-    val headPoseHoldMs: Long = 200L,
-    /** Lockout after a head-pose-triggered swipe (spec: 2000 ms). */
-    val headPoseCooldownMs: Long = 2000L,
+    val headPoseHoldMs: Long = 150L,
     /** Flip the pitch sign if nodding and tilting come out swapped on a device. */
     val headPoseInvertPitch: Boolean = false,
+
+    // ------------------------------------------------- v4.4：左右扭头滑动 --
+
+    /** 启用「向左/向右扭头」触发水平滑动。默认关闭，不影响老用户。 */
+    val horizontalSwipeEnabled: Boolean = false,
+
+    /** 左右扭头灵敏度（角度档位）：28°/20°/14°。数值越小越灵敏。 */
+    val horizontalSwipeAngleThreshold: Float = 20f,
+
+    /** 左右反了的时候打开，反转偏航角符号。 */
+    val horizontalSwipeInvertYaw: Boolean = false,
+
+    // ------------------------------------------------- v4.6：张嘴点击屏幕中央 --
+
+    /**
+     * 张嘴一次 → 在屏幕中央注入一次单击。默认开启。
+     *
+     * 在抖音这类全屏播放器里，单击屏幕中央就是**暂停 / 播放**，所以这个动作交给目标
+     * App 去响应，而不是冻结 GazeScroll 自己——v4.5 的「张嘴暂停 App」在实机上被证明
+     * 没用（暂停后连同上下左右滑动一起失效了）。
+     *
+     * 这是一条**控制指令**，不走 [GlobalTriggerGate]，因此不会被冷却挡住。防连发靠
+     * [MouthOpenDetector] 的锁存——必须闭嘴之后再次张嘴才算下一次。它也**不影响**
+     * 眨眼 / 点头 / 扭头翻页：张嘴之后这些照常工作。
+     */
+    val mouthTapEnabled: Boolean = true,
+
+    /** 张嘴判定灵敏度档位。 */
+    val mouthSensitivity: MouthSensitivity = MouthSensitivity.MEDIUM,
+
+    // ------------------------------------------------- v4.5：自适应滑动 --
+
+    /**
+     * 根据前台应用自动调整上下滑动的幅度与时长。默认开启。
+     *
+     * 抖音需要整屏切换，微博/小红书这类连续列表则需要短距离柔性滚动，否则「一划就滚
+     * 很多」。关闭后回到 v4.4 的固定参数（80% / 100ms）。
+     */
+    val adaptiveSwipeEnabled: Boolean = true,
+
+    /**
+     * 列表类应用（微博 / 小红书 / 知乎 / B站…）的滑动幅度，占屏幕高度的比例。
+     *
+     * 默认 [AdaptiveSwipe.DEFAULT_LIST_DISTANCE]（26%），与 v4.5 出厂手感完全一致；
+     * 用户可以在设置里按自己的手感调。时长不跟着变（仍是 420ms），所以调小只是
+     * 「滚得更少」，不会变得生硬。
+     */
+    val listSwipeDistance: Float = AdaptiveSwipe.DEFAULT_LIST_DISTANCE,
+
+    // ------------------------------------------------- v4.7：全局使用翻页 --
+
+    /**
+     * 全局使用翻页：打开后桌面和所有应用都响应翻页手势，不再受目标应用列表限制。
+     *
+     * 默认关闭，保持 v4.6 的节能白名单行为。打开后摄像头会一直工作（费电，但随时可用），
+     * 适合「想在桌面偶尔也能翻一下」的场景。
+     */
+    val globalPagingEnabled: Boolean = false,
+
+    // ------------------------------------------------- v4.8：防误触增强 --
+
+    /**
+     * 静止锁定：连续半秒几乎没在动时，把判定阈值放大 [staticLockFactor] 倍。
+     *
+     * 用来压掉「一动不动也误触下滑」——静止时出现的「动作」几乎一定是 ML Kit 的读数
+     * 抖动（1~3°）。真的一动，锁定立刻解除，所以不影响正常动作的响应速度。
+     */
+    val staticLockEnabled: Boolean = true,
+
+    /**
+     * 静止锁定的阈值放大倍数。
+     *
+     * 1.5 是权衡后的取值：静止时 ML Kit 的读数抖动一般在 1~3°，而一次有意动作会明显
+     * 超过阈值本身，所以 1.5 足以把噪声压掉，又不会让正常动作变得迟钝。
+     */
+    val staticLockFactor: Float = 1.5f,
+
+    // ------------------------------------------------------- 全局冷却（防误触） --
+
+    /**
+     * 全局冷却开关。**打开后点头和眨眼共用同一个冷却计时器**：任意一个动作
+     * 触发翻页后，整个触发系统进入冷却，冷却期内所有信号一律忽略。
+     *
+     * 关闭时回到旧行为（各检测器只管自己），保持向后兼容。
+     */
+    val globalCooldownEnabled: Boolean = true,
+
+    /**
+     * 全局冷却时长，单位毫秒。默认 1500 ms。
+     *
+     * 摄像头逐帧检测，一次真实动作会连续命中好几帧；这个值就是"一次动作 = 一次
+     * 翻页"的节流窗口。调大更防误触但连续翻页更慢，调小更跟手但容易重复触发。
+     */
+    val globalCooldownMs: Long = GlobalTriggerGate.DEFAULT_COOLDOWN_MS,
 
     /**
      * Legacy "look at the bottom, then at the top" two-zone state machine.
@@ -135,14 +240,60 @@ data class GazeConfig(
             smoothingAlpha = smoothingAlpha.coerceIn(0.05f, 1f),
             swipeDurationMs = swipeDurationMs.coerceIn(60L, 1000L),
             blinkTriggerCount = blinkTriggerCount.coerceIn(1, 3),
-            blinkCooldownMs = blinkCooldownMs.coerceIn(300L, 10_000L),
             blinkClosedBelow = blinkClosedBelow.coerceIn(0.10f, 0.90f),
             blinkOpenAbove = blinkOpenAbove.coerceIn(0.20f, 0.99f),
             blinkClosedFrames = blinkClosedFrames.coerceIn(1, 6),
             headPoseAngleThreshold = headPoseAngleThreshold.coerceIn(3f, 45f),
             headPoseMotionWindowMs = headPoseMotionWindowMs.coerceIn(150L, 2000L),
             headPoseHoldMs = headPoseHoldMs.coerceIn(60L, 1500L),
-            headPoseCooldownMs = headPoseCooldownMs.coerceIn(300L, 10_000L),
+            horizontalSwipeAngleThreshold = horizontalSwipeAngleThreshold.coerceIn(8f, 45f),
+            staticLockFactor = staticLockFactor.coerceIn(1f, 3f),
+            listSwipeDistance = listSwipeDistance.coerceIn(
+                AdaptiveSwipe.MIN_LIST_DISTANCE,
+                AdaptiveSwipe.MAX_LIST_DISTANCE,
+            ),
+            globalCooldownMs = globalCooldownMs.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS),
         )
+    }
+
+    companion object {
+        /** 全局冷却可调节下限：0.5 秒。 */
+        const val MIN_GLOBAL_COOLDOWN_MS = 500L
+
+        /** 全局冷却可调节上限：5 秒。 */
+        const val MAX_GLOBAL_COOLDOWN_MS = 5000L
+
+        /**
+         * 滑块步长：250 ms。0.5s~5s 正好切成 18 档，既够细也不会像 1ms 步进
+         * 那样在小米 13 的窄条上难以对准。
+         */
+        const val GLOBAL_COOLDOWN_STEP_MS = 250L
+
+        /** 滑块档数：[MIN_GLOBAL_COOLDOWN_MS] + 档位 × [GLOBAL_COOLDOWN_STEP_MS]。 */
+        const val GLOBAL_COOLDOWN_STEPS =
+            ((MAX_GLOBAL_COOLDOWN_MS - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt()
+
+        /** 滑块档位（0 对应下限，[GLOBAL_COOLDOWN_STEPS] 对应上限）-> 毫秒。 */
+        fun cooldownMsForStep(step: Int): Long =
+            (MIN_GLOBAL_COOLDOWN_MS + step.coerceIn(0, GLOBAL_COOLDOWN_STEPS) * GLOBAL_COOLDOWN_STEP_MS)
+                .coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS)
+
+        /** 毫秒 -> 最接近的滑块档位。 */
+        fun cooldownStepForMs(ms: Long): Int {
+            val clamped = ms.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS)
+            return ((clamped - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt()
+                .coerceIn(0, GLOBAL_COOLDOWN_STEPS)
+        }
+
+        /** 把任意毫秒值吸附到滑块步长，并夹到合法区间。 */
+        fun snapGlobalCooldown(ms: Long): Long = cooldownMsForStep(cooldownStepForMs(ms))
+
+        /** 冷却时长的显示文本，例如 `1.5 秒` / `2 秒` / `0.5 秒`。 */
+        fun formatCooldown(ms: Long): String =
+            if (ms % 1000L == 0L) {
+                "${ms / 1000} 秒"
+            } else {
+                "%.1f 秒".format(java.util.Locale.US, ms / 1000.0)
+            }
     }
 }

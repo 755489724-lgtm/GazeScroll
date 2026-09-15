@@ -44,6 +44,32 @@ object GazeRuntime {
         val headAngleDeg: Float? = null,
         /** Current head-pose baseline (median of the sliding window). */
         val headBaselineDeg: Float? = null,
+        /** Latest raw yaw (`headEulerAngleY`), used by the left/right turn gesture. */
+        val headYawDeg: Float? = null,
+        /** 累计识别到的扭头次数（左右都算）。 */
+        val turnCount: Int = 0,
+
+        // ---- v4.5 张嘴暂停：把原始读数暴露出来，方便用户照着真实数值挑灵敏度 ----
+
+        /** 平滑后的张嘴比例（嘴到鼻底距离 / 脸高）；null 表示还没检测到脸。 */
+        val mouthRatio: Float? = null,
+        /** 估计出的本人自然闭嘴水平（同单位）。 */
+        val mouthBaseline: Float? = null,
+        /** 当前是否判定为张嘴状态。 */
+        val mouthOpen: Boolean = false,
+        /** 累计识别到的张嘴次数。 */
+        val mouthOpenCount: Int = 0,
+        /** 累计由张嘴触发的「屏幕中央点击」次数。 */
+        val mouthTapCount: Int = 0,
+
+        /** 当前前台应用对应的纵向滑动配置（人话描述），设置页显示用。 */
+        val swipeProfile: String = "",
+        /**
+         * 全局冷却剩余毫秒数；0 表示现在可以触发。
+         *
+         * 仅用于设置页显示，方便确认「防误触冷却」确实在拦触发。
+         */
+        val cooldownRemainMs: Long = 0L,
 
         val note: String = "未启动",
     )

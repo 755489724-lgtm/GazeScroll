@@ -101,6 +101,404 @@
             android:textColor="@color/on_surface_dim"
             android:textSize="13sp" />
 
+        <!-- v4.8：静止锁定，压掉「一动不动也误触」。 -->
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchStaticLock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_static_lock"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_cooldown_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <!-- 开关与实时数值同一行：数值右对齐，拖动滑块时立刻变化。 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:baselineAligned="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchGlobalCooldown"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/settings_cooldown_switch"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvCooldownValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/accent"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <!-- max = GazeConfig.GLOBAL_COOLDOWN_STEPS（500ms~5000ms，每档 250ms）。 -->
+        <SeekBar
+            android:id="@+id/seekCooldown"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:max="18" />
+        <TextView
+            android:id="@+id/tvCooldownRange"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/settings_cooldown_range"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_cooldown_hint"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvCooldownLive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/settings_cooldown_live_off"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <!-- ================= v4.4 左右扭头滑动 ================= -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_horiz_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchHorizontalSwipe"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_horiz_switch"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_horiz_hint"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvHorizThreshold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/settings_horiz_threshold"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgHorizSensitivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbHorizHigh"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_horiz_high"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbHorizMedium"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_horiz_medium"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbHorizLow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_horiz_low"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchHorizInvert"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_horiz_invert"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <!-- ================= v4.5 张嘴暂停 / 恢复 ================= -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_mouth_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchMouthTap"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_mouth_switch"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_mouth_hint"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvMouthThreshold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/settings_mouth_sensitivity"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgMouthSensitivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbMouthHigh"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_mouth_high"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbMouthMedium"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_mouth_medium"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbMouthLow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_mouth_low"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <!-- ================= v4.5 自适应滑动幅度 + v4.6 柔度调节 ================= -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_adaptive_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchAdaptiveSwipe"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_adaptive_switch"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_adaptive_hint"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvSwipeProfile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:fontFamily="monospace"
+            android:lineSpacingMultiplier="1.3"
+            android:text="@string/settings_adaptive_current_empty"
+            android:textColor="@color/on_surface"
+            android:textSize="12sp" />
+
+        <!-- v4.6 自定义滑动柔度：只影响列表类应用的滑动幅度。 -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:baselineAligned="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/settings_softness_title"
+                android:textColor="@color/on_surface_dim"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/btnResetListDistance"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/settings_softness_reset"
+                android:textColor="@color/accent"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvListDistanceValue"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:textColor="@color/accent"
+            android:textSize="14sp" />
+
+        <!-- max = AdaptiveSwipe.LIST_DISTANCE_STEPS（10%~50%，每档 2%）。 -->
+        <SeekBar
+            android:id="@+id/seekListDistance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:max="20" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/settings_softness_range"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="14dp"
+            android:background="#33FFFFFF" />
+
+        <!-- ================= v4.7 全局使用翻页 ================= -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_global_paging_title"
+            android:textColor="@color/accent"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchGlobalPaging"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/settings_global_paging_switch"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingMultiplier="1.35"
+            android:text="@string/settings_global_paging_hint"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvGlobalPagingState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:fontFamily="monospace"
+            android:lineSpacingMultiplier="1.3"
+            android:text="@string/settings_global_paging_state_empty"
+            android:textColor="@color/on_surface"
+            android:textSize="12sp" />
+
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"

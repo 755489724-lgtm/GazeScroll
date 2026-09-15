@@ -39,6 +39,15 @@ object ShizukuSwipeDispatcher {
     private const val FROM_RATIO = 0.8f
     private const val TO_RATIO = 0.2f
 
+    /**
+     * 水平滑动的起止位置（占屏幕宽度比例）。
+     *
+     * 用 0.80 → 0.20 而不是贴边，是为了给抖音这类全屏播放器留出边缘手势区，
+     * 免得滑动被系统的返回手势截走。
+     */
+    private const val H_FROM_RATIO = 0.80f
+    private const val H_TO_RATIO = 0.20f
+
     /** True once Shizuku has delivered its binder (i.e. the service is running). */
     fun isBinderAvailable(): Boolean =
         runCatching { Shizuku.pingBinder() }.getOrDefault(false)
@@ -84,12 +93,21 @@ object ShizukuSwipeDispatcher {
     }
 
     /**
-     * One vertical swipe through Shizuku's shell process.
+     * One swipe through Shizuku's shell process.
+     *
+     * @param fallbackDurationMs 横向滑动的时长；纵向在没有 [verticalProfile] 时也用它
+     * @param verticalProfile 自适应给出的纵向幅度 / 时长（见 [AdaptiveSwipe]）。
+     *        横向滑动传 null，走固定参数。
      *
      * Blocking: ~150 ms. Call from a background thread.
      * Returns false when Shizuku is unavailable, unauthorised, or the command failed.
      */
-    fun swipe(ctx: Context, direction: SwipeDirection, durationMs: Long): Boolean {
+    fun swipe(
+        ctx: Context,
+        direction: SwipeDirection,
+        fallbackDurationMs: Long,
+        verticalProfile: VerticalSwipeProfile? = null,
+    ): Boolean {
         if (!hasPermission()) {
             Log.w(TAG, "swipe skipped: no Shizuku permission")
             return false
@@ -98,16 +116,28 @@ object ShizukuSwipeDispatcher {
         val (w, h) = screenSize(ctx)
         if (w <= 0 || h <= 0) return false
 
-        val (fromRatio, toRatio) = when (direction) {
-            SwipeDirection.UP -> FROM_RATIO to TO_RATIO
-            SwipeDirection.DOWN -> TO_RATIO to FROM_RATIO
+        val command = if (direction.isHorizontal) {
+            // 横向不参与自适应：固定的屏幕宽度比例，纵向居中。
+            val duration = fallbackDurationMs.coerceIn(30L, 2000L)
+            val y = h / 2
+            val x1 = (w * if (direction == SwipeDirection.LEFT) H_FROM_RATIO else H_TO_RATIO).toInt()
+            val x2 = (w * if (direction == SwipeDirection.LEFT) H_TO_RATIO else H_FROM_RATIO).toInt()
+            "input swipe $x1 $y $x2 $y $duration"
+        } else {
+            // 纵向：幅度与时长按前台应用动态决定，比例乘屏幕高度 —— 不写死像素。
+            val profile = verticalProfile ?: VerticalSwipeProfile(
+                name = "fixed",
+                fromRatio = FROM_RATIO,
+                toRatio = TO_RATIO,
+                durationMs = fallbackDurationMs.coerceIn(30L, 2000L),
+            )
+            val (fromRatio, toRatio) = profile.pathFor(direction)
+            val duration = profile.durationMs.coerceIn(30L, 2000L)
+            val x = w / 2
+            val y1 = (h * fromRatio).toInt()
+            val y2 = (h * toRatio).toInt()
+            "input swipe $x $y1 $x $y2 $duration"
         }
-
-        val x = w / 2
-        val y1 = (h * fromRatio).toInt()
-        val y2 = (h * toRatio).toInt()
-        val duration = durationMs.coerceIn(30L, 2000L)
-        val command = "input swipe $x $y1 $x $y2 $duration"
 
         return try {
             val service = IShizukuService.Stub.asInterface(Shizuku.getBinder())
@@ -122,6 +152,40 @@ object ShizukuSwipeDispatcher {
             }
         } catch (t: Throwable) {
             Log.w(TAG, "swipe failed: $command", t)
+            false
+        }
+    }
+
+    /**
+     * 在屏幕中央注入一次单击（v4.6 的「张嘴点击」用）。
+     *
+     * 走平台的 `input tap` 而不是长度为 0 的 swipe：部分 ROM 对零长度手势的处理不一致，
+     * `input tap` 走的是平台自己的点击合成路径，最稳。
+     *
+     * Blocking: ~150 ms. Call from a background thread.
+     */
+    fun tapCenter(ctx: Context, durationMs: Long = 60L): Boolean {
+        if (!hasPermission()) {
+            Log.w(TAG, "tap skipped: no Shizuku permission")
+            return false
+        }
+        val (w, h) = screenSize(ctx)
+        if (w <= 0 || h <= 0) return false
+
+        val command = "input tap ${w / 2} ${h / 2}"
+        return try {
+            val service = IShizukuService.Stub.asInterface(Shizuku.getBinder())
+            val process = service.newProcess(arrayOf("sh", "-c", command), null, null)
+            val exit = process.waitFor()
+            if (exit == 0) {
+                Log.i(TAG, "tap ok: $command")
+                true
+            } else {
+                Log.w(TAG, "tap command exited $exit: $command")
+                false
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "tap failed: $command", t)
             false
         }
     }

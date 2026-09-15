@@ -41,6 +41,12 @@ class BlinkDetector(
          * detection) rather than a blink — clear it so blinks keep working.
          */
         private const val MAX_CLOSURE_MS = 3000L
+
+        /** 近距判定：脸高占画面比例 ≥ 此值时收紧眨眼判定。 */
+        private const val NEAR_FACE_RATIO = 0.55f
+
+        /** 中距判定。 */
+        private const val MID_FACE_RATIO = 0.38f
     }
 
     /** Below this, an eye counts as closed. Raised to 0.55 for glasses. */
@@ -66,10 +72,15 @@ class BlinkDetector(
     @Volatile
     var requiredBlinks: Int = 2
 
-    /** Lockout after a trigger (spec: 1500 ms). Refreshed from config each frame. */
+    /**
+     * 触发后的内部锁存，由服务每帧同步成用户设定的全局冷却时长。
+     *
+     * v4.3 起**面向用户的冷却由 [GlobalTriggerGate] 统一负责**，而且那个闸门是
+     * 点头和眨眼共用的。这里保留一份，只是为了让检测器自己在冷却期内不再累加
+     * `blinkCount`（否则设置页的「眨眼累计」会虚高）。
+     */
     @Volatile
     var cooldownMs: Long = 1500L
-
     /** Completed blinks seen since the service started. */
     @Volatile
     var blinkCount: Int = 0
@@ -97,6 +108,53 @@ class BlinkDetector(
     private var lastBlinkAtMs = 0L
     private var cooldownUntilMs = 0L
 
+    /**
+     * 人脸框高度占画面的比例（v5.3），由服务每帧同步。
+     *
+     * ML Kit 的 `eyeOpenProbability` 是**绝对**读数，不随脸的大小变化；但离得越近，
+     * 眼睛在画面里的物理尺寸越大，睫毛、眼镜反光、轻微眯眼造成的遮挡就越明显，读数
+     * 也就越容易跌破阈值。用户实测「30cm 静止时眨眼累计 86、已触发 63」——**近距离误触
+     * 的主因就是它**（同一份数据里俯仰偏差为 0，排除了点头）。
+     */
+    @Volatile
+    var faceRatio: Float? = null
+
+    /** 当前生效的闭眼阈值（已按距离调整）；日志与界面显示用。 */
+    @Volatile
+    var effectiveClosedBelow: Float = 0.55f
+        private set
+
+    /** 当前生效的连续闭眼帧数要求（已按距离调整）。 */
+    @Volatile
+    var effectiveRequiredClosedFrames: Int = 2
+        private set
+
+    /**
+     * 按距离收紧眨眼判定（v5.3）。
+     *
+     * 近距离时同时做两件事：**降低**闭眼阈值（更难判成闭眼）并**提高**连续帧要求。
+     * 只做其中一件不够：阈值降得太多会漏掉真实眨眼，而真实眨眼在近距离下持续帧数也更多
+     * （眼睑扫过的画面距离更长），所以提高帧数要求对真实眨眼几乎无损，却能挡掉短促噪声。
+     */
+    private fun applyDistanceAdaptation() {
+        val ratio = faceRatio
+        val boost = when {
+            ratio == null -> 1f
+            ratio >= NEAR_FACE_RATIO -> 2f
+            ratio >= MID_FACE_RATIO -> 1.35f
+            else -> 1f
+        }
+        // 阈值往「更难判成闭眼」的方向压，但要留足余量：真实眨眼时读数会掉到 0.2 以下，
+        // 所以下限取 0.30 —— 再低就会漏掉真实眨眼，而"漏掉"比"误触"更让用户难受。
+        // 默认 0.55：中距 → 0.407，近距 → 0.30。
+        val below = closedBelow / boost
+        effectiveClosedBelow = below.coerceIn(0.30f, closedBelow)
+        // 连续帧要求同步提高：近距离下真实眨眼持续帧数也更多（眼睑扫过的画面距离更长），
+        // 所以这条对真实眨眼几乎无损，却能挡掉短促噪声。
+        effectiveRequiredClosedFrames =
+            (requiredClosedFrames * boost).toInt().coerceIn(requiredClosedFrames, 6)
+    }
+
     @Synchronized
     fun reset() {
         eyesClosed = false
@@ -123,14 +181,16 @@ class BlinkDetector(
             return
         }
 
-        val closedNow = (left != null && left < closedBelow) ||
-            (right != null && right < closedBelow)
+        applyDistanceAdaptation()
+
+        val closedNow = (left != null && left < effectiveClosedBelow) ||
+            (right != null && right < effectiveClosedBelow)
         val openNow = (left != null && left > openAbove) ||
             (right != null && right > openAbove)
 
         if (closedNow) {
             closedFrames++
-            if (closedFrames >= requiredClosedFrames && !eyesClosed) {
+            if (closedFrames >= effectiveRequiredClosedFrames && !eyesClosed) {
                 eyesClosed = true
                 closedSinceMs = nowMs
             }

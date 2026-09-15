@@ -320,34 +320,50 @@ class HeadPoseDetector(
         private const val NEAR_LOOKDOWN_NOD_BOOST = 0.42f
 
         /**
-         * 晃动过滤的观察窗口（帧数，v5.12）。
+         * 晃动判据（v5.16 改判据）：**方向反转次数**，只拦高频抖动。
          *
-         * 实测帧间隔约 63~116ms，6 帧 ≈ 0.5~0.7 秒，正好覆盖一次轻点头（约 300ms）
-         * 加上它前面的一段静止。
+         * ## 为什么把 v5.12 的"路径效率"换掉
+         *
+         * v5.12~v5.15 用的是路径效率（`|净位移| / Σ|相邻差值|`）。实机复测（v515-verify.log）
+         * 证明它**把走路时的点头全挡了**：用户「走路的时候疯狂点头，但是只触发了一次」，
+         * 日志里 19 次 `reason=shake`，幅度 −6.4~−9.3°、速度 0.05~0.08°/ms 的真实动作被拒。
+         *
+         * 根因是判据本身：走路时头部俯仰是**真实的周期性摆动（10~25°）**，
+         * 于是**任何**窗口里都含摆动 → 路径效率必然低 → 一律判成晃动。这不是调参能解决的，
+         * 是判据选错了。
+         *
+         * ## 新判据：数"方向反转"
+         *
+         * 两者的**频率**差得很远：
+         *
+         * ```
+         * 走路（约 2Hz，实测帧间隔 ~90ms）：约 5~6 帧才反转一次 → 6 帧窗口内 ≤1 次
+         * 手抖 / 高频摇晃（3~5Hz）：1~2 帧就反转一次    → 6 帧窗口内 3~6 次
+         * 有意点头：单调推进，几乎没有反转              → 0~1 次
+         * ```
+         *
+         * 所以只要"窗口内反转 ≥ [SHAKE_MIN_REVERSALS] 次"才算晃动。走路与点头都能过，
+         * 高频抖动照样拦得住。至于**低频摇摆手机**（v5.14 ⑥ 那种），由
+         * [PhoneMotionMonitor] 的陀螺仪闸门负责 —— 那是"手机在转"，比数头部反转更直接。
          */
         private const val SHAKE_WINDOW_SAMPLES = 6
 
+        /** 窗口内至少这么多次方向反转才算"在抖"。 */
+        private const val SHAKE_MIN_REVERSALS = 3
+
+        /** 单帧变化小于这个度数就不算一个方向（噪声死区）。 */
+        private const val SHAKE_DELTA_DEADBAND_DEG = 0.4f
+
         /**
-         * 晃动判据：**路径效率**（v5.12）。
+         * 路径效率的**判决门限已废弃**（v5.12 引入，v5.16 起不再用于判定）。
          *
-         * `效率 = |最新值 − 最旧值| / Σ|相邻差值|`
-         *
-         *  - **有意动作**是单调推进：走过的路 ≈ 净位移 → 效率接近 1；
-         *  - **晃动**（地铁、手抖）是来回抖：走过的路远大于净位移 → 效率很低。
-         *
-         * 实例（阈值 3.0°）：
-         *
-         * ```
-         * 轻点头   0 → 1.0 → 2.5 → 3.5 → 4.2 → 4.2   路径 4.2  净位移 4.2  效率 1.00  ✅ 放行
-         * 晃动   -1.5 → 1.2 → -1.0 → 2.8 → -1.2 → 3.2 路径 17.1 净位移 4.7  效率 0.27  ⛔ 拦下
-         * ```
-         *
-         * 之所以不用"数方向反转次数"：效率把幅度和次数合成一个量，少一个要调的参数，
-         * 而且对低频大幅晃动（反转不多但来回走得很远）同样有效。
+         * 效率仍然会被算出来并打进日志（`shake=`），因为它是"这次动得有多乱"的直观指标；
+         * 但**判决改用 [SHAKE_MIN_REVERSALS]** —— 走路时头部是真摆动，任何窗口的效率都低，
+         * 用它判决会把走路时的点头全部误杀（实测 19 次）。见 [SHAKE_MIN_REVERSALS] 的说明。
          */
         private const val SHAKE_PATH_EFFICIENCY = 0.45f
 
-        /** 路径太短时效率没有意义（纯噪声），低于这个总路程就不做晃动判定。 */
+        /** 路径太短时效率没有意义（纯噪声）；只用于日志。 */
         private const val SHAKE_MIN_PATH_DEG = 1.5f
 
         // ------------------- v5.13：轻点头速度通道 + 手机自身运动闸门 --
@@ -374,7 +390,7 @@ class HeadPoseDetector(
          * 这个门槛只作用于**近距离 + 俯视 + 低头**（与 ×0.50 增益完全同一条件），
          * 远距离与仰头方向一概不受影响。
          */
-        private const val LIGHT_NOD_FAST_VELOCITY = 0.013f
+        private const val LIGHT_NOD_FAST_VELOCITY = 0.009f
 
         /**
          * 轻点头通道的确认时间（v5.13）：越过阈值后必须**再撑过这么久**才放行。
@@ -387,7 +403,7 @@ class HeadPoseDetector(
         private const val LIGHT_NOD_CONFIRM_MS = 60L
 
         /**
-         * 闭眼之后「头部姿态不可信」的保持时长（v5.14）。
+         * 闭眼之后「头部姿态不可信」的保持时长（v5.14 引入，v5.16 从 120ms 收到 50ms）。
          *
          * ## 用户报的那次误触，日志给了完整的因果链
          *
@@ -404,10 +420,27 @@ class HeadPoseDetector(
          * 那一帧的姿态估计会跳。所以闭眼（哪怕只有一帧的浅闭）之后的短时间里，
          * 俯仰/偏航读数不能用来判定动作。
          *
-         * 取 120ms ≈ 一帧多（实测帧间隔 63~116ms），足够跨过跳变那一帧，
-         * 又短到不会明显影响真实动作。
+         * 取 50ms 而不是更大（v5.16 从 120ms 下调），是实机数据逼出来的：
+         *
+         * v5.14 用 120ms 之后，`eyes-unreliable` 一共拒掉了 **126 次**越阈值的候选，
+         * 而且里面全是**真实动作**：
+         *
+         * ```
+         * tiltUp  candidate rejected: pitch=25.2° reason=eyes-unreliable
+         * tiltUp  candidate rejected: pitch=17.5° reason=eyes-unreliable
+         * nodDown candidate rejected: pitch=-3.2° reason=eyes-unreliable   ← 用户的轻点头
+         * ```
+         *
+         * 原因是 30cm 处"某只眼睛跌破阈值"极其频繁（日志里几乎每秒都有），
+         * 120ms 的窗口把头部判定压制了近三成时间 —— 用户反馈的
+         * 「要等 0.5 秒才能触发」就是这么来的。
+         *
+         * 50ms 略小于一帧（实测帧间隔 63~116ms），效果是**只跳过闭眼那一帧本身**，
+         * 而它后面那些帧交给 v5.15 的 [JUMP_CONFIRM_MS]（跳变确认）处理 ——
+         * 实测那次眨眼误触正是一帧从 +0.1 跳到 −3.5，跳变确认足以拦住，
+         * 不会像 120ms 那样连 25° 的真实动作一起挡掉。
          */
-        private const val EYE_UNRELIABLE_MS = 120L
+        private const val EYE_UNRELIABLE_MS = 50L
 
         // ------------------- v5.15：区分「渐进动作」与「单帧跳变」 --
 
@@ -734,6 +767,15 @@ class HeadPoseDetector(
     var shakeEfficiency: Float = 1f
         private set
 
+    /**
+     * 当前窗口内的**方向反转次数**（v5.16），诊断用 —— 晃动判决用的就是它。
+     *
+     * 走路（约 2Hz）6 帧内 ≤1 次、有意点头 0~1 次、手抖/高频摇晃 3~6 次。
+     */
+    @Volatile
+    var shakeReversals: Int = 0
+        private set
+
     private var cooldownUntilMs = 0L
     private var lastFaceAtMs = 0L
     private var lastLoggedPitch = 0f
@@ -957,6 +999,7 @@ class HeadPoseDetector(
         shakeCount = 0
         shakeIndex = 0
         shakeEfficiency = 1f
+        shakeReversals = 0
         // v5.14：闭眼不可信期也清零。
         eyeUnreliableUntilMs = 0L
     }
@@ -1449,7 +1492,7 @@ class HeadPoseDetector(
                         "threshold=${"%.1f".format(threshold)}° " +
                         "dist=${if (nearDistance) "near" else "far"} " +
                         "posture=${if (lookingDown) "down" else "flat"} " +
-                        "shake=${"%.2f".format(shakeEfficiency)} " +
+                        "shake=${"%.2f".format(shakeEfficiency)} rev=$shakeReversals " +
                         "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} reason=$reject",
                 )
             }
@@ -2141,24 +2184,35 @@ class HeadPoseDetector(
     private fun isShaking(): Boolean {
         if (shakeCount < SHAKE_WINDOW_SAMPLES) {
             shakeEfficiency = 1f
+            shakeReversals = 0
             return false
         }
         // 环形缓冲写满时，shakeIndex 指向**最旧**的一格。
         val oldest = shakePitch[shakeIndex]
         var previous = oldest
         var path = 0f
+        var reversals = 0
+        var lastSign = 0
         var i = 1
         while (i < SHAKE_WINDOW_SAMPLES) {
             val value = shakePitch[(shakeIndex + i) % SHAKE_WINDOW_SAMPLES]
-            path += abs(value - previous)
+            val delta = value - previous
+            path += abs(delta)
+            // 死区之内的变化不算一个方向，免得噪声把反转数刷高。
+            if (abs(delta) >= SHAKE_DELTA_DEADBAND_DEG) {
+                val sign = if (delta > 0f) 1 else -1
+                if (lastSign != 0 && sign != lastSign) reversals++
+                lastSign = sign
+            }
             previous = value
             i++
         }
         val net = abs(previous - oldest)
-        val efficiency = if (path <= 0.001f) 1f else net / path
-        shakeEfficiency = efficiency
-        if (path < SHAKE_MIN_PATH_DEG) return false
-        return efficiency < SHAKE_PATH_EFFICIENCY
+        shakeEfficiency = if (path <= 0.001f) 1f else net / path
+        shakeReversals = reversals
+        // v5.16：判决改用**高频反转次数** —— 走路（约 2Hz）6 帧内 ≤1 次、点头 0~1 次，
+        // 都放行；手抖/高频摇晃（3~5Hz）3~6 次，拦下。
+        return reversals >= SHAKE_MIN_REVERSALS
     }
 
     /**

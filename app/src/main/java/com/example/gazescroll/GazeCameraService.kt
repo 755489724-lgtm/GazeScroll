@@ -1367,6 +1367,7 @@ class GazeCameraService : LifecycleService() {
                 // v5.12：晃动判定的路径效率（|净位移|/Σ|相邻差值|）。接近 1 = 单调推进（有意动作），
                 // 越低越像来回晃（地铁/手抖）。它同时是「地铁上到底算不算晃」的判读依据。
                 " shake=${"%.2f".format(headPoseDetector?.shakeEfficiency ?: 1f)}" +
+                " rev=${headPoseDetector?.shakeReversals ?: 0}" +
                 // v5.13：手机自身运动的峰值（m/s²）与"是否正在被顿挫"。
                 // 坐着刷 ≈0~0.5，走路 ≈1.5~3，急刹 ≈4~15 —— 门限 3.5 就是照这个定的，
                 // 所以地铁上/走路时到底读到多少可以直接看这一行，下一版调门限有实测数字。

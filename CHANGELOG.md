@@ -73,6 +73,42 @@
 - **30cm 静止防误触逻辑未改动**（用户已验证有效）。
 - v5.5 的成果全部保留：幅度阈值不膨胀、注入失败自动重连、全链路自检日志。
 
+### 实测证据（发布前的真机运行，不是构造场景）
+
+近距离增益确实生效——32 个诊断样本里 `pitchTh` 从远距离的 **8.0° 掉到 5.4°**
+（= 8 × 0.68），手头灵敏度设为 6° 时则是 **6.0 → 4.1°**：
+
+```
+GazeDiag: faceRatio=0.60 dist=中 ... pitchTh=5.4° yawTh=27.0° ...
+          chinRatio=0.405 chinMed=0.404 nodBoost=1.00 nodBoostActive=true
+          speedGate=0.0162°/ms
+HeadPose: tiltUp triggered pitch=9.1° latency=95ms (fast, v=0.054°/ms)
+```
+
+注意同一行里 `speedGate=0.0162°/ms` 是**距离缩放后**的速度门限——增益只压幅度、
+速度门限照旧按距离走，这正是「30cm 静止防误触不回归」的机制保证。
+
+屏幕常亮失效修复也在真机上抓到了现场（v5.5 会在这里静默跳过）：
+
+```
+GazeCameraService: pipeline resync (enter): forcing rebind (cameraBound=true wasStale=true)
+GazeCameraService: camera released: enter: forced rebind
+```
+
+### 修正：两个自己造的诊断字段缺陷（同版本内修掉）
+
+1. **`nodBoost` 打的是常量而不是实际生效值**。诊断行原本打 `nodDownGazeBoost`
+   （俯视增益，默认 0.75 的对象），距离增益生效时它仍显示 `1.00`，
+   而 `pitchTh` 其实已经乘过 0.68 —— **字段名与实际不符，排查时会误判成功能没生效**。
+   现在 `pitchThresholdNow()` 把实际乘上去的系数记进 `lastAppliedNodBoost` 再打出来，
+   保证 `nodBoost` 与 `pitchTh` 永远自洽。
+2. **诊断行出现了两个 `dist=` 键**：原有的 `dist=近/中/远` 与新加的 `dist=near/far`
+   语义不同（前者是握持距离档，后者是增益触发条件），同名字段会看错。
+   新字段改名 **`distMode=near/far`**。
+
+> 教训：诊断字段本身也是要 review 的代码。名字含糊或与实现脱节，比没有日志更危险——
+> 它会主动把人引向错误的结论。
+
 ---
 
 ## [5.5] - 2026-09-15

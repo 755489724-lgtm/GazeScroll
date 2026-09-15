@@ -504,6 +504,16 @@ class HeadPoseDetector(
     var nearDistance: Boolean = false
         private set
 
+    /**
+     * 最近一次 `pitchThresholdNow()` 实际乘上去的距离增益（v5.6）。
+     *
+     * 与 [nearDistance] 的区别在于"实际用了没有"：这个值只在阈值真的算过之后才更新，
+     * 所以它和诊断行里的 `pitchTh` 永远自洽。排查时以它为准。
+     */
+    @Volatile
+    var lastAppliedNodBoost: Float = 1f
+        private set
+
     /** 当前姿态标签，仅用于日志/界面。 */
     @Volatile
     var postureLabel: String = "未知"
@@ -793,8 +803,14 @@ class HeadPoseDetector(
      * 误触防线一道没少：静止峰峰值门限、最低速度门限、近距离静止硬锁定、
      * 遮挡抑制、回中锁定全部保留，且仍然按距离缩放。
      */
-    private fun pitchThresholdNow(): Float =
-        thresholdDeg * (nodDownGazeBoost * nearDownNodBoost())
+    private fun pitchThresholdNow(): Float {
+        val boost = nearDownNodBoost()
+        // v5.6：把"这一帧实际生效的距离增益"记下来给诊断行用。
+        // 之前诊断打的是 nodDownGazeBoost（俯视增益常量），近距离下会显示 1.00，
+        // 而阈值其实已经乘过 0.68 —— 字段名与实际不符，排查时会误判功能没生效。
+        lastAppliedNodBoost = boost
+        return thresholdDeg * (nodDownGazeBoost * boost)
+    }
 
     /** 按距离缩放后的静止峰峰值门限。 */
     private fun effectiveStaticRange(): Float = STATIC_RANGE_DEG * distanceBoost()

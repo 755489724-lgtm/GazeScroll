@@ -112,7 +112,9 @@
     **远距离完全不受影响**（远距离俯视是 v5.5 调好的状态，不许动）。
     只压**幅度**阈值：速度门限、静止锁定、近距离静止硬锁定一律不动，
     所以"噪声有幅度没有速度"这道关卡照旧，**30cm 静止防误触逻辑未被触碰**。
-    诊断行里 `nodBoost=0.68 nodBoostActive=true` 表示已生效，触发日志会带 `boosted`。
+    诊断行里 `nodBoost=0.68 nodBoostActive=true` 表示已生效（`nodBoost` 打的是**这一帧
+    实际乘上去的系数**，与同一行的 `pitchTh` 永远自洽），触发日志会带 `boosted`。
+    `distMode=near/far` 是增益的触发条件；别与同一行的 `dist=近/中/远`（握持距离档）混淆。
   - **为什么"俯视"没有接进灵敏度开关（v5.6，实测结论）**：原本设想「下巴占比大 = 俯视」，
     用 `|下巴Y - 眼中心Y| / 脸高`（`chinRatio`）作判据。实机标定（平视/俯视/近距离俯视各 20 秒）后：
     远距 `chinRatio 0.335~0.368`，近距 `0.368~0.432` —— **它主要在反映距离，而不是姿态**，
@@ -136,7 +138,7 @@
     `staticHardLock` / `recenterLock` / `downGaze` / `biasRecenter` / `occl` / `suppressMs` /
     `mouthForced` / `mouthRejected` / `lastTrigger` / `blinkBelow` / `blinkFrames` /
     `pitchTh` / `yawTh`（当前实际生效阈值）/ `speedGate` /
-    `chinRatio` / `chinMed` / `posture`（俯视几何，v5.6）/ `nodBoost` / `nodBoostActive`。
+    `chinRatio` / `chinMed` / `posture`（俯视几何，v5.6）/ `nodBoost` / `nodBoostActive` / `distMode`。
 - **张嘴点击的健壮性（v5.0）**
   - **基准合理性检查**：手挡脸、半张脸出画会读出极小的比值（实测抓到 **0.114**，正常
     闭嘴是 0.205~0.23）。一旦它进了基准窗口，基准就被永久带偏 —— 之后所有正常读数都比

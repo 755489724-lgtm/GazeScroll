@@ -1275,10 +1275,12 @@ class GazeCameraService : LifecycleService() {
                 // v5.6：绝对几何的距离/姿态判定 —— chinRatio 是俯视判据的原始读数。
                 " chinRatio=${headPoseDetector?.smoothedChinRatio?.let { "%.3f".format(it) } ?: "-"}" +
                 " chinMed=${headPoseDetector?.chinRatioMedian?.let { "%.3f".format(it) } ?: "-"}" +
-                " dist=${if (headPoseDetector?.nearDistance == true) "near" else "far"}" +
+                // 注意字段名别叫 dist：前面已有 dist=近/中/远（握持距离档），重名会看错。
+                " distMode=${if (headPoseDetector?.nearDistance == true) "near" else "far"}" +
                 " posture=${headPoseDetector?.postureLabel ?: "-"}" +
-                " nodBoost=${"%.2f".format(headPoseDetector?.nodDownGazeBoost ?: 1f)}" +
-                " nodBoostActive=${headPoseDetector?.nearDistance ?: false}" +
+                // 打实际生效的增益，而不是常量，这样与 pitchTh 永远自洽。
+                " nodBoost=${"%.2f".format(headPoseDetector?.lastAppliedNodBoost ?: 1f)}" +
+                " nodBoostActive=${(headPoseDetector?.lastAppliedNodBoost ?: 1f) < 1f}" +
                 " speedGate=${"%.4f".format(headPoseDetector?.pitchSpeedGate ?: 0f)}°/ms" +
                 " mouthForced=${mouthDetector?.forcedReloads ?: 0}" +
                 " mouthRejected=${mouthDetector?.rejectedSamples ?: 0}" +

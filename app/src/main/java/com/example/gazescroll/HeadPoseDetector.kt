@@ -1431,8 +1431,12 @@ class HeadPoseDetector(
         //
         // 只作用于轻通道：远距离、仰头方向、以及回中锁定/仲裁/晃动等其它逻辑
         // 仍然用原来相对基线的量，行为不变。
-        val lightDelta = pitchDeg - settledPitch
-        val signedLight = if (invertPitch) -lightDelta else lightDelta
+        // ⚠️ v5.17 初版这里写成了 `pitchDeg - settledPitch`：**域混用**。
+        // `pitchDeg` 是原始俯仰角，而 `settledPitch` 是用 `signedPitch` 记下来的**有符号值**
+        // （已经过 invertPitch 翻转、且扣掉了基准线）。两者相减等于把方向整体翻了一次、
+        // 还叠上基准线偏移，于是 v5.17 初版"轻点头全变上滑、静止时疯狂上拉"。
+        // 位移必须在**同一个域**里算 —— 都用有符号值。
+        val signedLight = signedPitch - settledPitch
         val useLight = nearDistance && lookingDown && signedLight < 0f
         // 判定用的有符号量与幅度：轻通道用位移，其余用相对基线。
         val signed = if (useLight) signedLight else signedPitch

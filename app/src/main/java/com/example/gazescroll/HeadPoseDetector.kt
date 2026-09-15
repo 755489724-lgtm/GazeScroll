@@ -354,6 +354,42 @@ class HeadPoseDetector(
         /** 路径太短时效率没有意义（纯噪声），低于这个总路程就不做晃动判定。 */
         private const val SHAKE_MIN_PATH_DEG = 1.5f
 
+        // ------------------- v5.13：轻点头速度通道 + 手机自身运动闸门 --
+
+        /**
+         * 轻点头通道的速度门槛（v5.13）。
+         *
+         * ## 为什么必须有它（「疯狂点头却没反应」）
+         *
+         * 用户 v5.12 复测里出现了一段"疯狂点头但不触发，过一会才恢复"。日志坐实了原因：
+         * 他的**轻点头速度只有 0.014~0.018°/ms**，而快通道的门槛 [FAST_PITCH_VELOCITY] 是 0.02：
+         *
+         * ```
+         * 03:33:39.430 nodDown rejected: pitch=-3.2° speed=0.0179°/ms reason=hold-not-met
+         * 03:34:02.575 nodDown rejected: pitch=-2.6° speed=0.0183°/ms reason=below-threshold
+         * 03:34:07.626 nodDown rejected: pitch=-3.5° speed=0.0161°/ms reason=hold-not-met
+         * 03:34:07.983 nodDown triggered: pitch=-4.7° speed=0.0290°/ms   ← 等它自己变快才成
+         * ```
+         *
+         * 达不到 0.02 就落到"保持"通道，而那条通道要求**保持 150ms 且速度 ≥ 速度门限**
+         * —— 近距离速度门限是 `0.012×2 = 0.024`，**比 0.02 还高**，所以那条路实际上永远走不通。
+         * 结果就是"速度不够快的点头一律无效"，而轻点头天然就是慢的。
+         *
+         * 这个门槛只作用于**近距离 + 俯视 + 低头**（与 ×0.50 增益完全同一条件），
+         * 远距离与仰头方向一概不受影响。
+         */
+        private const val LIGHT_NOD_FAST_VELOCITY = 0.013f
+
+        /**
+         * 轻点头通道的确认时间（v5.13）：越过阈值后必须**再撑过这么久**才放行。
+         *
+         * 取 60ms 而不是更大，是因为实测帧间隔是 63~116ms —— 60ms 刚好保证"下一帧还活着就通过"，
+         * 于是它等价于「**这个动作必须跨到下一帧**」：单帧跳变会在下一帧掉回 below-threshold
+         * 并清掉计时段，永远过不来（这正是 v5.9 那次全局确认窗口想做的事，
+         * 区别是现在只作用在这一条通道上，代价只有一帧，不会拖慢其他动作）。
+         */
+        private const val LIGHT_NOD_CONFIRM_MS = 60L
+
         /** chinRatio 滑动中位数的窗口（约 0.6 秒 @15fps，只用于标定显示）。 */
         private const val CHIN_WINDOW_SAMPLES = 9
 
@@ -715,6 +751,16 @@ class HeadPoseDetector(
     @Volatile
     var nearDistance: Boolean = false
         private set
+
+    /**
+     * **手机本身**是否正在被顿挫（v5.13），由服务从 [PhoneMotionMonitor] 每帧同步。
+     *
+     * 为 true 时一律不接受俯仰/偏航候选。理由见 [PhoneMotionMonitor]：
+     * 点头是头在转（手机不动），急停/急刹是整个人和手机一起顿 —— 摄像头分不出来，
+     * 加速度计分得出来。判据是"手机在动"，所以**不影响任何正常坐着/躺着刷的场景**。
+     */
+    @Volatile
+    var phoneMoving: Boolean = false
 
     /**
      * `faceRatio` 的 EMA 平滑值（v5.9），距离档判定的依据；日志/界面显示用。
@@ -1209,6 +1255,10 @@ class HeadPoseDetector(
         lastAppliedNodBoost = nearNodDownBoost(signedPitch)
         lastSignedPitch = signedPitch
 
+        // v5.13：轻点头通道的生效条件与 ×0.50 增益**完全一致**（近距离 + 俯视 + 低头），
+        // 所以"阈值被压到 3.0°"和"速度门槛降到 0.013"永远同时生效，不会出现只松一半。
+        val lightNodAllowed = nearDistance && lookingDown && signedPitch < 0f
+
         // ---- v5.9：逐帧上下文（必须在任何提前返回**之前**维护，否则轨迹会缺帧）----
         pushContext(signedPitch, signedYawNow, nowMs)
         // v5.12：晃动判定的缓冲同理，必须在提前返回之前维护。
@@ -1254,6 +1304,9 @@ class HeadPoseDetector(
                 clearExcursion()
                 return@run "shake"
             }
+            // v5.13：手机自己被顿了一下（急停/急刹/被撞）—— 那是整个人在动，不是头在转。
+            // 摄像头区分不了，加速度计分得出来（见 PhoneMotionMonitor）。
+            if (phoneMoving) return@run "phone-motion"
             if (pitchReachedAtMs == 0L) {
                 pitchReachedAtMs = nowMs
                 val riseMs = nowMs - pitchOnsetAtMs
@@ -1262,9 +1315,13 @@ class HeadPoseDetector(
             }
             if (!pitchArmed) return@run "slow-rise"
             val fast = velocity >= FAST_PITCH_VELOCITY
-            if (!fast && nowMs - pitchReachedAtMs < requiredHoldMs()) return@run "hold-not-met"
+            // v5.13：近距离俯视的**轻点头通道** —— 见 LIGHT_NOD_FAST_VELOCITY 的实机数据。
+            val light = !fast && lightNodAllowed && velocity >= LIGHT_NOD_FAST_VELOCITY
+            if (!fast && !light && nowMs - pitchReachedAtMs < requiredHoldMs()) return@run "hold-not-met"
+            // 轻通道必须多撑过一帧（单帧跳变会在下一帧掉回 below-threshold，永远过不来）。
+            if (light && nowMs - pitchReachedAtMs < LIGHT_NOD_CONFIRM_MS) return@run "light-confirm"
             // 最低速度门限：噪声有幅度但没有速度，所以再加一道与幅度无关的门。
-            if (!fast && velocity < speedGate) return@run "speed-gate"
+            if (!fast && !light && velocity < speedGate) return@run "speed-gate"
             // v5.8 方向仲裁：偏航正在明显转动 → 这次让位给扭头。
             // 近距离俯视扭头会同时带出一个俯仰分量（实测 ±3~±10°），而俯仰阈值被单向
             // 增益压到 0.68 倍（4.1°/5.4°），不让位的话"想扭头"永远先变成上下滑。
@@ -1866,6 +1923,8 @@ class HeadPoseDetector(
         val reject: String? = run {
             if (yawOnsetAtMs == 0L) yawOnsetAtMs = nowMs
             if (magnitude < turnThreshold) return@run "below-threshold"
+            // v5.13：手机自己被顿了一下（急停/急刹）—— 扭头同样不成立。
+            if (phoneMoving) return@run "phone-motion"
 
             if (yawReachedAtMs == 0L) {
                 yawReachedAtMs = nowMs

@@ -242,6 +242,9 @@ class GazeCameraService : LifecycleService() {
     private var blinkDetector: BlinkDetector? = null
     private var headPoseDetector: HeadPoseDetector? = null
 
+    /** 手机自身运动监测（v5.13）：区分「点头」与「急停/急刹」。 */
+    private var phoneMotion: PhoneMotionMonitor? = null
+
     /**
      * 全局触发冷却闸门——点头和眨眼**共用**这一个计时器。
      *
@@ -401,6 +404,11 @@ class GazeCameraService : LifecycleService() {
 
         blinkDetector = BlinkDetector { reason -> fireSwipe("blink:$reason", SwipeDirection.UP) }
 
+        // v5.13：手机自身运动监测（加速度计）。用来区分「头在转」（点头）与
+        // 「整个人和手机一起顿」（急停/急刹/被撞）—— 摄像头分不出来，加速度计能（见类注释）。
+        // 传感器不可用时它失败开放，isMoving() 恒为 false，不会误伤任何手势。
+        phoneMotion = PhoneMotionMonitor(this).also { it.start() }
+
         // Nod down -> previous video, tilt up -> next video,
         // turn left/right -> horizontal swipe. 具体动作由 handleHeadEvent 派发。
         headPoseDetector = HeadPoseDetector { event ->
@@ -456,6 +464,8 @@ class GazeCameraService : LifecycleService() {
         analysisExecutor = null
         stopFrameWatchdog()
         warmHandler.removeCallbacks(deepSleep)
+        phoneMotion?.stop()
+        phoneMotion = null
         runCatching { swipeExecutor?.shutdown() }
         swipeExecutor = null
         analyzer?.close()
@@ -991,6 +1001,9 @@ class GazeCameraService : LifecycleService() {
                     head.invertPitch = cfg.headPoseInvertPitch
                     head.staticLockEnabled = cfg.staticLockEnabled
                     head.staticLockFactor = cfg.staticLockFactor
+                    // v5.13：手机自身是否正在被顿挫（急停/急刹）—— 由加速度计给出，
+                    // 用来把"整个人在动"和"头在转"分开。传感器不可用时恒为 false。
+                    head.phoneMoving = phoneMotion?.isMoving() ?: false
                     // 距离自适应：脸越大说明凑得越近，静止门限随之抬高。
                     head.faceRatio = frame.faceRatio
                     // v5.6：绝对几何的姿态判据（下巴占比），用于近距离俯视时提升点头灵敏度。
@@ -1350,6 +1363,12 @@ class GazeCameraService : LifecycleService() {
                 // v5.12：晃动判定的路径效率（|净位移|/Σ|相邻差值|）。接近 1 = 单调推进（有意动作），
                 // 越低越像来回晃（地铁/手抖）。它同时是「地铁上到底算不算晃」的判读依据。
                 " shake=${"%.2f".format(headPoseDetector?.shakeEfficiency ?: 1f)}" +
+                // v5.13：手机自身运动的峰值（m/s²）与"是否正在被顿挫"。
+                // 坐着刷 ≈0~0.5，走路 ≈1.5~3，急刹 ≈4~15 —— 门限 3.5 就是照这个定的，
+                // 所以地铁上/走路时到底读到多少可以直接看这一行，下一版调门限有实测数字。
+                " accel=${"%.1f".format(phoneMotion?.recentPeak(now) ?: 0f)}" +
+                " phoneMotion=${phoneMotion?.isMoving() ?: false}" +
+                " accelReady=${phoneMotion?.available ?: false}" +
                 " posture=${headPoseDetector?.postureLabel ?: "-"}" +
                 // 打实际生效的增益，而不是常量，这样与 pitchTh 永远自洽。
                 " nodBoost=${"%.2f".format(headPoseDetector?.lastAppliedNodBoost ?: 1f)}" +

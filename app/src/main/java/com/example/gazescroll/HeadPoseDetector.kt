@@ -124,6 +124,37 @@ class HeadPoseDetector(
         private const val ARBITRATION_VELOCITY_FRACTION = 0.4f
 
         /**
+         * 触发确认窗口（v5.9）：阈值必须在**最近 [CONFIRM_WINDOW] 帧里至少 [CONFIRM_NEEDED] 帧**
+         * 被越过，才允许触发。
+         *
+         * ## 为什么需要它（「30cm 俯视还是会误触」）
+         *
+         * v5.9 采集数据（带标记，4 分钟）里的误触全部具有同一个形状：**单帧跳变**。
+         * 日志里它们的幅度是 6.0~7.8°、两帧速度 0.021~0.048°/ms —— 和用户有意的仰头
+         * （7.7~9.7°、0.019~0.048°/ms）**完全重叠**。
+         *
+         * 也就是说，在 30cm 处无论怎么调**幅度阈值**或**速度门限**，都必然要在
+         * 「挡住误触」和「挡住真实动作」之间二选一：
+         *
+         * ```
+         * 若把近距离速度门限提到 0.036°/ms：实测 74% 的真实仰头会被一起挡掉
+         * ```
+         *
+         * 幅度和速度这两个**瞬时量**都没有鉴别力，真正有鉴别力的是**时间形状**：
+         * 检测噪声与「手机在手里抖一下」只能维持一帧就回到原位，而真实动作至少跨两帧。
+         *
+         * 所以这里用「2 of 3」而不是「连续 2 帧」：真实动作在阈值附近上下浮动
+         * （实测 ±1.5° 噪声）时仍然能凑够 2 帧，而孤立的单帧尖峰永远凑不够。
+         *
+         * **代价只有一帧延迟**（实测帧间隔约 47~66ms），快通道仍然立刻触发、
+         * 不做 [requiredHoldMs] 那种长保持，所以"动作要快要连贯"的手感不变。
+         */
+        private const val CONFIRM_WINDOW = 3
+
+        /** 确认窗口内至少要有这么多帧越过阈值。 */
+        private const val CONFIRM_NEEDED = 2
+
+        /**
          * 回中锁定期间，判定「头部已经回到中性区」的阈值系数（v5.0）。
          *
          * 用动作阈值的一个比例（而不是绝对角度），这样用户把灵敏度调高调低时，
@@ -182,8 +213,44 @@ class HeadPoseDetector(
 
         // ----------------------------- v5.6：绝对几何的距离 / 姿态判定 --
 
-        /** 近距离判定：脸高占画面比例 ≥ 此值（实测 30cm 约 0.6，40cm 约 0.45）。 */
-        private const val NEAR_DISTANCE_RATIO = 0.50f
+        // ----------------------------- v5.9：统一且带滞回的距离档 --
+
+        /**
+         * 进入「近距离」档的阈值（v5.9）。
+         *
+         * ## 为什么从 0.50 / 0.55 统一到 0.46，并且带滞回
+         *
+         * 实机标定（v5.9 采集，4 分钟带标记数据）暴露了一个**结构性空档**：用户真实的
+         * 30cm 俯视姿势下 `faceRatio` 稳定落在 **0.45~0.55**，而代码里三个「近距离」判据
+         * 用了两个不同的门槛：
+         *
+         * ```
+         * 点头省力增益 0.68（阈值 6.0°→4.1°）  faceRatio >= 0.50
+         * 速度门限 ×2 / 静止峰峰值 ×2 / 眨眼收紧   faceRatio >= 0.55
+         * 30cm 静止硬锁定                       faceRatio >= 0.55
+         * ```
+         *
+         * 于是 0.50~0.55 这一段成了「**灵敏度按近距离给、防护按中距离算**」的空档，
+         * 而且 0.50 这条线正好落在用户的抖动带里，逐帧抖动 → `nodBoost` 在
+         * 0.68 与 1.00 之间反复跳、`distMode` 在 near/far 之间反复跳（日志实测）。
+         *
+         * 现在只保留**一个**真值 [nearDistance]，由本组常量 + EMA 平滑 + 回差共同决定，
+         * 所有按距离缩放的东西（点头增益、速度门限、静止峰峰值）全部读它。
+         *
+         * 门槛取 0.46：略低于用户实测的 0.45~0.55 区间下沿，保证 30cm 稳定判为近距离；
+         * 50cm（实测 0.37~0.41）与 40cm（约 0.42~0.45）**回不到近距离档**，
+         * 所以「远距离点头/仰头/扭头正常」这一条不受影响。
+         */
+        private const val NEAR_ENTER_RATIO = 0.46f
+
+        /**
+         * 退出「近距离」档的阈值（v5.9）：比进入门槛低 [NEAR_HYSTERESIS_RATIO]，
+         * 这样在门槛附近抖动（实测 ±0.02）不会来回切档。
+         */
+        private const val NEAR_EXIT_RATIO = 0.40f
+
+        /** `faceRatio` 的 EMA 平滑系数：越小越稳、越大越跟手。 */
+        private const val FACE_RATIO_EMA_ALPHA = 0.35f
 
         /**
          * 俯视判定的几何门限 —— **当前未启用**（v5.6）。
@@ -242,10 +309,13 @@ class HeadPoseDetector(
         /** 中距时静止门限的放大倍数。 */
         private const val STATIC_RANGE_MID_FACTOR = 1.35f
 
-        /** 近距判定：脸高占画面 ≥ 此值。 */
-        private const val NEAR_FACE_RATIO = 0.55f
-
-        /** 中距判定：脸高占画面 ≥ 此值。 */
+        /**
+         * 中距判定：脸高占画面 ≥ 此值（v5.9 起**只**用于中距增益，近距一律走 [nearDistance]）。
+         *
+         * v5.9 之前这里还有一个 `NEAR_FACE_RATIO = 0.55`，与点头增益用的 0.50 分裂成
+         * 两个门槛 —— 那正是「近距离只有灵敏度没有防护」的根因，已删除，见
+         * [NEAR_ENTER_RATIO] 的说明。
+         */
         private const val MID_FACE_RATIO = 0.38f
 
         /** 人脸消失这么久（哪怕只是被手挡一下）就作废基准线，回来重新学。 */
@@ -256,6 +326,22 @@ class HeadPoseDetector(
 
         /** Log excursions past this many degrees, to make the sign checkable. */
         private const val DIAGNOSTIC_LOG_DEG = 4f
+
+        /**
+         * 触发上下文保留的帧数（v5.9）。
+         *
+         * 之前只有 3 秒一条的 `GazeDiag` 汇总行，误触发生时**前几百毫秒到底发生了什么
+         * 完全看不到** —— 这正是 v5.9 之前几轮排查只能靠猜的原因。现在每次触发都把
+         * 前 [CONTEXT_SAMPLES] 帧的 `(dt, pitch, yaw, faceRatio)` 原始读数一并打出，
+         * 于是「单帧尖峰」和「平滑上升」在日志里是一眼可辨的两种形状。
+         */
+        private const val CONTEXT_SAMPLES = 24
+
+        /** 「越过阈值但被确认窗口丢掉」这条日志的最小间隔，避免阈值附近刷屏。 */
+        private const val SPIKE_LOG_INTERVAL_MS = 500L
+
+        /** 人脸重新出现、且消失了这么久以上，就打一条 `MARK` 行（v5.9 采集对齐用）。 */
+        private const val FACE_BACK_MARKER_MIN_MS = 400L
     }
 
     // ---------------------------------------------------------------- 点头仰头 --
@@ -464,10 +550,27 @@ class HeadPoseDetector(
     private var yawArmed = false
     private var yawSign = 0
 
+    // ---- 触发确认窗口（v5.9）：最近 3 帧里「越过了阈值」的位图 ----
+    private var pitchAboveBits = 0
+    private var yawAboveBits = 0
+
+    // ---- 触发上下文环形缓冲（v5.9）：每次触发把前约 1.2 秒的原始读数打进日志 ----
+
+    /** 上下文保留的帧数（实测帧间隔约 47~66ms，24 帧约 1.1~1.6 秒）。 */
+    private val ctxPitch = FloatArray(CONTEXT_SAMPLES)
+    private val ctxYaw = FloatArray(CONTEXT_SAMPLES)
+    private val ctxFaceRatio = FloatArray(CONTEXT_SAMPLES)
+    private val ctxAtMs = LongArray(CONTEXT_SAMPLES)
+    private var ctxIndex = 0
+    private var ctxCount = 0
+
     private var cooldownUntilMs = 0L
     private var lastFaceAtMs = 0L
     private var lastLoggedPitch = 0f
     private var lastLoggedYaw = 0f
+
+    /** 最近一次「越过阈值被确认窗口丢掉」的日志时刻（v5.9）。 */
+    private var lastSpikeLogAtMs = 0L
 
     // ---- 静止锁定的滑窗（记录最近一段时间的俯仰/偏航，只看峰峰值） ----
     private val motionPitch = FloatArray(MOTION_WINDOW_SAMPLES)
@@ -532,6 +635,15 @@ class HeadPoseDetector(
     /** 当前是否近距离。 */
     @Volatile
     var nearDistance: Boolean = false
+        private set
+
+    /**
+     * `faceRatio` 的 EMA 平滑值（v5.9），距离档判定的依据；日志/界面显示用。
+     *
+     * 用平滑值而不是瞬时值切档，是为了让「手机在手里轻微前后晃」不会把档位切来切去。
+     */
+    @Volatile
+    var smoothedFaceRatio: Float? = null
         private set
 
     /**
@@ -643,6 +755,10 @@ class HeadPoseDetector(
         lookingDown = false
         nearDistance = false
         postureLabel = "未知"
+        // v5.9：距离档的平滑值与上下文缓冲一并清零，避免用旧脸型尺寸判断新距离。
+        smoothedFaceRatio = null
+        ctxCount = 0
+        ctxIndex = 0
     }
 
     /** Throw away the learned baselines; the next samples establish new ones. */
@@ -690,6 +806,8 @@ class HeadPoseDetector(
         pitchReachedAtMs = 0L
         pitchArmed = false
         lastLoggedPitch = 0f
+        // v5.9：确认窗口跟着一起清空 —— 「回到静止」之后必须重新攒够 2 帧。
+        pitchAboveBits = 0
     }
 
     private fun clearTurn() {
@@ -698,6 +816,7 @@ class HeadPoseDetector(
         yawArmed = false
         yawSign = 0
         lastLoggedYaw = 0f
+        yawAboveBits = 0
     }
 
     /**
@@ -727,10 +846,18 @@ class HeadPoseDetector(
         }
 
         val justReturned = faceMissingSinceMs != 0L
+        val missingFor = if (justReturned) nowMs - faceMissingSinceMs else 0L
         faceMissingSinceMs = 0L
         lastFaceAtMs = nowMs
         lastAngleDeg = pitchDeg
         lastYawDeg = yawDeg
+
+        // v5.9：人脸消失 ≥400ms 再回来时打一条 MARK 行。采集标定数据时用户用
+        // 「手掌捂住摄像头 3 秒」当阶段标记，这一行让标记在日志里**不可能认错** ——
+        // 上一轮只有 3 秒一条的汇总行，标记全靠采样碰运气，整段采集没法对齐时间轴。
+        if (missingFor >= FACE_BACK_MARKER_MIN_MS) {
+            Log.i(TAG, "MARK face-back lost=${missingFor}ms baselineInvalidated=$faceLostLongEnough")
+        }
 
         if (justReturned && faceLostLongEnough) {
             // 脸回来了：整条基准线重新学，避免用被污染的窗口做判定。
@@ -756,6 +883,10 @@ class HeadPoseDetector(
         if (pitchReady) baselineDeg = median(pitchWindow, pitchCount)
         if (yawReady) baselineYawDeg = median(yawWindow, yawCount)
         calibrated = true
+
+        // v5.9：距离档必须**最先**更新，因为静止峰峰值门限、速度门限、点头增益
+        // 三者都读它。放在 updateStaticLock 之前，本帧的档位与本帧的判定才自洽。
+        updateDistanceTier()
 
         // 静止锁定要在冷却之前更新：冷却期内也要继续观察「用户到底有没有在动」，
         // 否则冷却一结束，锁定状态会是陈旧的。
@@ -817,19 +948,62 @@ class HeadPoseDetector(
     }
 
     /**
+     * 更新唯一的距离档 [nearDistance]（v5.9）。
+     *
+     * 三步：**EMA 平滑 → 带滞回的阈值 → 记录切换**。
+     *
+     *  - **平滑**：`faceRatio` 是「脸框高 / 画面高」，手机在手里轻微前后晃就会抖 ±0.02，
+     *    直接拿瞬时值切档会让档位（以及挂在它上面的灵敏度）逐帧乱跳 —— v5.9 之前的日志里
+     *    `distMode` 正是这样在 near/far 之间反复横跳的。
+     *  - **滞回**：进入用 [NEAR_ENTER_RATIO]、退出用更低的 [NEAR_EXIT_RATIO]，
+     *    这样在门槛附近抖动不会来回切档。
+     *  - **没脸时保持原判**：`faceRatio == null`（侧脸、遮挡）不改档，避免凭空翻转灵敏度。
+     */
+    private fun updateDistanceTier() {
+        val raw = faceRatio ?: return
+        val previous = smoothedFaceRatio
+        val smoothed = if (previous == null) {
+            raw
+        } else {
+            previous + FACE_RATIO_EMA_ALPHA * (raw - previous)
+        }
+        smoothedFaceRatio = smoothed
+
+        val wasNear = nearDistance
+        nearDistance = if (wasNear) smoothed > NEAR_EXIT_RATIO else smoothed >= NEAR_ENTER_RATIO
+        if (nearDistance == wasNear) return
+
+        // 切档必须留痕：这一行同时把「切档后本帧实际生效的三个量」打出来，
+        // 验证 v5.9 修复时可以直接对照 speedGate / staticRange / nodBoost 是否跟着变。
+        val boost = distanceBoost()
+        Log.i(
+            TAG,
+            "distance tier: ${if (wasNear) "near" else "mid/far"} -> " +
+                "${if (nearDistance) "near" else "mid/far"} " +
+                "(faceRatio raw=${"%.2f".format(raw)} smoothed=${"%.2f".format(smoothed)} " +
+                "enter=$NEAR_ENTER_RATIO exit=$NEAR_EXIT_RATIO) -> " +
+                "boost=×${"%.2f".format(boost)} " +
+                "speedGate=${"%.4f".format(MIN_PITCH_VELOCITY * boost)}°/ms " +
+                "staticRange=${"%.1f".format(STATIC_RANGE_DEG * boost)}° " +
+                "nodDownThreshold=${"%.1f".format(thresholdDeg * if (nearDistance) NEAR_DOWN_NOD_BOOST else 1f)}°",
+        )
+    }
+
+    /**
      * 距离放大系数：脸离得越近，同样的头部微晃在画面里折算出的角度越大（v5.2 起）。
      *
-     * 实测数据：50cm 时 `faceRatio≈0.35` 一切正常；30cm 时 `faceRatio≈0.68`，静止也会误触。
+     * 实测数据：50cm 时 `faceRatio≈0.35` 一切正常；30cm 时 `faceRatio≈0.50`，静止也会误触。
      * 所以近距离下静止门限与速度门限都要同步提高——**只提高一个是不够的**：抬高幅度门限
      * 挡不住偶尔偏大的噪声样本，抬高速度门限才能把它们区分开（噪声没有速度）。
+     *
+     * v5.9：近距离不再自己判 `faceRatio >= 0.55`，而是读唯一的距离档 [nearDistance]
+     * （带 EMA 与回差，门槛 0.46）。这样「灵敏度按近距离给」和「防护按近距离给」
+     * 用的是同一个真值，不可能再出现空档或逐帧抖动。
      */
-    private fun distanceBoost(): Float {
-        val ratio = faceRatio ?: return 1f
-        return when {
-            ratio >= NEAR_FACE_RATIO -> 2f
-            ratio >= MID_FACE_RATIO -> 1.35f
-            else -> 1f
-        }
+    private fun distanceBoost(): Float = when {
+        nearDistance -> 2f
+        (smoothedFaceRatio ?: faceRatio ?: 0f) >= MID_FACE_RATIO -> 1.35f
+        else -> 1f
     }
 
     /**
@@ -955,6 +1129,13 @@ class HeadPoseDetector(
         lastAppliedNodBoost = nearNodDownBoost(signedPitch)
         lastSignedPitch = signedPitch
 
+        // ---- v5.9：确认窗口 + 上下文缓冲，必须在任何提前返回**之前**维护 ----
+        // 理由同下面的速度：确认窗口和上下文都要如实记录"每一帧"，一旦漏掉
+        // 低于阈值的那些帧，"最近 3 帧里有 2 帧越阈值"就会退化成"连续 2 帧越阈值"，
+        // 真实动作在阈值附近上下浮动时反而凑不够。
+        pitchAboveBits = shiftAbove(pitchAboveBits, magnitude >= threshold)
+        pushContext(signedPitch, signedYawNow, nowMs)
+
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedPitch - lastLoggedPitch) >= 3f) {
             Log.i(
                 TAG,
@@ -989,6 +1170,12 @@ class HeadPoseDetector(
             }
             if (pitchOnsetAtMs == 0L) pitchOnsetAtMs = nowMs
             if (magnitude < threshold) return@run "below-threshold"
+            // v5.9 触发确认：单帧跳变凑不够 2 帧，直接丢掉（见 CONFIRM_NEEDED 的说明）。
+            // 「当前帧越过阈值」已由上一行保证，所以这里只需要确认**历史**上还有一帧越过了。
+            if (countAbove(pitchAboveBits) < CONFIRM_NEEDED) {
+                logDiscardedSpike("pitch", magnitude, threshold, velocity, nowMs)
+                return@run "unconfirmed-spike"
+            }
             if (pitchReachedAtMs == 0L) {
                 pitchReachedAtMs = nowMs
                 val riseMs = nowMs - pitchOnsetAtMs
@@ -1053,6 +1240,8 @@ class HeadPoseDetector(
 
         val staticNote = if (staticLocked) " · 静止锁定 ${"%.1f".format(threshold)}°" else ""
         val how = if (fast) "fast" else "held"
+        // v5.9：每次触发都把前约 1.2 秒的原始读数打出来（见 CONTEXT_SAMPLES 的说明）。
+        val ctxNote = " — " + contextDump()
         val boosted = nearDistance
         val boostNote = if (boosted) {
             " (boosted, dist=near posture=${if (lookingDown) "down" else "flat"} " +
@@ -1064,7 +1253,7 @@ class HeadPoseDetector(
             Log.i(
                 TAG,
                 "nodDown triggered$boostNote pitch=${"%.1f".format(signedPitch)}° " +
-                    "latency=${latencyMs}ms ($how, v=${"%.3f".format(velocity)}°/ms)$staticNote",
+                    "latency=${latencyMs}ms ($how, v=${"%.3f".format(velocity)}°/ms)$staticNote$ctxNote",
             )
             onEvent(
                 HeadEvent.NodDown(
@@ -1079,9 +1268,9 @@ class HeadPoseDetector(
                 TAG,
                 "tiltUp triggered: pitch=${"%.1f".format(signedPitch)}° " +
                     "speed=${"%.4f".format(velocity)}°/ms threshold=${"%.1f".format(threshold)}° " +
-                    "dist=${if (nearDistance) "near" else "far"} " +
+                    "dist=${if (nearDistance) "near" else "mid/far"} " +
                     "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} " +
-                    "latency=${latencyMs}ms ($how)$staticNote",
+                    "latency=${latencyMs}ms ($how)$staticNote$ctxNote",
             )
             onEvent(
                 HeadEvent.TiltUp(
@@ -1184,8 +1373,7 @@ class HeadPoseDetector(
      * 姿态带迟滞 + EMA 平滑，避免在门限附近反复切换灵敏度。
      */
     private fun updateDistanceAndPosture(nowMs: Long) {
-        nearDistance = (faceRatio ?: 0f) >= NEAR_DISTANCE_RATIO
-
+        // 距离档已由 [updateDistanceTier] 在每帧开头更新（v5.9）；这里只做姿态识别。
         val raw = chinRatio
         if (raw == null) {
             // 没有关键点（侧脸、遮挡）：保持上一帧的判定，不要凭空翻转灵敏度。
@@ -1501,6 +1689,10 @@ class HeadPoseDetector(
         yawThresholdDeg = turnThreshold
         lastSignedYaw = signedYaw
 
+        // v5.9：确认窗口与上下文（与俯仰同一套机制）；同一帧已经推过就只更新当前槽。
+        yawAboveBits = shiftAbove(yawAboveBits, magnitude >= turnThreshold)
+        pushContext(lastSignedPitch, signedYaw, nowMs)
+
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedYaw - lastLoggedYaw) >= 5f) {
             Log.i(
                 TAG,
@@ -1535,6 +1727,11 @@ class HeadPoseDetector(
         val reject: String? = run {
             if (yawOnsetAtMs == 0L) yawOnsetAtMs = nowMs
             if (magnitude < turnThreshold) return@run "below-threshold"
+            // v5.9 触发确认：与俯仰完全同一套判据（扭头同样会被单帧跳变伪造）。
+            if (countAbove(yawAboveBits) < CONFIRM_NEEDED) {
+                logDiscardedSpike("yaw", magnitude, turnThreshold, velocity, nowMs)
+                return@run "unconfirmed-spike"
+            }
 
             if (yawReachedAtMs == 0L) {
                 yawReachedAtMs = nowMs
@@ -1596,7 +1793,7 @@ class HeadPoseDetector(
         Log.i(
             TAG,
             "$direction turn triggered yaw=${"%.1f".format(abs(signedYaw))}° latency=${latencyMs}ms " +
-                "(${if (fast) "fast" else "held"})",
+                "(${if (fast) "fast" else "held"}) — " + contextDump(),
         )
         onEvent(
             if (sign < 0) {
@@ -1609,6 +1806,102 @@ class HeadPoseDetector(
 
     private fun yawLogSuffix(): String =
         lastYawDeg?.let { " yaw $it°" } ?: ""
+
+    // ------------------------------------------------- v5.9：确认窗口与上下文 --
+
+    /**
+     * 把「本帧是否越过阈值」压进最近 [CONFIRM_WINDOW] 帧的位图（新的在低位）。
+     *
+     * 用位图而不是计数器，是为了让「真实动作在阈值附近上下浮动」也能凑够 2 帧：
+     * 计数器一遇到低于阈值的帧就归零，那会把用户在阈值边缘的正常动作一起挡掉。
+     */
+    private fun shiftAbove(bits: Int, above: Boolean): Int {
+        val next = (bits shl 1) or (if (above) 1 else 0)
+        return next and ((1 shl CONFIRM_WINDOW) - 1)
+    }
+
+    /** 位图里有几帧越过了阈值。 */
+    private fun countAbove(bits: Int): Int {
+        var n = 0
+        for (i in 0 until CONFIRM_WINDOW) {
+            if ((bits shr i) and 1 == 1) n++
+        }
+        return n
+    }
+
+    /**
+     * 记录一次「越过阈值但被确认窗口丢掉」的帧（v5.9）。
+     *
+     * 这条日志是验证 v5.9 修复的**主要依据**：如果它大量出现、而 `triggered` 明显变少，
+     * 就说明单帧跳变正是误触来源、且已经被挡住。
+     */
+    private fun logDiscardedSpike(
+        axis: String,
+        magnitude: Float,
+        threshold: Float,
+        velocity: Float,
+        nowMs: Long,
+    ) {
+        if (nowMs - lastSpikeLogAtMs < SPIKE_LOG_INTERVAL_MS) return
+        lastSpikeLogAtMs = nowMs
+        val confirmed = countAbove(if (axis == "yaw") yawAboveBits else pitchAboveBits)
+        Log.i(
+            TAG,
+            "DISCARDED $axis single-frame crossing (confirmed $confirmed/$CONFIRM_NEEDED): " +
+                "mag=${"%.1f".format(magnitude)}° threshold=${"%.1f".format(threshold)}° " +
+                "speed=${"%.4f".format(velocity)}°/ms " +
+                "dist=${if (nearDistance) "near" else "mid/far"} " +
+                "staticLock=$staticLocked — " + contextDump(),
+        )
+    }
+
+    /**
+     * 记录一帧上下文（v5.9）。
+     *
+     * 同一帧内俯仰与偏航都会调用（俯仰先、偏航后），所以用时间戳做去重：
+     * 同一毫秒的第二次调用只覆盖当前槽，不会多占一格。
+     */
+    private fun pushContext(signedPitch: Float, signedYaw: Float?, nowMs: Long) {
+        if (ctxCount > 0 && ctxAtMs[(ctxIndex - 1 + CONTEXT_SAMPLES) % CONTEXT_SAMPLES] == nowMs) {
+            val slot = (ctxIndex - 1 + CONTEXT_SAMPLES) % CONTEXT_SAMPLES
+            ctxPitch[slot] = signedPitch
+            ctxYaw[slot] = signedYaw ?: Float.NaN
+            ctxFaceRatio[slot] = faceRatio ?: Float.NaN
+            return
+        }
+        ctxPitch[ctxIndex] = signedPitch
+        ctxYaw[ctxIndex] = signedYaw ?: Float.NaN
+        ctxFaceRatio[ctxIndex] = faceRatio ?: Float.NaN
+        ctxAtMs[ctxIndex] = nowMs
+        ctxIndex = (ctxIndex + 1) % CONTEXT_SAMPLES
+        if (ctxCount < CONTEXT_SAMPLES) ctxCount++
+    }
+
+    /**
+     * 把上下文缓冲打成一行（v5.9）：`-1100ms|-3.2/1.0/0.50`。
+     *
+     * 每格三个数依次是 **有符号俯仰 / 有符号偏航 / 脸占比**，时间是相对触发帧的毫秒数。
+     * 排成时间序，于是「单帧尖峰」是孤立的一个大值，而「平滑上升」是一串递增的值 ——
+     * 这两种形状在日志里一眼可辨，不需要任何额外工具。
+     */
+    private fun contextDump(): String {
+        if (ctxCount == 0) return "ctx: (empty)"
+        val newestIdx = (ctxIndex - 1 + CONTEXT_SAMPLES) % CONTEXT_SAMPLES
+        val newestAt = ctxAtMs[newestIdx]
+        val start = if (ctxCount < CONTEXT_SAMPLES) 0 else ctxIndex
+        val sb = StringBuilder("ctx ${ctxCount}f:")
+        for (i in 0 until ctxCount) {
+            val idx = (start + i) % CONTEXT_SAMPLES
+            val yawValue = ctxYaw[idx]
+            val ratioValue = ctxFaceRatio[idx]
+            sb.append(' ')
+                .append(ctxAtMs[idx] - newestAt).append("ms|")
+                .append("%.1f".format(ctxPitch[idx])).append('/')
+                .append(if (yawValue.isNaN()) "-" else "%.1f".format(yawValue)).append('/')
+                .append(if (ratioValue.isNaN()) "-" else "%.2f".format(ratioValue))
+        }
+        return sb.toString()
+    }
 
     // --------------------------------------------------------------- 基准线 --
 

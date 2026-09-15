@@ -1333,6 +1333,10 @@ class GazeCameraService : LifecycleService() {
                 " chinMed=${headPoseDetector?.chinRatioMedian?.let { "%.3f".format(it) } ?: "-"}" +
                 // 注意字段名别叫 dist：前面已有 dist=近/中/远（握持距离档），重名会看错。
                 " distMode=${if (headPoseDetector?.nearDistance == true) "near" else "far"}" +
+                // v5.9：距离档的唯一真值（EMA 平滑后的脸占比）。之前这里只有瞬时
+                // faceRatio，档位在 0.50/0.55 两条线之间逐帧乱跳完全看不出来；现在
+                // 拿 frSm 与 distMode 一对照，就能确认档位是稳的。
+                " frSm=${headPoseDetector?.smoothedFaceRatio?.let { "%.2f".format(it) } ?: "-"}" +
                 " posture=${headPoseDetector?.postureLabel ?: "-"}" +
                 // 打实际生效的增益，而不是常量，这样与 pitchTh 永远自洽。
                 " nodBoost=${"%.2f".format(headPoseDetector?.lastAppliedNodBoost ?: 1f)}" +

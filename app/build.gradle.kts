@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.gazescroll"
         minSdk = 26
         targetSdk = 34
-        versionCode = 61
-        versionName = "5.11"
+        versionCode = 62
+        versionName = "5.12"
     }
 
     buildTypes {
@@ -55,7 +55,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-service:2.8.7")
 
-    // CameraX — front camera preview + image analysis.
+    // CameraX 鈥?front camera preview + image analysis.
     val cameraX = "1.3.4"
     implementation("androidx.camera:camera-core:$cameraX")
     implementation("androidx.camera:camera-camera2:$cameraX")
@@ -68,7 +68,7 @@ dependencies {
     // com.google.android.gms:play-services-mlkit-face-detection.
     implementation("com.google.mlkit:face-detection:16.1.7")
 
-    // Shizuku — injects the swipe gesture with ADB (shell) privileges.
+    // Shizuku 鈥?injects the swipe gesture with ADB (shell) privileges.
     // This replaces AccessibilityService, which MIUI/HyperOS blocks on
     // sideloaded apps (it refuses to grant sensitive permissions to them).
     //

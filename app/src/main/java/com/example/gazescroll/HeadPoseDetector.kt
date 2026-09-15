@@ -247,14 +247,15 @@ class HeadPoseDetector(
         private const val FACE_RATIO_EMA_ALPHA = 0.35f
 
         /**
-         * 俯视判定的几何门限 —— **当前未启用**（v5.6）。
+         * 俯视判定的几何门限 —— **未启用**（v5.6 试过、v5.12 起彻底不用）。
          *
          * 实测标定发现 `|下巴Y − 眼中心Y| / 脸高` 主要在反映距离而非姿态
          * （远距 0.335~0.368、近距 0.368~0.432），区分度不足以驱动灵敏度开关，
-         * 因此点头增益改由**距离**驱动（见 [nearDownNodBoost]）。
+         * 因此点头增益改由**距离**驱动（见 [nearNodDownBoost]）。
          *
-         * 保留这个常量与 [chinRatio] 诊断，是为了在拿到更干净的分组数据后可以重新启用；
-         * 现在把它设成一个实测中不会达到的值，确保它**不会**意外生效。
+         * v5.12 找到了更好的俯视判据：**基准俯仰角**（见 [DOWN_POSTURE_BASE_DEG]，
+         * 实测 30cm 俯视 base=7.8~14.4、50cm 平视 base=0~2，分离干净）。
+         * 这两个常量与 [chinRatio] 现在**只作标定记录与诊断**保留，不参与任何判定。
          */
         private const val DOWN_POSTURE_CHIN_RATIO = 0.68f
 
@@ -273,6 +274,85 @@ class HeadPoseDetector(
          * 所以"噪声有幅度没有速度"这道关卡照旧生效。
          */
         private const val NEAR_DOWN_NOD_BOOST = 0.68f
+
+        // ------------------------- v5.12：近距离俯视点头专用档 + 晃动过滤 --
+
+        /**
+         * 「俯视」判据：**基准俯仰角**（`baselineDeg`，即静止时人脸相对摄像头的绝对俯仰中位数）
+         * 达到这个度数就认为用户在俯视看手机（v5.12）。
+         *
+         * ## 为什么这次能用基准俯仰角，而 v5.6 用 chinRatio 失败
+         *
+         * v5.6 试过用几何比例 `|下巴Y−眼中心Y| / 脸高` 判断俯视，实测发现它主要在反映**距离**
+         * （远距 0.335~0.368、近距 0.368~0.432），区分度不足以驱动灵敏度开关，于是作废。
+         *
+         * 基准俯仰角是另一回事：它是**摄像头与脸的相对角度**，物理上直接对应
+         * 「手机在脸的下方、眼睛往下看」。该用户实测：
+         *
+         * ```
+         * 30cm 俯视   base = 7.8 ~ 14.4
+         * 50cm 平视   base = 0 ~ 2
+         * ```
+         *
+         * 分离干净，而且**不需要任何新传感器或新代码** —— 它本来就是基线学习中位数的输出。
+         */
+        private const val DOWN_POSTURE_BASE_DEG = 4f
+
+        /** 俯视判定的回差：低于这个值才回到平视，避免在门限附近反复切换。 */
+        private const val DOWN_POSTURE_EXIT_DEG = 3f
+
+        /**
+         * **近距离 + 俯视**时的点头增益（v5.12）：`6.0° × 0.50 = 3.0°`。
+         *
+         * ## 实机依据（v511-verify.log，用户明确在「轻轻点头」）
+         *
+         * 用户的原话是「我希望在俯视的状态下能轻轻地触发点头」。日志量到的"轻点头"幅度：
+         *
+         * ```
+         * 03:20:02.275 nodDown rejected: pitch=-3.7° threshold=4.1° reason=below-threshold
+         * 03:20:05.152 nodDown rejected: pitch=-3.9° threshold=4.1° reason=below-threshold
+         * 03:21:20.565 nodDown rejected: pitch=-4.1° threshold=4.1° reason=below-threshold
+         * ```
+         *
+         * 也就是**用户的轻点头正好落在 3.7~4.4°，而 v5.6 那一档的阈值是 4.1°** ——
+         * 卡在门上，所以"有时候好使、有时候不好使"。压到 3.0° 之后，
+         * 轻点头有 0.7~1.4° 的余量，而**远距离完全不受影响**（该档要求近距 + 俯视两条同时成立）。
+         *
+         * ⚠️ 阈值压低之后必须配 [SHAKE_PATH_EFFICIENCY] 的晃动过滤，
+         * 否则地铁上近距离俯视时的晃动会直接顶穿这个阈值 —— 用户明确点名了这一点。
+         */
+        private const val NEAR_LOOKDOWN_NOD_BOOST = 0.50f
+
+        /**
+         * 晃动过滤的观察窗口（帧数，v5.12）。
+         *
+         * 实测帧间隔约 63~116ms，6 帧 ≈ 0.5~0.7 秒，正好覆盖一次轻点头（约 300ms）
+         * 加上它前面的一段静止。
+         */
+        private const val SHAKE_WINDOW_SAMPLES = 6
+
+        /**
+         * 晃动判据：**路径效率**（v5.12）。
+         *
+         * `效率 = |最新值 − 最旧值| / Σ|相邻差值|`
+         *
+         *  - **有意动作**是单调推进：走过的路 ≈ 净位移 → 效率接近 1；
+         *  - **晃动**（地铁、手抖）是来回抖：走过的路远大于净位移 → 效率很低。
+         *
+         * 实例（阈值 3.0°）：
+         *
+         * ```
+         * 轻点头   0 → 1.0 → 2.5 → 3.5 → 4.2 → 4.2   路径 4.2  净位移 4.2  效率 1.00  ✅ 放行
+         * 晃动   -1.5 → 1.2 → -1.0 → 2.8 → -1.2 → 3.2 路径 17.1 净位移 4.7  效率 0.27  ⛔ 拦下
+         * ```
+         *
+         * 之所以不用"数方向反转次数"：效率把幅度和次数合成一个量，少一个要调的参数，
+         * 而且对低频大幅晃动（反转不多但来回走得很远）同样有效。
+         */
+        private const val SHAKE_PATH_EFFICIENCY = 0.45f
+
+        /** 路径太短时效率没有意义（纯噪声），低于这个总路程就不做晃动判定。 */
+        private const val SHAKE_MIN_PATH_DEG = 1.5f
 
         /** chinRatio 滑动中位数的窗口（约 0.6 秒 @15fps，只用于标定显示）。 */
         private const val CHIN_WINDOW_SAMPLES = 9
@@ -551,6 +631,21 @@ class HeadPoseDetector(
     private var ctxIndex = 0
     private var ctxCount = 0
 
+    // ---- 晃动过滤的环形缓冲（v5.12）：只看有符号俯仰「走过的路」 ----
+    private val shakePitch = FloatArray(SHAKE_WINDOW_SAMPLES)
+    private var shakeIndex = 0
+    private var shakeCount = 0
+
+    /**
+     * 当前路径效率（v5.12），诊断用：`|净位移| / Σ|相邻差值|`。
+     *
+     * 越接近 1 越像"有意动作"，越低越像"来回晃"。挂在诊断行上，
+     * 于是"地铁上到底算不算晃"可以直接读日志判断，不用猜。
+     */
+    @Volatile
+    var shakeEfficiency: Float = 1f
+        private set
+
     private var cooldownUntilMs = 0L
     private var lastFaceAtMs = 0L
     private var lastLoggedPitch = 0f
@@ -743,6 +838,10 @@ class HeadPoseDetector(
         smoothedFaceRatio = null
         ctxCount = 0
         ctxIndex = 0
+        // v5.12：晃动判定的缓冲也清空。
+        shakeCount = 0
+        shakeIndex = 0
+        shakeEfficiency = 1f
     }
 
     /** Throw away the learned baselines; the next samples establish new ones. */
@@ -1112,6 +1211,8 @@ class HeadPoseDetector(
 
         // ---- v5.9：逐帧上下文（必须在任何提前返回**之前**维护，否则轨迹会缺帧）----
         pushContext(signedPitch, signedYawNow, nowMs)
+        // v5.12：晃动判定的缓冲同理，必须在提前返回之前维护。
+        pushShakeSample(signedPitch)
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedPitch - lastLoggedPitch) >= 3f) {
             Log.i(
@@ -1147,6 +1248,12 @@ class HeadPoseDetector(
             }
             if (pitchOnsetAtMs == 0L) pitchOnsetAtMs = nowMs
             if (magnitude < threshold) return@run "below-threshold"
+            // v5.12 晃动过滤：地铁/手抖是**来回抖**（走过的路远大于净位移），
+            // 即使顶穿了阈值也不算动作。必须在压低阈值（3.0°）之后有它兜底。
+            if (isShaking()) {
+                clearExcursion()
+                return@run "shake"
+            }
             if (pitchReachedAtMs == 0L) {
                 pitchReachedAtMs = nowMs
                 val riseMs = nowMs - pitchOnsetAtMs
@@ -1184,6 +1291,8 @@ class HeadPoseDetector(
                         "speed=${"%.4f".format(velocity)}°/ms gate=${"%.4f".format(speedGate)}°/ms " +
                         "threshold=${"%.1f".format(threshold)}° " +
                         "dist=${if (nearDistance) "near" else "far"} " +
+                        "posture=${if (lookingDown) "down" else "flat"} " +
+                        "shake=${"%.2f".format(shakeEfficiency)} " +
                         "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} reason=$reject",
                 )
             }
@@ -1345,10 +1454,22 @@ class HeadPoseDetector(
      */
     private fun updateDistanceAndPosture(nowMs: Long) {
         // 距离档已由 [updateDistanceTier] 在每帧开头更新（v5.9）；这里只做姿态识别。
+
+        // ---- v5.12：俯视判据改用**基准俯仰角**（绝对姿态），不再用 chinRatio ----
+        // 必须先做，且不依赖 chinRatio —— 基准俯仰角是基线学习中位数的输出，与它无关。
+        // 依据见 DOWN_POSTURE_BASE_DEG：实测 30cm 俯视 base=7.8~14.4、50cm 平视 base=0~2。
+        val wasDown = lookingDown
+        lookingDown = if (wasDown) {
+            baselineDeg > DOWN_POSTURE_EXIT_DEG
+        } else {
+            baselineDeg >= DOWN_POSTURE_BASE_DEG
+        }
+
+        // chinRatio 保留为**纯诊断**（v5.6 已证明它主要在反映距离，不接任何判定）。
         val raw = chinRatio
         if (raw == null) {
-            // 没有关键点（侧脸、遮挡）：保持上一帧的判定，不要凭空翻转灵敏度。
             postureLabel = if (lookingDown) "俯视(旧)" else "平视(旧)"
+            reportPostureChange(wasDown, null)
             return
         }
 
@@ -1356,27 +1477,21 @@ class HeadPoseDetector(
         val smoothed = if (previous == null) raw else previous + POSTURE_EMA_ALPHA * (raw - previous)
         smoothedChinRatio = smoothed
         pushChinSample(smoothed)
+        reportPostureChange(wasDown, smoothed)
+    }
 
-        val wasDown = lookingDown
-        lookingDown = if (wasDown) {
-            // 已在俯视：要跌到（门限 − 回差）以下才算回到平视。
-            smoothed >= DOWN_POSTURE_CHIN_RATIO - DOWN_POSTURE_HYSTERESIS
-        } else {
-            smoothed >= DOWN_POSTURE_CHIN_RATIO
-        }
-
-        val distance = if (nearDistance) "near" else "far"
+    /** 姿态标签与切换日志（v5.12 拆出来，因为俯视判据已与 chinRatio 解耦）。 */
+    private fun reportPostureChange(wasDown: Boolean, smoothedChinRatio: Float?) {
         postureLabel = if (lookingDown) "down" else "flat"
-
-        if (lookingDown != wasDown) {
-            Log.i(
-                TAG,
-                "posture changed: ${if (wasDown) "down" else "flat"} -> $postureLabel " +
-                    "(dist=$distance, chinRatio=${"%.3f".format(smoothed)} " +
-                    "downThreshold=${"%.2f".format(DOWN_POSTURE_CHIN_RATIO)}) — " +
-                    "note: nod boost is distance-driven, posture is diagnostic only",
-            )
-        }
+        if (lookingDown == wasDown) return
+        val ratioText = smoothedChinRatio?.let { " chinRatio=${"%.3f".format(it)}" } ?: ""
+        Log.i(
+            TAG,
+            "posture changed: ${if (wasDown) "down" else "flat"} -> $postureLabel " +
+                "(baseline=${"%.1f".format(baselineDeg)}° baseThreshold=$DOWN_POSTURE_BASE_DEG°" +
+                "$ratioText) — " +
+                "近距离俯视点头增益 ${if (lookingDown) "×$NEAR_LOOKDOWN_NOD_BOOST" else "off"}",
+        )
     }
 
     /**
@@ -1431,8 +1546,15 @@ class HeadPoseDetector(
      *
      * @param signedPitch 本帧的有符号俯仰偏移：负 = 低头（nod down），正 = 抬头（tilt up）
      */
-    private fun nearNodDownBoost(signedPitch: Float): Float =
-        if (nearDistance && signedPitch < 0f) NEAR_DOWN_NOD_BOOST else 1f
+    private fun nearNodDownBoost(signedPitch: Float): Float = when {
+        // 仰头方向一律不动（v5.7：被动仰视 4~7° 不能被放行）。
+        signedPitch >= 0f -> 1f
+        // v5.12：**近距离 + 俯视**再给一档 —— 见 NEAR_LOOKDOWN_NOD_BOOST 的实机数据。
+        nearDistance && lookingDown -> NEAR_LOOKDOWN_NOD_BOOST
+        // v5.6 的近距离档：脸大但姿态不是俯视时仍然省力（远距离完全不受影响）。
+        nearDistance -> NEAR_DOWN_NOD_BOOST
+        else -> 1f
+    }
 
     /**
      * 方向仲裁：本帧的偏航信号是否明显强于俯仰信号（v5.8）。
@@ -1820,6 +1942,45 @@ class HeadPoseDetector(
         lastYawDeg?.let { " yaw $it°" } ?: ""
 
     // ------------------------------------------------------ v5.9：逐帧上下文 --
+
+    /** 记录一帧有符号俯仰，供晃动判定使用（v5.12）。 */
+    private fun pushShakeSample(signedPitch: Float) {
+        shakePitch[shakeIndex] = signedPitch
+        shakeIndex = (shakeIndex + 1) % SHAKE_WINDOW_SAMPLES
+        if (shakeCount < SHAKE_WINDOW_SAMPLES) shakeCount++
+    }
+
+    /**
+     * 晃动判定（v5.12）：路径效率 = `|净位移| / Σ|相邻差值|`，见 [SHAKE_PATH_EFFICIENCY]。
+     *
+     * 有意动作单调推进 → 效率接近 1；来回抖 → 效率很低。总路程太短（纯噪声）时不做判定，
+     * 那种情况由静止锁定与速度门限负责。
+     *
+     * 顺带把效率记进 [shakeEfficiency]，诊断行会显示，于是"地铁上到底算不算晃"
+     * 可以直接读日志判断。
+     */
+    private fun isShaking(): Boolean {
+        if (shakeCount < SHAKE_WINDOW_SAMPLES) {
+            shakeEfficiency = 1f
+            return false
+        }
+        // 环形缓冲写满时，shakeIndex 指向**最旧**的一格。
+        val oldest = shakePitch[shakeIndex]
+        var previous = oldest
+        var path = 0f
+        var i = 1
+        while (i < SHAKE_WINDOW_SAMPLES) {
+            val value = shakePitch[(shakeIndex + i) % SHAKE_WINDOW_SAMPLES]
+            path += abs(value - previous)
+            previous = value
+            i++
+        }
+        val net = abs(previous - oldest)
+        val efficiency = if (path <= 0.001f) 1f else net / path
+        shakeEfficiency = efficiency
+        if (path < SHAKE_MIN_PATH_DEG) return false
+        return efficiency < SHAKE_PATH_EFFICIENCY
+    }
 
     /**
      * 记录一帧上下文（v5.9）。

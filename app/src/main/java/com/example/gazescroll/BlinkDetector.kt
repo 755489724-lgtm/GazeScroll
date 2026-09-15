@@ -53,18 +53,17 @@ class BlinkDetector(
         private const val MID_FACE_RATIO = 0.38f
 
         /**
-         * 近距离时要求的**连续闭眼帧数**（v5.11）。
+         * 近距离时要求的**连续闭眼帧数**（v5.11 引入，v5.12 撤销）。
          *
-         * v5.3 的设计值是 `requiredClosedFrames × 2 = 4` 帧，v5.11 收到 **3 帧**。
-         * 依据是这次终于量到了真实帧率：实机 ctx 日志里相邻帧间隔 63~116ms（**约 11fps**），
-         * 4 帧 ≈ 要求**连续闭眼 360ms 以上**，已经超出一次正常眨眼的总时长，
-         * 很可能把用户**有意的**眨眼触发一起挡掉 —— 而本项目刚在 v5.10 因为
-         * 「连带拖慢真实动作」撤过一次改动，不能重犯。
+         * v5.11 曾把近距离要求提到 3 帧（v5.3 的设计值是 4），结果**用户的有意眨眼全被挡掉**：
+         * 一整场会话里 `I/Blink:` **一行都没有**，用户原话「我眼睛眨烂了，只触发了一次」。
+         * 原因是实测帧间隔 63~116ms（约 11fps）—— 加一帧就等于要求多闭眼约 90ms，
+         * 而一次正常眨眼总共才 150~250ms。
          *
-         * 3 帧 ≈ 270ms：足够挡掉短促的自然眨眼，又给有意眨眼留一档余量。
-         * **如果用户反馈「有意眨眼也变难了」，第一个要退的就是这个值。**
+         * 所以 v5.12 起近距离**只降阈值、不加帧数**，帧数要求恒等于用户设定值。
+         * 教训还是那一句：**凡是会连带挡住真实动作的手段，都不能用来防误触。**
          */
-        private const val NEAR_CLOSED_FRAMES = 3
+        private const val CLOSED_FRAMES_FOLLOW_USER = true
     }
 
     /** Below this, an eye counts as closed. Raised to 0.55 for glasses. */
@@ -190,8 +189,14 @@ class BlinkDetector(
         // 默认 0.55：中距 → 0.407，近距 → 0.30。
         val below = closedBelow / boost
         effectiveClosedBelow = below.coerceIn(0.30f, closedBelow)
-        // 连续帧要求：近距离用 [NEAR_CLOSED_FRAMES]（v5.11 从设计的 4 帧收到 3 帧，理由见常量说明）。
-        effectiveRequiredClosedFrames = if (isNear) NEAR_CLOSED_FRAMES else requiredClosedFrames
+        // 帧数要求恒等于用户设定值（v5.12）—— 近距离**不再加帧数**，理由见
+        // [CLOSED_FRAMES_FOLLOW_USER]：加帧数会把用户有意的眨眼一起挡掉。
+        if (CLOSED_FRAMES_FOLLOW_USER) {
+            effectiveRequiredClosedFrames = requiredClosedFrames
+        } else {
+            effectiveRequiredClosedFrames =
+                (requiredClosedFrames * boost).toInt().coerceIn(requiredClosedFrames, 6)
+        }
     }
 
     @Synchronized
@@ -245,12 +250,27 @@ class BlinkDetector(
                 closedSinceMs = nowMs
             }
         } else if (openNow) {
+            val framesThisClosure = closedFrames
+            val beganAt = closureBeganAtMs
             closedFrames = 0
             val completedBlink = eyesClosed
-            val beganAt = closureBeganAtMs
             eyesClosed = false
             closedSinceMs = 0L
-            if (completedBlink) registerBlink(nowMs, (nowMs - beganAt).coerceAtLeast(0L))
+            if (completedBlink) {
+                registerBlink(nowMs, (nowMs - beganAt).coerceAtLeast(0L))
+            } else if (framesThisClosure > 0) {
+                // v5.12：**被拒掉的闭眼也留痕**。v5.11 那次把用户的眨眼挡掉了却什么都看不到，
+                 // 只能靠用户描述"眼睛眨烂了"来发现问题。现在每一次抵达阈值的闭眼都有记录，
+                 // 于是"该用户的有意眨眼到底多深、多久"是可直接量出来的数据。
+                Log.i(
+                    TAG,
+                    "closure rejected: ${(nowMs - beganAt).coerceAtLeast(0L)}ms " +
+                        "frames=$framesThisClosure/$effectiveRequiredClosedFrames " +
+                        "minEye=${"%.2f".format(closureMinLeft)}/${"%.2f".format(closureMinRight)} " +
+                        "below=${"%.2f".format(effectiveClosedBelow)} " +
+                        "dist=${if (nearTier == true) "near" else "mid/far"}",
+                )
+            }
         }
         // Between the thresholds: keep the previous verdict (hysteresis).
 

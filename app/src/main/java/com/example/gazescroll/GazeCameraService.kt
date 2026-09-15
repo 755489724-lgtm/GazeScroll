@@ -1347,6 +1347,9 @@ class GazeCameraService : LifecycleService() {
                 // faceRatio，档位在 0.50/0.55 两条线之间逐帧乱跳完全看不出来；现在
                 // 拿 frSm 与 distMode 一对照，就能确认档位是稳的。
                 " frSm=${headPoseDetector?.smoothedFaceRatio?.let { "%.2f".format(it) } ?: "-"}" +
+                // v5.12：晃动判定的路径效率（|净位移|/Σ|相邻差值|）。接近 1 = 单调推进（有意动作），
+                // 越低越像来回晃（地铁/手抖）。它同时是「地铁上到底算不算晃」的判读依据。
+                " shake=${"%.2f".format(headPoseDetector?.shakeEfficiency ?: 1f)}" +
                 " posture=${headPoseDetector?.postureLabel ?: "-"}" +
                 // 打实际生效的增益，而不是常量，这样与 pitchTh 永远自洽。
                 " nodBoost=${"%.2f".format(headPoseDetector?.lastAppliedNodBoost ?: 1f)}" +

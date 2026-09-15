@@ -28,6 +28,15 @@ jobs:
 
       - name: 配置 Android SDK
         uses: android-actions/setup-android@v4
+        # 必须显式覆盖 packages。该 action 的默认值是 "tools platform-tools"，
+        # 而 Google 的 SDK 仓库早已不再提供 `tools` 包：
+        #   Warning: Failed to find package 'tools'
+        #   Error: The process '.../sdkmanager' failed with exit code 1
+        # 于是「配置 Android SDK」这一步在 v3 和 v4 上都会失败（升到 v4 只修了调用
+        # 方式，没改默认包列表）。`tools` 本来也不需要——AGP 用的是 cmdline-tools、
+        # platform-tools 和 build-tools。
+        with:
+          packages: 'platform-tools'
 
       - name: 安装所需的 SDK 组件
         run: |

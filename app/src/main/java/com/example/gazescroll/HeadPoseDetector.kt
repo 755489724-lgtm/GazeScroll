@@ -302,26 +302,22 @@ class HeadPoseDetector(
         private const val DOWN_POSTURE_EXIT_DEG = 3f
 
         /**
-         * **近距离 + 俯视**时的点头增益（v5.12）：`6.0° × 0.50 = 3.0°`。
+         * **近距离 + 俯视**时的点头增益：`6.0° × 0.42 = ` **2.5°**。
          *
-         * ## 实机依据（v511-verify.log，用户明确在「轻轻点头」）
+         * ## 实机依据
          *
-         * 用户的原话是「我希望在俯视的状态下能轻轻地触发点头」。日志量到的"轻点头"幅度：
+         * v5.12 用 0.50（3.0°）后，用户复测反馈「轻轻点头还是不触发，必须还要稍微动作大一点」
+         * —— 日志里他的轻点头落在 3.0~4.4°，而 3.0° 恰好卡在门上。再降一档到 **2.5°**。
          *
-         * ```
-         * 03:20:02.275 nodDown rejected: pitch=-3.7° threshold=4.1° reason=below-threshold
-         * 03:20:05.152 nodDown rejected: pitch=-3.9° threshold=4.1° reason=below-threshold
-         * 03:21:20.565 nodDown rejected: pitch=-4.1° threshold=4.1° reason=below-threshold
-         * ```
+         * v5.14 同时修掉了这个阈值的**不稳定**：它以前会与 v5.4 的俯视增益叠乘，
+         * 于是随那条状态在 2.25° 与 3.0° 之间来回跳（见 [pitchThresholdNow]）。
+         * 现在它是**一个稳定的数**，用户能记住"轻轻一点就够"。
          *
-         * 也就是**用户的轻点头正好落在 3.7~4.4°，而 v5.6 那一档的阈值是 4.1°** ——
-         * 卡在门上，所以"有时候好使、有时候不好使"。压到 3.0° 之后，
-         * 轻点头有 0.7~1.4° 的余量，而**远距离完全不受影响**（该档要求近距 + 俯视两条同时成立）。
-         *
-         * ⚠️ 阈值压低之后必须配 [SHAKE_PATH_EFFICIENCY] 的晃动过滤，
-         * 否则地铁上近距离俯视时的晃动会直接顶穿这个阈值 —— 用户明确点名了这一点。
+         * ⚠️ 阈值压低之后必须有东西挡住晃动与眨眼带来的假信号，否则地铁上、走路时会疯狂误触。
+         * 现在的三道闸门是：路径效率（[SHAKE_PATH_EFFICIENCY]）、手机自身运动
+         * （[PhoneMotionMonitor]）、以及闭眼后的姿态不可信期（[EYE_UNRELIABLE_MS]）。
          */
-        private const val NEAR_LOOKDOWN_NOD_BOOST = 0.50f
+        private const val NEAR_LOOKDOWN_NOD_BOOST = 0.42f
 
         /**
          * 晃动过滤的观察窗口（帧数，v5.12）。
@@ -389,6 +385,29 @@ class HeadPoseDetector(
          * 区别是现在只作用在这一条通道上，代价只有一帧，不会拖慢其他动作）。
          */
         private const val LIGHT_NOD_CONFIRM_MS = 60L
+
+        /**
+         * 闭眼之后「头部姿态不可信」的保持时长（v5.14）。
+         *
+         * ## 用户报的那次误触，日志给了完整的因果链
+         *
+         * ```
+         * 03:44:00.020  I/Blink: closure rejected: 63ms frames=1/2 minEye=0.98/0.14
+         * 03:44:00.127  I/HeadPose: nodDown triggered pitch=-3.5° speed=0.037°/ms — ctx … -99ms|0.1 … 0ms|-3.5
+         * ```
+         *
+         * 也就是：**一帧的单眼闭合之后 107ms，俯仰读数从 +0.1° 直接跳到 −3.5°**
+         * （上下文里那一格是孤立的大值，前后都是 0 附近 —— 典型的单帧跳变）。
+         * 用户的原话也对上了：「触发的时候我不受控制的自己眨眼了几次」。
+         *
+         * 道理很直白：ML Kit 的头部姿态是**靠关键点回归**出来的，眼睛闭上时眼部关键点消失，
+         * 那一帧的姿态估计会跳。所以闭眼（哪怕只有一帧的浅闭）之后的短时间里，
+         * 俯仰/偏航读数不能用来判定动作。
+         *
+         * 取 120ms ≈ 一帧多（实测帧间隔 63~116ms），足够跨过跳变那一帧，
+         * 又短到不会明显影响真实动作。
+         */
+        private const val EYE_UNRELIABLE_MS = 120L
 
         /** chinRatio 滑动中位数的窗口（约 0.6 秒 @15fps，只用于标定显示）。 */
         private const val CHIN_WINDOW_SAMPLES = 9
@@ -763,6 +782,19 @@ class HeadPoseDetector(
     var phoneMoving: Boolean = false
 
     /**
+     * 本帧是否出现了「眼睛读数跌破闭眼阈值」（v5.14），由服务从 [BlinkDetector] 同步。
+     *
+     * 注意这里用的是**单帧的浅闭也算**（`closedNow`），而不是"已确认的眨眼"：
+     * 实测那次误触的元凶正是一帧的单眼浅闭（`frames=1/2`，永远不会被确认成眨眼）。
+     * 配合 [EYE_UNRELIABLE_MS] 的恢复期使用，见该常量的因果链说明。
+     */
+    @Volatile
+    var eyeDip: Boolean = false
+
+    /** 闭眼不可信期的截止时刻（v5.14），由 [eyeUnreliable] 维护。 */
+    private var eyeUnreliableUntilMs = 0L
+
+    /**
      * `faceRatio` 的 EMA 平滑值（v5.9），距离档判定的依据；日志/界面显示用。
      *
      * 用平滑值而不是瞬时值切档，是为了让「手机在手里轻微前后晃」不会把档位切来切去。
@@ -888,6 +920,8 @@ class HeadPoseDetector(
         shakeCount = 0
         shakeIndex = 0
         shakeEfficiency = 1f
+        // v5.14：闭眼不可信期也清零。
+        eyeUnreliableUntilMs = 0L
     }
 
     /** Throw away the learned baselines; the next samples establish new ones. */
@@ -1180,12 +1214,31 @@ class HeadPoseDetector(
      * 遮挡抑制、回中锁定全部保留，且仍然按距离缩放。
      */
     private fun pitchThresholdNow(signedPitch: Float): Float {
-        val boost = nearNodDownBoost(signedPitch)
+        val nearBoost = nearNodDownBoost(signedPitch)
         // v5.6：把"这一帧实际生效的距离增益"记下来给诊断行用。
         // 之前诊断打的是 nodDownGazeBoost（俯视增益常量），近距离下会显示 1.00，
         // 而阈值其实已经乘过 0.68 —— 字段名与实际不符，排查时会误判功能没生效。
-        lastAppliedNodBoost = boost
-        return thresholdDeg * (nodDownGazeBoost * boost)
+        lastAppliedNodBoost = nearBoost
+
+        // v5.14：v5.4 的俯视增益（nodDownGazeBoost）必须**单向**，而且不能与近距离俯视档叠乘。
+        //
+        // 两个都是 v5.14 修掉的实机缺陷：
+        //
+        //  ① **方向泄漏**：它以前乘在**共用**的俯仰阈值上，于是仰头方向也吃到了 0.75。
+        //     实机日志里能看到 `tiltUp triggered ... threshold=4.5°`，而用户设定的是 6.0°
+        //     —— 这与 v5.7 修掉的是同一个错误，只是当年只改了"近距离增益"那一条，
+        //     这条基于**相对基准线偏移**的俯视增益一直漏着。仰头阈值被偷偷压低 25%，
+        //     正是"被动仰视 4.5~6° 就误触"的来源。
+        //
+        //  ② **状态抖动**：近距离俯视档（0.42）已经把"俯视"这件事用**可靠判据**
+        //     （基准俯仰角，见 DOWN_POSTURE_BASE_DEG）算进去了；再叠乘这条基于相对偏移的
+        //     俯视增益，阈值就会在那条状态开关时于 **2.25° 与 3.0° 之间来回跳**
+        //     （实测 337 帧里有 133 帧处于该状态），手感时灵时不灵。
+        //
+        // 所以：只有**没有**吃到任何近距离档（即远距离、或近距离平视）时，
+        // 才让 v5.4 那条俯视增益作用于低头方向；仰头方向永远不吃它。
+        val gazeBoost = if (signedPitch < 0f && nearBoost == 1f) nodDownGazeBoost else 1f
+        return thresholdDeg * (gazeBoost * nearBoost)
     }
 
     /** 按距离缩放后的静止峰峰值门限。 */
@@ -1298,8 +1351,10 @@ class HeadPoseDetector(
             }
             if (pitchOnsetAtMs == 0L) pitchOnsetAtMs = nowMs
             if (magnitude < threshold) return@run "below-threshold"
+            // v5.14：闭眼（哪怕一帧浅闭）之后的姿态读数不可信 —— 见 EYE_UNRELIABLE_MS。
+            if (eyeUnreliable(nowMs)) return@run "eyes-unreliable"
             // v5.12 晃动过滤：地铁/手抖是**来回抖**（走过的路远大于净位移），
-            // 即使顶穿了阈值也不算动作。必须在压低阈值（3.0°）之后有它兜底。
+            // 即使顶穿了阈值也不算动作。必须在压低阈值（2.5°）之后有它兜底。
             if (isShaking()) {
                 clearExcursion()
                 return@run "shake"
@@ -1923,6 +1978,8 @@ class HeadPoseDetector(
         val reject: String? = run {
             if (yawOnsetAtMs == 0L) yawOnsetAtMs = nowMs
             if (magnitude < turnThreshold) return@run "below-threshold"
+            // v5.14：闭眼后的姿态不可信期（扭头同样受影响）。
+            if (eyeUnreliable(nowMs)) return@run "eyes-unreliable"
             // v5.13：手机自己被顿了一下（急停/急刹）—— 扭头同样不成立。
             if (phoneMoving) return@run "phone-motion"
 
@@ -2002,9 +2059,22 @@ class HeadPoseDetector(
 
     // ------------------------------------------------------ v5.9：逐帧上下文 --
 
+    /**
+     * 本帧的头部读数是否落在「闭眼之后的不可信期」（v5.14）。
+     *
+     * 因果链见 [EYE_UNRELIABLE_MS]：闭眼（含一帧浅闭）会让 ML Kit 的姿态估计跳一下，
+     * 实测那次误触就是浅闭后 107ms 的一帧 −3.5° 跳变。这里用它把那一帧挡掉。
+     */
+    private fun eyeUnreliable(nowMs: Long): Boolean {
+        if (eyeDip) {
+            eyeUnreliableUntilMs = nowMs + EYE_UNRELIABLE_MS
+            return true
+        }
+        return nowMs < eyeUnreliableUntilMs
+    }
+
     /** 记录一帧有符号俯仰，供晃动判定使用（v5.12）。 */
-    private fun pushShakeSample(signedPitch: Float) {
-        shakePitch[shakeIndex] = signedPitch
+    private fun pushShakeSample(signedPitch: Float) {        shakePitch[shakeIndex] = signedPitch
         shakeIndex = (shakeIndex + 1) % SHAKE_WINDOW_SAMPLES
         if (shakeCount < SHAKE_WINDOW_SAMPLES) shakeCount++
     }

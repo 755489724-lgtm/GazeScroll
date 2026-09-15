@@ -1004,6 +1004,10 @@ class GazeCameraService : LifecycleService() {
                     // v5.13：手机自身是否正在被顿挫（急停/急刹）—— 由加速度计给出，
                     // 用来把"整个人在动"和"头在转"分开。传感器不可用时恒为 false。
                     head.phoneMoving = phoneMotion?.isMoving() ?: false
+                    // v5.14：闭眼之后的姿态不可信期。眨眼检测器在本帧稍后才更新，
+                    // 所以这里读到的是上一帧的判定 —— 差一帧无妨，因为实测那次误触
+                    // 发生在浅闭之后约 107ms（1~2 帧），恢复期 120ms 覆盖得住。
+                    head.eyeDip = blinkDetector?.eyeDip ?: false
                     // 距离自适应：脸越大说明凑得越近，静止门限随之抬高。
                     head.faceRatio = frame.faceRatio
                     // v5.6：绝对几何的姿态判据（下巴占比），用于近距离俯视时提升点头灵敏度。
@@ -1369,6 +1373,12 @@ class GazeCameraService : LifecycleService() {
                 " accel=${"%.1f".format(phoneMotion?.recentPeak(now) ?: 0f)}" +
                 " phoneMotion=${phoneMotion?.isMoving() ?: false}" +
                 " accelReady=${phoneMotion?.available ?: false}" +
+                // v5.14：手机的**角速度**峰值（rad/s）。手晃手机主要是"转"而不是"平移"，
+                // 所以这一项比加速度更能反映"用户在晃/地铁在摇"。手持不动 ≈0.05~0.2、
+                // 走路 ≈0.3~1.0、有意摇晃 2~10 —— 门限 0.6 就是照这个定的。
+                " gyro=${"%.2f".format(phoneMotion?.recentRotationPeak(now) ?: 0f)}" +
+                " gyroReady=${phoneMotion?.gyroAvailable ?: false}" +
+                " eyeDip=${blinkDetector?.eyeDip ?: false}" +
                 " posture=${headPoseDetector?.postureLabel ?: "-"}" +
                 // 打实际生效的增益，而不是常量，这样与 pitchTh 永远自洽。
                 " nodBoost=${"%.2f".format(headPoseDetector?.lastAppliedNodBoost ?: 1f)}" +

@@ -167,6 +167,17 @@ class BlinkDetector(
     var nearTier: Boolean? = null
 
     /**
+     * 本帧是否有眼睛读数跌破闭眼阈值（v5.14），供 [HeadPoseDetector] 暂停头部判定。
+     *
+     * 刻意用**单帧的浅闭也算**的口径（`closedNow`），而不是"已确认的眨眼"：
+     * 实测那次误触的元凶正是一帧的单眼浅闭（`frames=1/2`，永远不会被确认成眨眼）。
+     * 因果链见 `HeadPoseDetector.EYE_UNRELIABLE_MS`。
+     */
+    @Volatile
+    var eyeDip: Boolean = false
+        private set
+
+    /**
      * 按距离收紧眨眼判定（v5.3 引入，v5.11 接到统一距离档上）。
      *
      * 近距离时同时做两件事：**降低**闭眼阈值（更难判成闭眼）并**提高**连续帧要求。
@@ -225,6 +236,7 @@ class BlinkDetector(
         // Need at least one eye; a frame with neither tells us nothing.
         if (left == null && right == null) {
             closedFrames = 0
+            eyeDip = false
             return
         }
 
@@ -234,6 +246,8 @@ class BlinkDetector(
             (right != null && right < effectiveClosedBelow)
         val openNow = (left != null && left > openAbove) ||
             (right != null && right > openAbove)
+        // v5.14：暴露本帧的闭眼状态（含单帧浅闭），供头部判定在姿态不可信期暂停。
+        eyeDip = closedNow
 
         if (closedNow) {
             if (closedFrames == 0) {

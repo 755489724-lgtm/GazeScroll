@@ -123,36 +123,21 @@ class HeadPoseDetector(
          */
         private const val ARBITRATION_VELOCITY_FRACTION = 0.4f
 
-        /**
-         * 触发确认窗口（v5.9）：阈值必须在**最近 [CONFIRM_WINDOW] 帧里至少 [CONFIRM_NEEDED] 帧**
-         * 被越过，才允许触发。
-         *
-         * ## 为什么需要它（「30cm 俯视还是会误触」）
-         *
-         * v5.9 采集数据（带标记，4 分钟）里的误触全部具有同一个形状：**单帧跳变**。
-         * 日志里它们的幅度是 6.0~7.8°、两帧速度 0.021~0.048°/ms —— 和用户有意的仰头
-         * （7.7~9.7°、0.019~0.048°/ms）**完全重叠**。
-         *
-         * 也就是说，在 30cm 处无论怎么调**幅度阈值**或**速度门限**，都必然要在
-         * 「挡住误触」和「挡住真实动作」之间二选一：
-         *
-         * ```
-         * 若把近距离速度门限提到 0.036°/ms：实测 74% 的真实仰头会被一起挡掉
-         * ```
-         *
-         * 幅度和速度这两个**瞬时量**都没有鉴别力，真正有鉴别力的是**时间形状**：
-         * 检测噪声与「手机在手里抖一下」只能维持一帧就回到原位，而真实动作至少跨两帧。
-         *
-         * 所以这里用「2 of 3」而不是「连续 2 帧」：真实动作在阈值附近上下浮动
-         * （实测 ±1.5° 噪声）时仍然能凑够 2 帧，而孤立的单帧尖峰永远凑不够。
-         *
-         * **代价只有一帧延迟**（实测帧间隔约 47~66ms），快通道仍然立刻触发、
-         * 不做 [requiredHoldMs] 那种长保持，所以"动作要快要连贯"的手感不变。
-         */
-        private const val CONFIRM_WINDOW = 3
-
-        /** 确认窗口内至少要有这么多帧越过阈值。 */
-        private const val CONFIRM_NEEDED = 2
+        // ------------------- v5.9 试过、v5.10 已撤销：触发确认窗口 -------------------
+        //
+        // v5.9 曾要求「阈值必须在最近 3 帧里至少 2 帧被越过」才允许触发，意图是挡掉
+        // 单帧跳变。实机（v59-verify.log，用户按阶段标记复测）的结论是**必须撤销**：
+        //
+        //  - **误触一次都没减少**：静止 90 秒（30cm 俯视）里头部路径的越阈值次数是 **0**，
+        //    那几次误触全部是 `lastTrigger=blink`（眨眼），确认窗口根本不在那条链路上。
+        //  - **真实动作被明显拖慢**：正常使用阶段一共打出 37 条 `DISCARDED`
+        //    （阶段④ 21 条、阶段⑥ 16 条），用户反馈「要更大的角度才触发」、
+        //    「仰头和点头要等一会，大概 0.5 秒，不像之前那么丝滑」——
+        //    轻快的点头只会跨一帧阈值，确认窗口把它整个吃掉了。
+        //
+        // 教训与 v5.5/v5.7 一致：**不要用会连带拖慢真实动作的手段去防误触**，
+        // 先找到误触到底来自哪个检测器（这次是眨眼），再动那一条链路。
+        // 逐帧上下文日志（见 [CONTEXT_SAMPLES]）保留下来，它正是这次能一眼定案的原因。
 
         /**
          * 回中锁定期间，判定「头部已经回到中性区」的阈值系数（v5.0）。
@@ -336,9 +321,6 @@ class HeadPoseDetector(
          * 于是「单帧尖峰」和「平滑上升」在日志里是一眼可辨的两种形状。
          */
         private const val CONTEXT_SAMPLES = 24
-
-        /** 「越过阈值但被确认窗口丢掉」这条日志的最小间隔，避免阈值附近刷屏。 */
-        private const val SPIKE_LOG_INTERVAL_MS = 500L
 
         /** 人脸重新出现、且消失了这么久以上，就打一条 `MARK` 行（v5.9 采集对齐用）。 */
         private const val FACE_BACK_MARKER_MIN_MS = 400L
@@ -550,10 +532,6 @@ class HeadPoseDetector(
     private var yawArmed = false
     private var yawSign = 0
 
-    // ---- 触发确认窗口（v5.9）：最近 3 帧里「越过了阈值」的位图 ----
-    private var pitchAboveBits = 0
-    private var yawAboveBits = 0
-
     // ---- 触发上下文环形缓冲（v5.9）：每次触发把前约 1.2 秒的原始读数打进日志 ----
 
     /** 上下文保留的帧数（实测帧间隔约 47~66ms，24 帧约 1.1~1.6 秒）。 */
@@ -568,9 +546,6 @@ class HeadPoseDetector(
     private var lastFaceAtMs = 0L
     private var lastLoggedPitch = 0f
     private var lastLoggedYaw = 0f
-
-    /** 最近一次「越过阈值被确认窗口丢掉」的日志时刻（v5.9）。 */
-    private var lastSpikeLogAtMs = 0L
 
     // ---- 静止锁定的滑窗（记录最近一段时间的俯仰/偏航，只看峰峰值） ----
     private val motionPitch = FloatArray(MOTION_WINDOW_SAMPLES)
@@ -806,8 +781,6 @@ class HeadPoseDetector(
         pitchReachedAtMs = 0L
         pitchArmed = false
         lastLoggedPitch = 0f
-        // v5.9：确认窗口跟着一起清空 —— 「回到静止」之后必须重新攒够 2 帧。
-        pitchAboveBits = 0
     }
 
     private fun clearTurn() {
@@ -816,7 +789,6 @@ class HeadPoseDetector(
         yawArmed = false
         yawSign = 0
         lastLoggedYaw = 0f
-        yawAboveBits = 0
     }
 
     /**
@@ -1129,11 +1101,7 @@ class HeadPoseDetector(
         lastAppliedNodBoost = nearNodDownBoost(signedPitch)
         lastSignedPitch = signedPitch
 
-        // ---- v5.9：确认窗口 + 上下文缓冲，必须在任何提前返回**之前**维护 ----
-        // 理由同下面的速度：确认窗口和上下文都要如实记录"每一帧"，一旦漏掉
-        // 低于阈值的那些帧，"最近 3 帧里有 2 帧越阈值"就会退化成"连续 2 帧越阈值"，
-        // 真实动作在阈值附近上下浮动时反而凑不够。
-        pitchAboveBits = shiftAbove(pitchAboveBits, magnitude >= threshold)
+        // ---- v5.9：逐帧上下文（必须在任何提前返回**之前**维护，否则轨迹会缺帧）----
         pushContext(signedPitch, signedYawNow, nowMs)
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedPitch - lastLoggedPitch) >= 3f) {
@@ -1170,12 +1138,6 @@ class HeadPoseDetector(
             }
             if (pitchOnsetAtMs == 0L) pitchOnsetAtMs = nowMs
             if (magnitude < threshold) return@run "below-threshold"
-            // v5.9 触发确认：单帧跳变凑不够 2 帧，直接丢掉（见 CONFIRM_NEEDED 的说明）。
-            // 「当前帧越过阈值」已由上一行保证，所以这里只需要确认**历史**上还有一帧越过了。
-            if (countAbove(pitchAboveBits) < CONFIRM_NEEDED) {
-                logDiscardedSpike("pitch", magnitude, threshold, velocity, nowMs)
-                return@run "unconfirmed-spike"
-            }
             if (pitchReachedAtMs == 0L) {
                 pitchReachedAtMs = nowMs
                 val riseMs = nowMs - pitchOnsetAtMs
@@ -1689,8 +1651,7 @@ class HeadPoseDetector(
         yawThresholdDeg = turnThreshold
         lastSignedYaw = signedYaw
 
-        // v5.9：确认窗口与上下文（与俯仰同一套机制）；同一帧已经推过就只更新当前槽。
-        yawAboveBits = shiftAbove(yawAboveBits, magnitude >= turnThreshold)
+        // v5.9：逐帧上下文（与俯仰同一套机制）；同一帧已经推过就只更新当前槽。
         pushContext(lastSignedPitch, signedYaw, nowMs)
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedYaw - lastLoggedYaw) >= 5f) {
@@ -1727,11 +1688,6 @@ class HeadPoseDetector(
         val reject: String? = run {
             if (yawOnsetAtMs == 0L) yawOnsetAtMs = nowMs
             if (magnitude < turnThreshold) return@run "below-threshold"
-            // v5.9 触发确认：与俯仰完全同一套判据（扭头同样会被单帧跳变伪造）。
-            if (countAbove(yawAboveBits) < CONFIRM_NEEDED) {
-                logDiscardedSpike("yaw", magnitude, turnThreshold, velocity, nowMs)
-                return@run "unconfirmed-spike"
-            }
 
             if (yawReachedAtMs == 0L) {
                 yawReachedAtMs = nowMs
@@ -1807,53 +1763,7 @@ class HeadPoseDetector(
     private fun yawLogSuffix(): String =
         lastYawDeg?.let { " yaw $it°" } ?: ""
 
-    // ------------------------------------------------- v5.9：确认窗口与上下文 --
-
-    /**
-     * 把「本帧是否越过阈值」压进最近 [CONFIRM_WINDOW] 帧的位图（新的在低位）。
-     *
-     * 用位图而不是计数器，是为了让「真实动作在阈值附近上下浮动」也能凑够 2 帧：
-     * 计数器一遇到低于阈值的帧就归零，那会把用户在阈值边缘的正常动作一起挡掉。
-     */
-    private fun shiftAbove(bits: Int, above: Boolean): Int {
-        val next = (bits shl 1) or (if (above) 1 else 0)
-        return next and ((1 shl CONFIRM_WINDOW) - 1)
-    }
-
-    /** 位图里有几帧越过了阈值。 */
-    private fun countAbove(bits: Int): Int {
-        var n = 0
-        for (i in 0 until CONFIRM_WINDOW) {
-            if ((bits shr i) and 1 == 1) n++
-        }
-        return n
-    }
-
-    /**
-     * 记录一次「越过阈值但被确认窗口丢掉」的帧（v5.9）。
-     *
-     * 这条日志是验证 v5.9 修复的**主要依据**：如果它大量出现、而 `triggered` 明显变少，
-     * 就说明单帧跳变正是误触来源、且已经被挡住。
-     */
-    private fun logDiscardedSpike(
-        axis: String,
-        magnitude: Float,
-        threshold: Float,
-        velocity: Float,
-        nowMs: Long,
-    ) {
-        if (nowMs - lastSpikeLogAtMs < SPIKE_LOG_INTERVAL_MS) return
-        lastSpikeLogAtMs = nowMs
-        val confirmed = countAbove(if (axis == "yaw") yawAboveBits else pitchAboveBits)
-        Log.i(
-            TAG,
-            "DISCARDED $axis single-frame crossing (confirmed $confirmed/$CONFIRM_NEEDED): " +
-                "mag=${"%.1f".format(magnitude)}° threshold=${"%.1f".format(threshold)}° " +
-                "speed=${"%.4f".format(velocity)}°/ms " +
-                "dist=${if (nearDistance) "near" else "mid/far"} " +
-                "staticLock=$staticLocked — " + contextDump(),
-        )
-    }
+    // ------------------------------------------------------ v5.9：逐帧上下文 --
 
     /**
      * 记录一帧上下文（v5.9）。

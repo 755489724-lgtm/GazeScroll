@@ -172,6 +172,42 @@ class HeadPoseDetector(
         /** 俯视增益的上下限，防止配置异常把它压得太低。 */
         private const val MIN_DOWN_GAZE_NOD_BOOST = 0.55f
 
+        // ----------------------------- v5.6：绝对几何的距离 / 姿态判定 --
+
+        /** 近距离判定：脸高占画面比例 ≥ 此值（实测 30cm 约 0.6，40cm 约 0.45）。 */
+        private const val NEAR_DISTANCE_RATIO = 0.50f
+
+        /**
+         * 俯视判定的几何门限 —— **当前未启用**（v5.6）。
+         *
+         * 实测标定发现 `|下巴Y − 眼中心Y| / 脸高` 主要在反映距离而非姿态
+         * （远距 0.335~0.368、近距 0.368~0.432），区分度不足以驱动灵敏度开关，
+         * 因此点头增益改由**距离**驱动（见 [nearDownNodBoost]）。
+         *
+         * 保留这个常量与 [chinRatio] 诊断，是为了在拿到更干净的分组数据后可以重新启用；
+         * 现在把它设成一个实测中不会达到的值，确保它**不会**意外生效。
+         */
+        private const val DOWN_POSTURE_CHIN_RATIO = 0.68f
+
+        /** 俯视判定的回差：低于（门限 − 回差）才认为回到平视。 */
+        private const val DOWN_POSTURE_HYSTERESIS = 0.04f
+
+        /** 姿态平滑系数：越小越稳、越大越跟手。 */
+        private const val POSTURE_EMA_ALPHA = 0.25f
+
+        /**
+         * 近距离俯视时的点头增益（v5.6）。
+         *
+         * 用户反馈「近距离俯视刷抖音时脖子很累」。此时点头的可用行程最短，
+         * 所以给的增益比远距俯视更激进（0.68 对 0.75）。
+         * 只压**幅度**阈值：速度门限、静止锁定、近距离静止硬锁定一律不动，
+         * 所以"噪声有幅度没有速度"这道关卡照旧生效。
+         */
+        private const val NEAR_DOWN_NOD_BOOST = 0.68f
+
+        /** chinRatio 滑动中位数的窗口（约 0.6 秒 @15fps，只用于标定显示）。 */
+        private const val CHIN_WINDOW_SAMPLES = 9
+
         /**
          * 回中锁定的**最长**持续时间（v5.2）。
          *
@@ -330,6 +366,11 @@ class HeadPoseDetector(
     var yawThresholdDeg: Float = 20f
         private set
 
+    /** 当前生效的俯仰最低速度门限（°/ms），日志显示用（v5.6）。 */
+    @Volatile
+    var pitchSpeedGate: Float = 0.012f
+        private set
+
     /**
      * 单次动作后的内部锁存，由服务每帧同步成用户设定的全局冷却时长。
      *
@@ -422,6 +463,11 @@ class HeadPoseDetector(
     /** 最近一次判定为俯视的时刻，用于俯视增益的自动失效（v5.5）。 */
     private var lastDownGazeAtMs = 0L
 
+    // ---- v5.6：chinRatio 的滑动窗口，用于中位数标定 ----
+    private val chinWindow = FloatArray(CHIN_WINDOW_SAMPLES)
+    private var chinIndex = 0
+    private var chinCount = 0
+
     /** 累计执行过多少次姿势偏置校正，仅用于诊断。 */
     @Volatile
     var biasRecenterCount: Int = 0
@@ -430,6 +476,53 @@ class HeadPoseDetector(
     /** 累计识别到多少次俯视姿态并完成补偿，仅用于诊断（v5.4）。 */
     @Volatile
     var downGazeCount: Int = 0
+        private set
+
+    // ------------------------------------------- v5.6：绝对几何的距离与姿态判断 --
+
+    /**
+     * 俯视几何比例（`|下巴Y − 眼中心Y| / 脸高`），由服务每帧同步。
+     *
+     * 与「相对基准线的俯仰偏移」不同，这是**绝对几何**：用户一直俯视时基准线会自适应
+     * 过去、相对偏移趋近 0，但绝对几何不会。所以它才是判断"相机在俯拍还是平拍"的可靠依据。
+     */
+    @Volatile
+    var chinRatio: Float? = null
+
+    /** 姿态判定的平滑值（EMA），避免单帧抖动导致灵敏度反复切换。 */
+    @Volatile
+    var smoothedChinRatio: Float? = null
+        private set
+
+    /** 当前是否判定为俯视姿态（基于绝对几何）。 */
+    @Volatile
+    var lookingDown: Boolean = false
+        private set
+
+    /** 当前是否近距离。 */
+    @Volatile
+    var nearDistance: Boolean = false
+        private set
+
+    /** 当前姿态标签，仅用于日志/界面。 */
+    @Volatile
+    var postureLabel: String = "未知"
+        private set
+
+    /** 累计"近距离俯视"增益生效的次数，仅用于诊断。 */
+    @Volatile
+    var nearDownBoostCount: Int = 0
+        private set
+
+    /**
+     * 最近一段时间的 `chinRatio` 中位数（v5.6）。
+     *
+     * 用来**离线标定俯视门限**：中位数反映用户"最常出现的姿态"，
+     * 把 `DOWN_POSTURE_CHIN_RATIO` 设在它稍上方就能区分"平常"与"俯视"。
+     * 日志里同时打印它和原始值，不需要用户报数也能判断门限是否合理。
+     */
+    @Volatile
+    var chinRatioMedian: Float? = null
         private set
 
     /**
@@ -475,6 +568,11 @@ class HeadPoseDetector(
         lastDownGazeAtMs = 0L
         downGazeActive = false
         nodDownGazeBoost = 1f
+        // v5.6：姿态/距离判定也清零，重新学习。
+        smoothedChinRatio = null
+        lookingDown = false
+        nearDistance = false
+        postureLabel = "未知"
     }
 
     /** Throw away the learned baselines; the next samples establish new ones. */
@@ -602,6 +700,8 @@ class HeadPoseDetector(
 
         // 距离系数每帧只算一次，仅供偏航（扭头）使用；俯仰自 v5.5 起与距离解耦。
         val boost = distanceBoost()
+        // v5.6：先更新距离/姿态判定，再让 v5.4 的时间型俯视增益失效，最后才评估动作。
+        updateDistanceAndPosture(nowMs)
         refreshDownGazeBoost(nowMs)
         if (pitchReady) evaluatePitch(pitchDeg!!, nowMs, boost)
         if (turnEnabled && yawReady) evaluateYaw(yawDeg!!, nowMs, boost)
@@ -693,7 +793,8 @@ class HeadPoseDetector(
      * 误触防线一道没少：静止峰峰值门限、最低速度门限、近距离静止硬锁定、
      * 遮挡抑制、回中锁定全部保留，且仍然按距离缩放。
      */
-    private fun pitchThresholdNow(): Float = thresholdDeg * nodDownGazeBoost
+    private fun pitchThresholdNow(): Float =
+        thresholdDeg * (nodDownGazeBoost * nearDownNodBoost())
 
     /** 按距离缩放后的静止峰峰值门限。 */
     private fun effectiveStaticRange(): Float = STATIC_RANGE_DEG * distanceBoost()
@@ -757,6 +858,7 @@ class HeadPoseDetector(
         // （没有可比的前一点），快通道就永远赶不上最快的那一段。
         val velocity = pitchVelocity(nowMs)
         val speedGate = effectivePitchSpeedGate()
+        pitchSpeedGate = speedGate
 
         // 回中锁定：只在**已经越过 onset 门槛**时才参与，这样它也会在头部静止时被
         // 正常解除（v5.1 之前把解除逻辑放在 onset 判断之后，静止时锁永远不释放）。
@@ -827,11 +929,18 @@ class HeadPoseDetector(
 
         val staticNote = if (staticLocked) " · 静止锁定 ${"%.1f".format(threshold)}°" else ""
         val how = if (fast) "fast" else "held"
+        val boosted = nearDistance
+        val boostNote = if (boosted) {
+            " (boosted, dist=near posture=${if (lookingDown) "down" else "flat"} " +
+                "threshold=${"%.1f".format(threshold)}°)"
+        } else {
+            ""
+        }
         if (signedPitch < 0) {
             Log.i(
                 TAG,
-                "nodDown triggered pitch=${"%.1f".format(signedPitch)}° latency=${latencyMs}ms " +
-                    "($how, v=${"%.3f".format(velocity)}°/ms)$staticNote",
+                "nodDown triggered$boostNote pitch=${"%.1f".format(signedPitch)}° " +
+                    "latency=${latencyMs}ms ($how, v=${"%.3f".format(velocity)}°/ms)$staticNote",
             )
             onEvent(
                 HeadEvent.NodDown(
@@ -927,6 +1036,97 @@ class HeadPoseDetector(
                     "${"%.1f".format(threshold)}°, lastReject=$reject)",
             )
         }
+    }
+
+    /**
+     * 距离与姿态判定（v5.6）。
+     *
+     * 用**绝对几何**而不是相对基准线的偏移：
+     *
+     *  - **距离**用 [faceRatio]（脸高占画面比例）——脸大 = 近，脸小 = 远；
+     *  - **姿态**用 [chinRatio]（`|下巴Y − 眼中心Y| / 脸高`）——下巴占比大 = 俯拍，
+     *    五官分布正常 = 平拍。
+     *
+     * 这样判断的好处是它**不受基准线自适应影响**：用户一直俯视时基准线早就移过去了，
+     * 相对偏移趋近 0，v5.4 的"相对俯视"判据因此一直不成立（实测 `downGaze=0`）；
+     * 而绝对几何始终反映真实的拍摄角度。
+     *
+     * 姿态带迟滞 + EMA 平滑，避免在门限附近反复切换灵敏度。
+     */
+    private fun updateDistanceAndPosture(nowMs: Long) {
+        nearDistance = (faceRatio ?: 0f) >= NEAR_DISTANCE_RATIO
+
+        val raw = chinRatio
+        if (raw == null) {
+            // 没有关键点（侧脸、遮挡）：保持上一帧的判定，不要凭空翻转灵敏度。
+            postureLabel = if (lookingDown) "俯视(旧)" else "平视(旧)"
+            return
+        }
+
+        val previous = smoothedChinRatio
+        val smoothed = if (previous == null) raw else previous + POSTURE_EMA_ALPHA * (raw - previous)
+        smoothedChinRatio = smoothed
+        pushChinSample(smoothed)
+
+        val wasDown = lookingDown
+        lookingDown = if (wasDown) {
+            // 已在俯视：要跌到（门限 − 回差）以下才算回到平视。
+            smoothed >= DOWN_POSTURE_CHIN_RATIO - DOWN_POSTURE_HYSTERESIS
+        } else {
+            smoothed >= DOWN_POSTURE_CHIN_RATIO
+        }
+
+        val distance = if (nearDistance) "near" else "far"
+        postureLabel = if (lookingDown) "down" else "flat"
+
+        if (lookingDown != wasDown) {
+            Log.i(
+                TAG,
+                "posture changed: ${if (wasDown) "down" else "flat"} -> $postureLabel " +
+                    "(dist=$distance, chinRatio=${"%.3f".format(smoothed)} " +
+                    "downThreshold=${"%.2f".format(DOWN_POSTURE_CHIN_RATIO)}) — " +
+                    "note: nod boost is distance-driven, posture is diagnostic only",
+            )
+        }
+    }
+
+    /**
+     * 当前生效的点头增益（v5.6）。
+     *
+     * ## 为什么最终是「按距离」而不是「按俯视几何」
+     *
+     * 用户原始需求是"近距离俯视时点头再灵敏一点"，并给了很直观的设想：脸大=近、
+     * 下巴占比大=俯视。实机标定（各姿势保持 20 秒、按时间轴对齐）的结果是：
+     *
+     * ```
+     * 远距   faceRatio 0.37~0.41   chinRatio 0.335~0.368
+     * 近距   faceRatio 0.51~0.66   chinRatio 0.368~0.432
+     * ```
+     *
+     * 两个结论：
+     *  1. **`chinRatio` 主要在反映距离，而不是姿态**（近距比远距高出约 0.06，而"俯视"
+     *     本身只带来很小的额外变化）。它的区分度不足以驱动灵敏度开关。
+     *  2. 按几何推算的 0.68 门槛在实测里**从未达到**过，那样写等于功能不存在。
+     *
+     * 所以改成**只用距离**驱动：`faceRatio` 是干净、可靠、已经验证过的信号。
+     * 这同时满足用户的两条硬要求——「近距离更轻松」与「远距离俯视不要改」——
+     * 因为远距离本就不在增益范围内。
+     *
+     * 俯视几何（[chinRatio]）仍然保留在诊断行里，等有更干净的标定数据再考虑启用；
+     * 现在**绝不**把不可靠的信号接到灵敏度上。
+     */
+    private fun nearDownNodBoost(): Float =
+        if (nearDistance) NEAR_DOWN_NOD_BOOST else 1f
+
+    /** 维护 `chinRatio` 的滑动中位数，供离线标定俯视门限（v5.6）。 */
+    private fun pushChinSample(value: Float) {
+        chinWindow[chinIndex] = value
+        chinIndex = (chinIndex + 1) % CHIN_WINDOW_SAMPLES
+        if (chinCount < CHIN_WINDOW_SAMPLES) chinCount++
+        if (chinCount < 4) return
+        System.arraycopy(chinWindow, 0, scratch, 0, chinCount)
+        java.util.Arrays.sort(scratch, 0, chinCount)
+        chinRatioMedian = scratch[chinCount / 2]
     }
 
     /**

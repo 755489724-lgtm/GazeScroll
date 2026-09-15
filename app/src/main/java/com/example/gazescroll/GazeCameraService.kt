@@ -332,13 +332,15 @@ class GazeCameraService : LifecycleService() {
         Log.i(TAG, "app state: active=$active reason=$reason pkg=${AppStateManager.foregroundPackage}")
         when {
             active && reason != "package-change" -> onTargetEntered(reason)
-            // 允许翻页期间只是换了应用：不用重学基准线，但必须保证相机在跑。
+            // 允许翻页期间只是换了应用：不用重学基准线，但必须保证相机真的在出帧。
+            // v5.6：ensurePipelineForActive 现在会检查"是否已经很久没有帧"，
+            // 只要没画面就强制重绑，所以切应用后功能不会悄悄掉线。
             active -> {
                 Log.i(
                     "GazeDiag",
                     "window changed to ${AppStateManager.foregroundPackage} -> pipeline resynced (kept baselines)",
                 )
-                ensurePipelineForActive(reason)
+                ensurePipelineForActive("package-change")
             }
 
             else -> onTargetLeft()
@@ -933,6 +935,8 @@ class GazeCameraService : LifecycleService() {
                     head.staticLockFactor = cfg.staticLockFactor
                     // 距离自适应：脸越大说明凑得越近，静止门限随之抬高。
                     head.faceRatio = frame.faceRatio
+                    // v5.6：绝对几何的姿态判据（下巴占比），用于近距离俯视时提升点头灵敏度。
+                    head.chinRatio = frame.chinRatio
                     if (!gate) {
                         head.onHeadPose(frame.headEulerAngleX, frame.headEulerAngleY, now)
                     }
@@ -1268,7 +1272,14 @@ class GazeCameraService : LifecycleService() {
                 " pitchTh=${"%.1f".format(headPoseDetector?.pitchThresholdDeg ?: 0f)}°" +
                 " yawTh=${"%.1f".format(headPoseDetector?.yawThresholdDeg ?: 0f)}°" +
                 " downGazeActive=${headPoseDetector?.downGazeActive ?: false}" +
+                // v5.6：绝对几何的距离/姿态判定 —— chinRatio 是俯视判据的原始读数。
+                " chinRatio=${headPoseDetector?.smoothedChinRatio?.let { "%.3f".format(it) } ?: "-"}" +
+                " chinMed=${headPoseDetector?.chinRatioMedian?.let { "%.3f".format(it) } ?: "-"}" +
+                " dist=${if (headPoseDetector?.nearDistance == true) "near" else "far"}" +
+                " posture=${headPoseDetector?.postureLabel ?: "-"}" +
                 " nodBoost=${"%.2f".format(headPoseDetector?.nodDownGazeBoost ?: 1f)}" +
+                " nodBoostActive=${headPoseDetector?.nearDistance ?: false}" +
+                " speedGate=${"%.4f".format(headPoseDetector?.pitchSpeedGate ?: 0f)}°/ms" +
                 " mouthForced=${mouthDetector?.forcedReloads ?: 0}" +
                 " mouthRejected=${mouthDetector?.rejectedSamples ?: 0}" +
                 " occl=${frame.occlusionReason?.label ?: "none"}" +
@@ -1307,24 +1318,40 @@ class GazeCameraService : LifecycleService() {
      */
     private fun ensurePipelineForActive(reason: String) {
         if (!running.get()) return
+        val now = SystemClock.elapsedRealtime()
+        // 先判断"之前到底有没有画面"，再重置计时 —— 顺序反了就永远看不出卡死。
+        val previous = if (lastFrameAtMs != 0L) lastFrameAtMs else analysisStartedAtMs
+        val wasStale = previous == 0L || now - previous > FRAME_TIMEOUT_MS
+
         restartAttempts = 0
-        analysisStartedAtMs = SystemClock.elapsedRealtime()
+        probeFailures = 0
+        analysisStartedAtMs = now
         // 给新绑定的相机一段宽限期，避免看门狗把「正在绑定」误判成「卡死」。
-        analysisGraceUntilMs = analysisStartedAtMs + REBIND_GRACE_MS
+        analysisGraceUntilMs = now + REBIND_GRACE_MS
         lastFrameAtMs = 0L
         analyzer?.resetSmoothing()
 
         if (cameraProvider == null) {
             // provider 还没就绪（服务刚起来）：重新走一次获取流程，成功后会自动绑定。
             Log.i(TAG, "pipeline resync ($reason): camera provider not ready, re-acquiring")
-            bindCamera()
+            bindCameraWithRetry("$reason: provider missing")
             return
         }
-        if (!cameraBound) {
-            Log.i(TAG, "pipeline resync ($reason): rebinding camera")
+
+        // v5.6：**cameraBound 为 true 但已经很久没有帧**时，以前这里什么都不做
+        // （"camera already bound"），于是卡死状态会被反复"确认无事"而永远不自愈——
+        // 这就是"屏幕常亮时偶尔失效"的成因之一。现在只要没有画面就强制重绑，
+        // 不再信任这个标志位。
+        if (!cameraBound || wasStale) {
+            Log.i(
+                TAG,
+                "pipeline resync ($reason): forcing rebind " +
+                    "(cameraBound=$cameraBound wasStale=$wasStale)",
+            )
+            releaseCamera("$reason: forced rebind")
             rebind()
         } else {
-            Log.i(TAG, "pipeline resync ($reason): camera already bound")
+            Log.i(TAG, "pipeline resync ($reason): camera already bound and frames recent")
         }
     }
 
@@ -1520,7 +1547,9 @@ class GazeCameraService : LifecycleService() {
         when {
             probeFailures == 1 -> {
                 GazeRuntime.publish { it.copy(note = "检测无画面，正在自动恢复…") }
-                restartAttempts = 0
+                // v5.6：第一次就强制重绑。以前这里调 ensurePipelineForActive，
+                // 而它在 cameraBound==true 时会"确认无事"直接返回 —— 卡死状态因此
+                // 要多等一轮才升级处理，用户感受到的就是"偶尔失效好几秒"。
                 ensurePipelineForActive("liveness-probe")
             }
 

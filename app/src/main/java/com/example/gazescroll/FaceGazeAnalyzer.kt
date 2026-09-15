@@ -74,6 +74,21 @@ data class AnalyzedFrame(
      * null 表示没检测到脸。
      */
     val faceRatio: Float?,
+    /**
+     * 俯视几何比例（v5.6）：`|下巴Y − 眼睛中心Y| / 脸框高度`。
+     *
+     * 这是判断「相机是俯拍还是平拍」的**绝对几何**判据，与俯仰角、与姿势基准线都无关，
+     * 所以不会像 v5.4 的"相对基准线偏移"那样被基准线自适应吃掉。依据是用户的原话：
+     *
+     * > 下巴占比多一点，说明用户是在俯视玩手机；正常五官露出来，说明用户是在平视。
+     *
+     * 低头看手机时，相机从上方拍到脸，下巴离镜头更近、透视上被拉长，所以
+     * 「眼→下巴」占脸框高度的比例变大；平视时五官在脸框里分布正常，该比例较小。
+     * 除以脸框高度是为了去掉距离的影响——否则近处同样会读出更大的值。
+     *
+     * null 表示这一帧缺关键点（没脸、或下巴/眼睛不可用）。
+     */
+    val chinRatio: Float?,
     /** 这一帧为什么不可信；null 表示数据正常。 */
     val occlusionReason: OcclusionReason?,
     val faceDetected: Boolean,
@@ -256,6 +271,7 @@ class FaceGazeAnalyzer(
                 mouthOpenRatio = mouth,
                 mouthNoseGapPx = mouthNoseGap(face),
                 faceRatio = faceRatio,
+                chinRatio = chinRatio(face),
                 occlusionReason = reason,
                 faceDetected = face != null,
                 standby = standby,
@@ -266,6 +282,33 @@ class FaceGazeAnalyzer(
     /** Largest face wins — that is the person holding the phone. */
     private fun pickLargestFace(faces: List<Face>): Face? =
         faces.maxByOrNull { it.boundingBox.width().toLong() * it.boundingBox.height().toLong() }
+
+    /**
+     * 俯视几何比例：`|下巴Y − 眼睛中心Y| / 脸框高度`（v5.6）。
+     *
+     * 用 `MOUTH_BOTTOM` 当作下巴（ML Kit 的人脸关键点里没有独立的 chin，下唇是最接近的
+     * 稳定点），眼睛取 `LEFT_EYE` / `RIGHT_EYE` 的中点；两者都不可用时回退到鼻子。
+     *
+     * 为什么这个判据比"相对基准线的俯仰偏移"可靠：那个会被滑动窗口基准线自适应吃掉
+     * （用户一直俯视时基准线早就移到俯视姿态上，相对偏移趋近 0），而这里是**绝对几何**，
+     * 与基准线、与俯仰角都无关。
+     */
+    private fun chinRatio(face: Face?): Float? {
+        if (face == null) return null
+        val h = face.boundingBox.height().toFloat()
+        if (h <= 1f) return null
+        val chin = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position?.y ?: return null
+        val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position?.y
+        val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position?.y
+        val eyeY = when {
+            leftEye != null && rightEye != null -> (leftEye + rightEye) / 2f
+            leftEye != null -> leftEye
+            rightEye != null -> rightEye
+            // 眼睛不可用时退到鼻底：它到下巴的距离同样随俯视变大，只是动态范围小一些。
+            else -> face.getLandmark(FaceLandmark.NOSE_BASE)?.position?.y ?: return null
+        }
+        return (kotlin.math.abs(chin - eyeY) / h).coerceIn(0f, 1.5f)
+    }
 
     /**
      * 嘴到鼻底的像素距离（v5.2），独立于归一化比值。

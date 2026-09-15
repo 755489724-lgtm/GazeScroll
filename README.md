@@ -2,7 +2,7 @@
 
 > 用**前置摄像头**检测眨眼和点头/仰头，自动触发上滑翻页 —— 刷视频不用手。
 
-[![Release](https://img.shields.io/badge/release-v5.5-blue)](../../releases/tag/v5.5)
+[![Release](https://img.shields.io/badge/release-v5.6-blue)](../../releases/tag/v5.6)
 [![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-green)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
 
@@ -107,6 +107,19 @@
     判据基于**相对基准线**的偏移而非绝对角度，所以倒着拿手机、躺着看同样适用；
     只在俯仰轴生效，不碰扭头与眨眼。
     日志：`posture: looking down detected (held 2100ms, relative -6.2°), baseline gradually shifted to -14.8°`
+  - **近距离点头增益（v5.6）**：离手机近时（`faceRatio >= 0.50`，实测约 30~40cm）
+    点头阈值压到 **0.68 倍**——近距离下同样的颈部动作折算出的俯仰角更小，不补一点会明显更费力。
+    **远距离完全不受影响**（远距离俯视是 v5.5 调好的状态，不许动）。
+    只压**幅度**阈值：速度门限、静止锁定、近距离静止硬锁定一律不动，
+    所以"噪声有幅度没有速度"这道关卡照旧，**30cm 静止防误触逻辑未被触碰**。
+    诊断行里 `nodBoost=0.68 nodBoostActive=true` 表示已生效，触发日志会带 `boosted`。
+  - **为什么"俯视"没有接进灵敏度开关（v5.6，实测结论）**：原本设想「下巴占比大 = 俯视」，
+    用 `|下巴Y - 眼中心Y| / 脸高`（`chinRatio`）作判据。实机标定（平视/俯视/近距离俯视各 20 秒）后：
+    远距 `chinRatio 0.335~0.368`，近距 `0.368~0.432` —— **它主要在反映距离，而不是姿态**，
+    区分度不足以驱动灵敏度开关（原定的 0.68 门限从未达到）。
+    所以增益最终**只用距离驱动**，俯视几何只作诊断保留（`chinRatio` / `chinMed` / `posture=`），
+    等拿到"同距离下只改姿态"的干净数据再考虑启用。
+    **不把区分度不足的信号接到灵敏度开关上**，是本条最重要的决定。
   - **近距离静止硬锁定（v5.3）**：faceRatio ≥0.55 且连续 1.2 秒内俯仰、偏航、眼睛开合度
     都没有实质变化 → 判定"人没在动、画面在抖"，关掉全部翻页判定，直到出现明显动作。
     判据刻意不用"方差"而用"稳定时长"，语义直观、用户可验证。
@@ -121,7 +134,9 @@
     排查"静止疯狂误触"时这是第一个要看的东西——只看触发次数无法区分来源。
   - 诊断行会打印 `faceRatio` / `dist`（近/中/远）/ `staticRange` / `staticLock` /
     `staticHardLock` / `recenterLock` / `downGaze` / `biasRecenter` / `occl` / `suppressMs` /
-    `mouthForced` / `mouthRejected` / `lastTrigger` / `blinkBelow` / `blinkFrames`。
+    `mouthForced` / `mouthRejected` / `lastTrigger` / `blinkBelow` / `blinkFrames` /
+    `pitchTh` / `yawTh`（当前实际生效阈值）/ `speedGate` /
+    `chinRatio` / `chinMed` / `posture`（俯视几何，v5.6）/ `nodBoost` / `nodBoostActive`。
 - **张嘴点击的健壮性（v5.0）**
   - **基准合理性检查**：手挡脸、半张脸出画会读出极小的比值（实测抓到 **0.114**，正常
     闭嘴是 0.205~0.23）。一旦它进了基准窗口，基准就被永久带偏 —— 之后所有正常读数都比
@@ -226,7 +241,7 @@
 
 ### 方式一：直接下载 APK（推荐）
 
-1. 到 **[Releases](../../releases/latest)** 下载 `gazescroll-5.5-debug.apk`
+1. 到 **[Releases](../../releases/latest)** 下载 `gazescroll-5.6-debug.apk`
 2. 安装到手机（允许「安装未知来源应用」）
 3. **按下面的 ADB 步骤授权**（不授权的话不会工作）
 
@@ -307,11 +322,12 @@ adb shell am start -n com.example.gazescroll/.MainActivity
 
 ## 版本历史
 
-完整变更见 [CHANGELOG.md](CHANGELOG.md)。当前 **v5.3**。
+完整变更见 [CHANGELOG.md](CHANGELOG.md)。当前 **v5.6**。
 
 | 版本 | 主要内容 |
 | --- | --- |
-| **v5.5** | 摘掉幅度阈值上的两层放大系数（静止锁定 + 距离）——这是「点头费劲」的根因；俯视时点头阈值压到 0.75 倍；修复注入链上"实例在但连接失效"导致的息屏后需下拉状态栏；新增全链路自检日志 |
+| **v5.6** | 近距离（faceRatio ≥0.50）点头阈值压到 0.68 倍，远距离不动；实测证明「下巴占比」主要在反映距离而非姿态，故俯视几何只作诊断保留、不接灵敏度开关；修复常亮时偶尔失效（相机"有句柄但早已无帧"被反复确认成正常） |
+| v5.5 | 摘掉幅度阈值上的两层放大系数（静止锁定 + 距离）——这是「点头费劲」的根因；俯视时点头阈值压到 0.75 倍；修复注入链上"实例在但连接失效"导致的息屏后需下拉状态栏；新增全链路自检日志 |
 | v5.4 | 息屏唤醒彻底修复（电源状态自校正 + 解锁事件 + 退避重试）；扭头阈值也按距离放大；新增俯视姿态自动识别与补偿 |
 | v5.3 | 修复「切后台后重开应用必须下拉状态栏才生效」的代码死角（改为主动存活探针）；30cm 近距离误触（眨眼判定按距离收紧 + 近距离静止硬锁定）；新增触发来源诊断 |
 | v5.2 | 修复点头完全失效（回中锁定 400ms 兜底 + 速度采样错位）；姿势偏置自动校正；速度门限按距离缩放 |

@@ -3,7 +3,142 @@
 本项目遵循「一版一改、实机验证」的节奏：每个版本都先在小米 13（HyperOS 3.0.308.0）上
 跑通才发版，所以下面每一条的结论都来自实机日志或参数化实测，而不是推测。
 
-版本号规则：`vX.Y`，`versionCode` 与版本号同步递增（当前 v5.6 / 56）。
+版本号规则：`vX.Y`，`versionCode` 与版本号同步递增（当前 v5.7 / 57）。
+
+---
+
+## [5.7] - 2026-09-16
+
+本版只做两件事：修掉用户实测反馈的两个问题。**没有顺手改任何其他稳定逻辑**
+（用户明确要求「一步一步来，别修炸」）。
+
+### 修复一：近距离仰视误触
+
+**现象**：约 30cm 近距离时仰视会误触，同样距离平视不会；远距离正常。
+
+**根因**：v5.6 的近距离点头增益（×0.68）被乘在了**共用的俯仰阈值**上，
+于是**仰头方向也一起吃到了这个系数**。用户灵敏度设为 8° 时，近距离仰头只要
+**5.4°** 就触发；设为 6°（灵敏度「高」）时只要 **4.1°**。
+
+从上一版的真机日志里把这个座位挖出来了（触发与检测器状态按时间轴关联）：
+
+| 触发 | pitch | 当时 faceRatio | 当时 pitchTh |
+| --- | --- | --- | --- |
+| tiltUp | **4.2°** | 0.54（近） | **4.1°** |
+| tiltUp | 6.0° / 6.1° / 6.3° / 6.6° / 6.7° | 0.47~0.51（近） | **6.0°** |
+| tiltUp | 9.1° / 11.6°（用户**主动**做的） | ~0.30（远） | 8.0° |
+
+整段日志里 **45 次 tiltUp vs 14 次 nodDown**，比例本身就说明了问题：
+被动仰视（顺着脖子往后靠、抬头看远处）幅度就在 4~7°，而用户主动仰头是 9~11°。
+
+**修复**：把增益改成**严格单向**——`nearNodDownBoost(signedPitch)` 只在
+**低头方向**（`signedPitch < 0`）生效，抬头方向回到用户设定值。
+
+这样正好满足用户的要求「被动仰视不触发，主动仰头才触发」：
+被动仰视（4~7°）够不到 8°，主动仰头（9~11°）照样过。
+
+> 为什么不能用"抬高仰头阈值"来修：那会把**主动**仰头一起挡掉。单向增益
+> 才能在保住「近距离点头更省力」的同时不动仰头的手感。
+
+**未改动**：速度门限（`speedGate`）本身对两个方向一视同仁，静止锁定、遮挡抑制、
+回中锁定、30cm 静止硬锁定全部未动。**30cm 静止防误触逻辑零改动。**
+
+**新增诊断**：`pitchTh`（当前方向）与 **`pitchThUp`（仰头方向）** 同时打出来，
+近距离下看到 `pitchTh=5.4° pitchThUp=8.0°` 就说明单向增益生效。
+仰头触发也改成完整判据行（用户要求的格式）：
+
+```
+tiltUp triggered: pitch=6.2° speed=0.0260°/ms threshold=8.0° dist=far boost=1.00 latency=108ms (fast)
+tiltUp candidate rejected: pitch=6.0° speed=0.0090°/ms gate=0.0162°/ms threshold=8.0° dist=near boost=1.00 reason=speed-gate
+```
+
+顺带修掉一个**会误导排查**的日志缺陷：两个方向的候选拒绝行原本都打
+`nodDown candidate rejected`，排查仰头问题时会把仰头候选误读成点头。现在按方向打
+`nodDown` / `tiltUp`，并附带 `dist` 与 `boost`。
+
+### 修复二：隔一会再打开抖音又不触发
+
+用户反馈 v5.5/v5.6 修过的老问题在 v5.6 之后又复现。这次补的是**排查手段**与
+**两个真实的死角**。
+
+#### 死角 A：整条恢复链都挂在同一个可能出错的布尔值上
+
+```kotlin
+private fun shouldAnalyze(): Boolean =
+    screenActive && (AppStateManager.targetActive || AppStateManager.forceActive)
+```
+
+`targetActive` 一旦错成 `false`，相机、看门狗、liveness 探针**全部被这一个条件挡住**，
+没有任何一条路径会去纠正它。而且 `checkBlind()` 治不了这个方向——它治的是
+「前台判不出来」（fail-open），不是「判错了」（fail-closed 到错误的一边）。
+
+**修复**：新增独立的复核 [AppStateManager.fixContradiction]，**不信任自己记的前台**，
+直接向无障碍服务再问一次"现在活动的窗口是谁"。若它明确是目标应用、而我们却认为不是，
+且持续 2 秒，就强制按"允许翻页"重算一次。判据要求"明确"：读不到窗口时不做任何事，
+避免把正常的省电待机误判成故障。
+
+日志：`contradiction: active window is com.ss.android.ugc.aweme (allowed) but
+targetActive=false for 2100ms — forcing an immediate re-evaluation`。
+
+#### 死角 B：相机"绑着却没帧"可以无限循环，永不升级
+
+`checkFrames()` 每秒重绑一次，但它**每次都会把 `lastFrameAtMs` 和计时清零**，于是
+「重绑 → 宽限期 → 重判 → 再重绑」可以一直循环。如果坏的是 CameraX 那一层
+（而不是绑定关系），重绑一万次也没用——只有丢掉 provider 重新 `getInstance` 才能治好。
+
+**修复**：新增**独立于重绑**的计时 `staleBeganAtMs`（只在**真的收到帧**时清零，
+见 `onFrame`），持续 12 秒无画面就丢弃 provider 重新获取（与人工点通知里的「重启」等价），
+日志 `hard resync #N`。
+
+#### 死角 C：无障碍强制重绑只做一次
+
+`ensureAccessibilityBound` 在实例缺失时只做一次 `repairIfNeeded()`，之后就一直
+"重试中"，从日志上看像是已经处理过了。现在改为按**持续缺失时长**升级：
+超过 10 秒仍拿不到实例就 `forceRebind`（关掉再打开，等价于用户手动下拉状态栏的效果），
+并累计 `a11yForceRebinds` 供诊断。
+
+#### 排查手段：把"最关键的那个分叉"变成可读的日志
+
+这套失效最难自查的地方在于**分不清是"系统没把窗口事件发给我们"还是"事件到了我们判错了"**。
+只看 `foreground=` 是分不出来的——那是我们对事件的**理解**，不是事件本身。
+
+所以新增两个计数（在 `onAccessibilityEvent` 里**无条件**记账，包括被过滤掉的 systemui 事件）：
+
+- `a11yEvents` —— 无障碍窗口事件累计次数；
+- `a11yEventAgoMs` —— 距上一次窗口事件多久。
+
+再加上 `hardResyncs` / `noFrameForMs` / `a11yForceRebinds`，`GazeSelfCheck` 现在能
+在一行里直接指出卡在哪一环。用户要求的标记也补齐了：
+
+```
+GazeDiag: foreground change: com.miui.home -> com.ss.android.ugc.aweme (target=true reason=change)
+GazeCameraService: pipeline resync (app-switch): forcing rebind (cameraBound=true wasStale=true)
+GazeDiag: rebind reason=user-present -> ACTION_USER_PRESENT full restart
+```
+
+### 保留
+
+- **30cm 静止防误触**：逻辑未改动，只新增了诊断字段。近距离静止硬锁定仍在
+  `faceRatio >= 0.55`、1.2 秒稳定判定、二次确认。
+- **近距离俯视点头增益（v5.6）**：保留，且把 `pitchTh=5.4°`（远距离 8.0°）的真机数据
+  写进了验证清单。
+- 眨眼、点头、仰头、左右扭头、张嘴点击、自适应滑动、滑动柔度、全局冷却、全局翻页开关
+  全部未动。远距离点头/仰头手感与 v5.6 一致。
+
+> ⚠️ 本版的两处修复**尚未完成完整实机回归**（开发期间手机无线调试断连）。
+> 已完成的验证见下方"验证状态"一节；标为「待实测」的项需要用户跑一遍。
+
+### 验证状态
+
+| 项目 | 状态 | 依据 |
+| --- | --- | --- |
+| 近距离仰头阈值不再被压低 | ✅ 已由代码与字节码确认 | `nearDownNodBoost` 已不存在；`nearNodDownBoost(signedPitch)` 只对 `< 0` 生效 |
+| 编译 | ✅ 全量重编通过 | `compileDebugKotlin --rerun-tasks`，字节码含 `pitchThresholdUpDeg` 等新符号 |
+| 近距离仰视不误触 | ⏳ 待实测 | 需要手机在线抓日志确认 `pitchThUp=8.0°` 且 4~7° 的 tiltUp 被 `below-threshold` 拒绝 |
+| 主动仰头仍然触发 | ⏳ 待实测 | 9~11° 应照常触发 |
+| 近距离点头仍然省力 | ⏳ 待实测 | `pitchTh=5.4°`、触发日志含 `boosted` |
+| 30cm 静止防误触不回归 | ⏳ 待实测 | 逻辑未改动 |
+| 重开抖音自动恢复 | ⏳ 待实测 | 需要按用户要求做「打开抖音 → 息屏 3~5 分钟 → 亮屏解锁 → 打开抖音 → 尝试翻页」的反复挂测 |
 
 ---
 

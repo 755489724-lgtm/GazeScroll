@@ -514,6 +514,16 @@ class HeadPoseDetector(
     var lastAppliedNodBoost: Float = 1f
         private set
 
+    /**
+     * 仰头（tilt up）方向当前实际生效的俯仰阈值（v5.7）。
+     *
+     * 近距离点头增益是**单向**的，所以低头和抬头的阈值会不一样；诊断行把两个都打出来，
+     * 用户看到 `pitchTh=5.4° pitchThUp=8.0°` 就知道"点头更灵、仰头照旧"。
+     */
+    @Volatile
+    var pitchThresholdUpDeg: Float = 0f
+        private set
+
     /** 当前姿态标签，仅用于日志/界面。 */
     @Volatile
     var postureLabel: String = "未知"
@@ -803,8 +813,8 @@ class HeadPoseDetector(
      * 误触防线一道没少：静止峰峰值门限、最低速度门限、近距离静止硬锁定、
      * 遮挡抑制、回中锁定全部保留，且仍然按距离缩放。
      */
-    private fun pitchThresholdNow(): Float {
-        val boost = nearDownNodBoost()
+    private fun pitchThresholdNow(signedPitch: Float): Float {
+        val boost = nearNodDownBoost(signedPitch)
         // v5.6：把"这一帧实际生效的距离增益"记下来给诊断行用。
         // 之前诊断打的是 nodDownGazeBoost（俯视增益常量），近距离下会显示 1.00，
         // 而阈值其实已经乘过 0.68 —— 字段名与实际不符，排查时会误判功能没生效。
@@ -857,8 +867,16 @@ class HeadPoseDetector(
         // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
         // v5.5：俯仰幅度阈值**不乘**距离系数（距离缩放交给静止门限与速度门限），
         //       只乘静止锁定与俯视增益，这样近距离点头不再需要两倍幅度。
-        val threshold = pitchThresholdNow()
+        // v5.7：近距离增益改成**单向**，必须把方向传进去——否则仰头也会被压低，
+        //       造成「近距离仰视误触」（实测 tiltUp 在 4.2° 就触发过）。
+        //
+        // 注意 lastAppliedNodBoost 只能在**本方向**算完之后赋值：诊断行要与 pitchTh 自洽，
+        // 所以先把反方向阈值算完，最后才记录本帧实际生效的增益。
+        val threshold = pitchThresholdNow(signedPitch)
         pitchThresholdDeg = threshold
+        // 反方向阈值一并算出来给诊断行：用户直接能看到"低头 5.4° / 抬头 8.0°"。
+        pitchThresholdUpDeg = pitchThresholdNow(-signedPitch)
+        lastAppliedNodBoost = nearNodDownBoost(signedPitch)
         lastSignedPitch = signedPitch
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedPitch - lastLoggedPitch) >= 3f) {
@@ -914,11 +932,16 @@ class HeadPoseDetector(
         if (reject != null) {
             // 只在「看起来像一次动作」时才记录，避免每帧刷屏。
             if (magnitude >= threshold * 0.8f) {
+                // v5.7：日志要能一眼看出方向 —— 原来两个方向都打 "nodDown candidate"，
+                // 排查「近距离仰视误触」时会把仰头候选误读成点头。
+                val dir = if (signedPitch < 0f) "nodDown" else "tiltUp"
                 Log.i(
                     TAG,
-                    "nodDown candidate rejected: pitch=${"%.1f".format(signedPitch)}° " +
+                    "$dir candidate rejected: pitch=${"%.1f".format(signedPitch)}° " +
                         "speed=${"%.4f".format(velocity)}°/ms gate=${"%.4f".format(speedGate)}°/ms " +
-                        "threshold=${"%.1f".format(threshold)}° reason=$reject",
+                        "threshold=${"%.1f".format(threshold)}° " +
+                        "dist=${if (nearDistance) "near" else "far"} " +
+                        "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} reason=$reject",
                 )
             }
             // 只有「真的回到静止」才清掉进行中的动作；被锁或速度不足时保留计时段，
@@ -965,10 +988,15 @@ class HeadPoseDetector(
                 ),
             )
         } else {
+            // v5.7：仰头触发也把完整判据打出来（用户明确要求的格式），
+            // 这样"近距离仰视误触"的每一次误触都能直接读出当时的速度与阈值。
             Log.i(
                 TAG,
-                "tiltUp triggered pitch=${"%.1f".format(signedPitch)}° latency=${latencyMs}ms " +
-                    "($how, v=${"%.3f".format(velocity)}°/ms)$staticNote",
+                "tiltUp triggered: pitch=${"%.1f".format(signedPitch)}° " +
+                    "speed=${"%.4f".format(velocity)}°/ms threshold=${"%.1f".format(threshold)}° " +
+                    "dist=${if (nearDistance) "near" else "far"} " +
+                    "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} " +
+                    "latency=${latencyMs}ms ($how)$staticNote",
             )
             onEvent(
                 HeadEvent.TiltUp(
@@ -1035,7 +1063,8 @@ class HeadPoseDetector(
                     "relative ${"%.1f".format(relative)}°), baseline gradually shifted to " +
                     "${"%.1f".format(corrected)}° (#${downGazeCount}) " +
                     "-> downGaze active, nod sensitivity boosted, threshold adjusted to " +
-                    "${"%.1f".format(pitchThresholdNow())}°",
+                    "${"%.1f".format(pitchThresholdNow(-1f))}° (nod down), " +
+                    "${"%.1f".format(pitchThresholdNow(1f))}° (tilt up)",
             )
             return
         }
@@ -1131,8 +1160,35 @@ class HeadPoseDetector(
      * 俯视几何（[chinRatio]）仍然保留在诊断行里，等有更干净的标定数据再考虑启用；
      * 现在**绝不**把不可靠的信号接到灵敏度上。
      */
-    private fun nearDownNodBoost(): Float =
-        if (nearDistance) NEAR_DOWN_NOD_BOOST else 1f
+    /**
+     * 近距离的「点头向下」增益（v5.6 引入，v5.7 收窄方向）。
+     *
+     * ## v5.7 修的是什么
+     *
+     * v5.6 把 0.68 乘在**共用的俯仰阈值**上，于是**仰头方向也一起吃到了这个系数**：
+     * 用户灵敏度设 8° 时，近距离仰头只要 5.4° 就触发（设 6° 时只要 4.1°）。
+     * 实机日志坐实了这一点：
+     *
+     * ```
+     * tiltUp triggered pitch=4.2°  (当时 faceRatio=0.54, pitchTh=4.1°)
+     * tiltUp triggered pitch=6.0°  (当时 faceRatio=0.50, pitchTh=6.0°)
+     * 45 次 tiltUp vs 14 次 nodDown
+     * ```
+     *
+     * 用户的原话是「近距离仰视会误触，而平视不会」。被动仰视（顺着脖子往后靠、
+     * 抬头看远处）幅度就在 4~7°，正好被压低的阈值放行；而用户**主动**仰头是 9~11°。
+     *
+     * 所以增益必须是**单向**的：只压低头方向，抬头方向回到用户设定值。
+     * 这样被动仰视（4~7°）够不到 8°，主动仰头（9~11°）照样过 —— 正是用户要的
+     * 「被动仰视不触发，主动仰头才触发」。
+     *
+     * 顺带说明为什么不能靠"抬大幅度阈值"来修：那样会把主动仰头一起挡住。
+     * 单向增益既保住了近距离点头的省力，又不动仰头的手感。
+     *
+     * @param signedPitch 本帧的有符号俯仰偏移：负 = 低头（nod down），正 = 抬头（tilt up）
+     */
+    private fun nearNodDownBoost(signedPitch: Float): Float =
+        if (nearDistance && signedPitch < 0f) NEAR_DOWN_NOD_BOOST else 1f
 
     /** 维护 `chinRatio` 的滑动中位数，供离线标定俯视门限（v5.6）。 */
     private fun pushChinSample(value: Float) {

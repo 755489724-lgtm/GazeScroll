@@ -2,7 +2,7 @@
 
 > 用**前置摄像头**检测眨眼和点头/仰头，自动触发上滑翻页 —— 刷视频不用手。
 
-[![Release](https://img.shields.io/badge/release-v5.6-blue)](../../releases/tag/v5.6)
+[![Release](https://img.shields.io/badge/release-v5.7-blue)](../../releases/tag/v5.7)
 [![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-green)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
 
@@ -107,13 +107,22 @@
     判据基于**相对基准线**的偏移而非绝对角度，所以倒着拿手机、躺着看同样适用；
     只在俯仰轴生效，不碰扭头与眨眼。
     日志：`posture: looking down detected (held 2100ms, relative -6.2°), baseline gradually shifted to -14.8°`
-  - **近距离点头增益（v5.6）**：离手机近时（`faceRatio >= 0.50`，实测约 30~40cm）
-    点头阈值压到 **0.68 倍**——近距离下同样的颈部动作折算出的俯仰角更小，不补一点会明显更费力。
-    **远距离完全不受影响**（远距离俯视是 v5.5 调好的状态，不许动）。
+  - **近距离点头增益（v5.6 引入，v5.7 收窄为单向）**：离手机近时（`faceRatio >= 0.50`，
+    实测约 30~40cm）**低头**阈值压到 **0.68 倍**——近距离下同样的颈部动作折算出的
+    俯仰角更小，不补一点会明显更费力。**远距离完全不受影响**。
+    - ⚠️ **v5.7 修正**：v5.6 把系数乘在了**共用的俯仰阈值**上，**仰头方向也一起吃到了**，
+      于是近距离仰视被误触（灵敏度设 8° 时仰头只要 5.4°，设 6° 时只要 4.1°；
+      实机日志里 45 次 tiltUp vs 14 次 nodDown，而被动仰视幅度正好是 4~7°）。
+      现在改成**严格单向**：只在**低头方向**生效，抬头方向回到用户设定值。
+      这正好实现「被动仰视不触发，主动仰头才触发」——被动仰视 4~7° 够不到 8°，
+      主动仰头 9~11° 照样过。
+      **不能用"抬高仰头阈值"来修**：那会把主动仰头一起挡掉。
     只压**幅度**阈值：速度门限、静止锁定、近距离静止硬锁定一律不动，
     所以"噪声有幅度没有速度"这道关卡照旧，**30cm 静止防误触逻辑未被触碰**。
-    诊断行里 `nodBoost=0.68 nodBoostActive=true` 表示已生效（`nodBoost` 打的是**这一帧
-    实际乘上去的系数**，与同一行的 `pitchTh` 永远自洽），触发日志会带 `boosted`。
+    诊断行里 `pitchTh` 是**当前方向**的阈值、**`pitchThUp`** 是仰头方向的阈值：
+    近距离看到 `pitchTh=5.4° pitchThUp=8.0°` 就说明单向增益生效。
+    `nodBoost=0.68 nodBoostActive=true` 表示已生效（`nodBoost` 打的是**这一帧实际乘上去的
+    系数**，与同一行的 `pitchTh` 永远自洽），触发日志会带 `boosted`。
     `distMode=near/far` 是增益的触发条件；别与同一行的 `dist=近/中/远`（握持距离档）混淆。
   - **为什么"俯视"没有接进灵敏度开关（v5.6，实测结论）**：原本设想「下巴占比大 = 俯视」，
     用 `|下巴Y - 眼中心Y| / 脸高`（`chinRatio`）作判据。实机标定（平视/俯视/近距离俯视各 20 秒）后：
@@ -137,8 +146,42 @@
   - 诊断行会打印 `faceRatio` / `dist`（近/中/远）/ `staticRange` / `staticLock` /
     `staticHardLock` / `recenterLock` / `downGaze` / `biasRecenter` / `occl` / `suppressMs` /
     `mouthForced` / `mouthRejected` / `lastTrigger` / `blinkBelow` / `blinkFrames` /
-    `pitchTh` / `yawTh`（当前实际生效阈值）/ `speedGate` /
+    `pitchTh` / **`pitchThUp`**（当前方向 / 仰头方向的实际生效阈值，v5.7）/ `yawTh` / `speedGate` /
     `chinRatio` / `chinMed` / `posture`（俯视几何，v5.6）/ `nodBoost` / `nodBoostActive` / `distMode`。
+
+### 恢复能力（「隔一会重开抖音不触发」的防线，v5.3 起逐版加固）
+
+这套失效最难对付的地方在于：**整条恢复链都挂在 `targetActive` 这一个布尔值上**，
+它一旦错成 `false`，相机、看门狗、liveness 探针会被同一个条件一起挡住，谁也不去纠正它。
+
+- **主动存活探针（v5.3）**：不再依赖"前台包名变化"事件，每 800ms 检查一次
+  "允许翻页、但流水线实际是死的"并强制重新武装。下拉状态栏之所以"有效"，
+  是因为它人为制造了两次包名变化替我们触发通知——现在不等用户动手。
+- **电源状态自校正（v5.4）**：每 800ms 用 `PowerManager.isInteractive` 比对
+  `screenActive`。HyperOS 可能丢掉息屏/亮屏广播，一旦丢了这个标志会永久停在错值上，
+  而 `shouldAnalyze()` 会因此恒为 false。
+- **`wasStale` 强制重绑（v5.6）**：不再信任 `cameraBound` 标志位，
+  只要"很久没有帧"就强制重绑。
+- **前台复核 fail-open（v5.7）**：**不信任自己记的前台**，直接向无障碍服务再问一次
+  "现在活动的窗口是谁"；若它明确是目标应用、我们却认为不是且持续 2 秒，就强制重算。
+  这是唯一一条不经过 `targetActive` 的恢复路径。
+- **持续无画面硬重建（v5.7）**：用**独立于重绑**的计时（只在真的收到帧时清零）量
+  "到底多久没画面"，持续 12 秒就丢弃 CameraX provider 重新获取。
+  单靠每秒重绑是升不了级的——它每次都会把证据清零。
+- **无障碍强制重绑（v5.5 引入，v5.7 改为按持续时长升级）**：`isConnected()` 只是
+  `instance != null`，**实例存在不等于连接可用**。开关开着却超过 10 秒拿不到实例就直接
+  `forceRebind`（关掉再打开），等价于用户手动下拉状态栏的效果。
+- **全链路自检（v5.5）**：每 30 秒 + 每次亮屏打一行 `GazeSelfCheck`，一行说清卡在哪一环。
+  v5.7 起还带 `a11yEvents` / `a11yEventAgoMs`（**系统到底有没有把窗口事件发给我们**）、
+  `hardResyncs` / `noFrameForMs`。
+  这几个字段的关键在于能区分两个完全不同的病因：
+  **`a11yEvents` 停涨 = 系统根本没发事件（只能靠轮询兜底）；
+  计数在涨但前台判错 = 我们自己的判据有问题。** 只看 `foreground=` 是分不出来的——
+  那是我们对事件的*理解*，不是事件本身。
+- **日志标记**：`foreground change: A -> B (target=…)`、
+  `rebind reason=user-present/app-switch/no-frame`、
+  `pipeline resync (app-switch): forcing rebind`、
+  `rebind reason=user-present -> ACTION_USER_PRESENT full restart`。
 - **张嘴点击的健壮性（v5.0）**
   - **基准合理性检查**：手挡脸、半张脸出画会读出极小的比值（实测抓到 **0.114**，正常
     闭嘴是 0.205~0.23）。一旦它进了基准窗口，基准就被永久带偏 —— 之后所有正常读数都比
@@ -243,7 +286,7 @@
 
 ### 方式一：直接下载 APK（推荐）
 
-1. 到 **[Releases](../../releases/latest)** 下载 `gazescroll-5.6-debug.apk`
+1. 到 **[Releases](../../releases/latest)** 下载 `gazescroll-5.7-debug.apk`
 2. 安装到手机（允许「安装未知来源应用」）
 3. **按下面的 ADB 步骤授权**（不授权的话不会工作）
 
@@ -324,11 +367,12 @@ adb shell am start -n com.example.gazescroll/.MainActivity
 
 ## 版本历史
 
-完整变更见 [CHANGELOG.md](CHANGELOG.md)。当前 **v5.6**。
+完整变更见 [CHANGELOG.md](CHANGELOG.md)。当前 **v5.7**。
 
 | 版本 | 主要内容 |
 | --- | --- |
-| **v5.6** | 近距离（faceRatio ≥0.50）点头阈值压到 0.68 倍，远距离不动；实测证明「下巴占比」主要在反映距离而非姿态，故俯视几何只作诊断保留、不接灵敏度开关；修复常亮时偶尔失效（相机"有句柄但早已无帧"被反复确认成正常） |
+| **v5.7** | 近距离点头增益收窄为**单向**（仰头方向不再被压低）——修复「近距离仰视误触」；重开抖音不触发的三处死角：整条恢复链挂在同一个可能出错的布尔值上（新增前台复核 fail-open）、相机"绑着却没帧"可无限循环永不升级（新增独立的持续无画面计时 + 12 秒硬重建）、无障碍强制重绑只做一次（改为按持续时长升级）；新增 `a11yEvents`/`a11yEventAgoMs`/`hardResyncs`/`noFrameForMs`/`pitchThUp` 诊断 |
+| v5.6 | 近距离（faceRatio ≥0.50）点头阈值压到 0.68 倍，远距离不动；实测证明「下巴占比」主要在反映距离而非姿态，故俯视几何只作诊断保留、不接灵敏度开关；修复常亮时偶尔失效（相机"有句柄但早已无帧"被反复确认成正常） |
 | v5.5 | 摘掉幅度阈值上的两层放大系数（静止锁定 + 距离）——这是「点头费劲」的根因；俯视时点头阈值压到 0.75 倍；修复注入链上"实例在但连接失效"导致的息屏后需下拉状态栏；新增全链路自检日志 |
 | v5.4 | 息屏唤醒彻底修复（电源状态自校正 + 解锁事件 + 退避重试）；扭头阈值也按距离放大；新增俯视姿态自动识别与补偿 |
 | v5.3 | 修复「切后台后重开应用必须下拉状态栏才生效」的代码死角（改为主动存活探针）；30cm 近距离误触（眨眼判定按距离收紧 + 近距离静止硬锁定）；新增触发来源诊断 |

@@ -8,6 +8,7 @@ import android.graphics.Path
 import android.graphics.Point
 import android.graphics.Rect
 import android.os.Build
+import android.os.SystemClock
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 
@@ -57,6 +58,26 @@ class GazeAccessibilityService : AccessibilityService() {
             private set
 
         fun isConnected(): Boolean = instance != null
+
+        /**
+         * 无障碍窗口事件计数与最后一次的时间戳（v5.7）。
+         *
+         * ## 为什么必须单独统计
+         *
+         * 排查「隔一会重开抖音不触发」时，有一个关键分叉无法用现有日志区分：
+         * **到底是系统没把窗口事件发给我们（HyperOS 过滤）**，还是**事件到了但我们没据此恢复**。
+         *
+         * 只看 `foreground=` 是分不出来的 —— 它是我们对事件的**理解**，不是事件本身。
+         * 有了这两个计数就能一眼分辨：`a11yEvents` 停涨 = 系统根本没发事件（只能靠轮询兜底）；
+         * 计数在涨但前台判错 = 我们自己的判据有问题。
+         */
+        @Volatile
+        var windowEventCount: Long = 0L
+            private set
+
+        @Volatile
+        var lastWindowEventAtMs: Long = 0L
+            private set
     }
 
     override fun onServiceConnected() {
@@ -108,6 +129,11 @@ class GazeAccessibilityService : AccessibilityService() {
             return
         }
         val packageName = event.packageName?.toString() ?: return
+        // v5.7：先记账，再交给 AppStateManager。记账必须无条件发生（包括被
+        // TRANSIENT_PACKAGES 过滤掉的 systemui 事件），否则「系统到底有没有发事件」
+        // 这个最关键的分叉就看不出来了。
+        windowEventCount++
+        lastWindowEventAtMs = SystemClock.elapsedRealtime()
         AppStateManager.onForegroundPackage(this, packageName)
     }
 

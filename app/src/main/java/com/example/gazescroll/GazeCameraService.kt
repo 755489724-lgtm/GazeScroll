@@ -138,6 +138,24 @@ class GazeCameraService : LifecycleService() {
         /** 连续注入失败达到这个次数就强制重连无障碍服务（v5.5）。 */
         private const val MAX_INJECTION_FAILURES = 2
 
+        /**
+         * 无障碍「设置里已启用、却迟迟拿不到实例」持续这么久后，直接强制重绑（v5.7）。
+         *
+         * 10 秒是刻意选的：比一次正常的 rebind 往返（600ms 延迟 + 系统绑定）长出两个
+         * 数量级，绝不会误伤正在恢复中的情况；又远短于用户会去手动下拉状态栏的时间。
+         * 每次强制重绑后计时重置，所以最多每 10 秒一次，不会形成抖动。
+         */
+        private const val A11Y_FORCE_REBIND_AFTER_MS = 10_000L
+
+        /**
+         * 持续这么久没有画面就丢掉 CameraX provider 重新获取（硬重建，v5.7）。
+         *
+         * [FRAME_TIMEOUT_MS] 是 3 秒、[REBIND_GRACE_MS] 是 2.5 秒，所以普通的
+         * "重绑一次就好"根本到不了这里；能持续 12 秒没帧的，只可能是 provider 那层坏了，
+         * 而那种情况重绑一万次也没用——必须重新 `getInstance`。
+         */
+        private const val FRAME_HARD_RESYNC_AFTER_MS = 12_000L
+
         /** 硬锁定只在这么近的距离启用（脸高占画面比例）。 */
         private const val HARD_LOCK_NEAR_RATIO = 0.55f
 
@@ -328,8 +346,24 @@ class GazeCameraService : LifecycleService() {
      * 时机造成的：当时 targetActive 已经是 true（或状态没变），于是什么都没重新武装，
      * 而相机 / 检测器还停在待机的姿态里。
      */
+    /**
+     * 上一次看到的前台包名（v5.7），只用来把「从哪切到哪」打进日志。
+     *
+     * 用户明确要求日志里有 `foreground change: com.miui.home -> com.ss.android.ugc.aweme`
+     * 这样的标记：排查「重开抖音不触发」时，第一件事就是确认这次切换**到底有没有被观察到**。
+     */
+    @Volatile
+    private var lastSeenForeground: String? = null
+
     private val appStateListener: (Boolean, String) -> Unit = { active, reason ->
-        Log.i(TAG, "app state: active=$active reason=$reason pkg=${AppStateManager.foregroundPackage}")
+        val pkg = AppStateManager.foregroundPackage
+        val from = lastSeenForeground
+        lastSeenForeground = pkg
+        Log.i(TAG, "app state: active=$active reason=$reason pkg=$pkg")
+        if (from != pkg) {
+            // v5.7：显式的切换标记 —— 这是"这次切换有没有被看到"的唯一判据。
+            Log.i("GazeDiag", "foreground change: $from -> $pkg (target=$active reason=$reason)")
+        }
         when {
             active && reason != "package-change" -> onTargetEntered(reason)
             // 允许翻页期间只是换了应用：不用重学基准线，但必须保证相机真的在出帧。
@@ -338,9 +372,9 @@ class GazeCameraService : LifecycleService() {
             active -> {
                 Log.i(
                     "GazeDiag",
-                    "window changed to ${AppStateManager.foregroundPackage} -> pipeline resynced (kept baselines)",
+                    "window changed to $pkg -> pipeline resynced (kept baselines)",
                 )
-                ensurePipelineForActive("package-change")
+                ensurePipelineForActive("app-switch")
             }
 
             else -> onTargetLeft()
@@ -482,6 +516,17 @@ class GazeCameraService : LifecycleService() {
         }
         dumpSelfCheck("$trigger")
         ensureAccessibilityBound(trigger)
+        // v5.7：日志里明确写出"这是一次完整重启"，并按用户要求带上 reason=user-present。
+        val wakeReason = when (trigger) {
+            "ACTION_USER_PRESENT" -> "user-present"
+            "ACTION_SCREEN_ON" -> "screen-on"
+            "power-state correction" -> "power-correction"
+            else -> trigger
+        }
+        Log.i(
+            "GazeDiag",
+            "rebind reason=$wakeReason -> $trigger full restart",
+        )
         rebuildPipelineNow("$trigger full pipeline restart")
     }
 
@@ -866,6 +911,9 @@ class GazeCameraService : LifecycleService() {
     private fun onFrame(frame: AnalyzedFrame) {
         val now = SystemClock.elapsedRealtime()
         lastFrameAtMs = now
+        // v5.7：真的收到帧就把"持续无画面"的计时清零。这是硬重建升级判据的唯一出口，
+        // 所以必须在这里做——放在重绑路径里会让它永远归零、失去意义。
+        staleBeganAtMs = 0L
         val cfg = GazeRuntime.config
 
         if (running.get()) {
@@ -1269,7 +1317,10 @@ class GazeCameraService : LifecycleService() {
                 " downGaze=${headPoseDetector?.downGazeCount ?: 0}" +
                 " biasRecenter=${headPoseDetector?.biasRecenterCount ?: 0}" +
                 // v5.5：俯仰/偏航阈值的解耦验证 —— 近距离时前者不变、后者翻倍即为正确。
+                // v5.7：pitchTh 是**当前方向**的阈值，pitchThUp 是仰头方向的阈值。
+                //       近距离下 nodTh < upTh 就说明单向增益生效（点头更灵、仰头照旧）。
                 " pitchTh=${"%.1f".format(headPoseDetector?.pitchThresholdDeg ?: 0f)}°" +
+                " pitchThUp=${"%.1f".format(headPoseDetector?.pitchThresholdUpDeg ?: 0f)}°" +
                 " yawTh=${"%.1f".format(headPoseDetector?.yawThresholdDeg ?: 0f)}°" +
                 " downGazeActive=${headPoseDetector?.downGazeActive ?: false}" +
                 // v5.6：绝对几何的距离/姿态判定 —— chinRatio 是俯视判据的原始读数。
@@ -1427,6 +1478,24 @@ class GazeCameraService : LifecycleService() {
     @Volatile
     private var staticHardLock = false
 
+    /** 无障碍实例缺失的起始时刻，以及累计强制重绑次数（v5.7），仅用于升级与诊断。 */
+    private var a11yMissingSinceMs = 0L
+
+    @Volatile
+    private var a11yForceRebinds = 0
+
+    /**
+     * 「持续没有画面」的起始时刻（v5.7）。
+     *
+     * 刻意与 [analysisStartedAtMs] / [lastFrameAtMs] 分开：那两个会被每一次重绑清零，
+     * 于是"重绑→宽限→重判→再重绑"可以无限循环而永远不升级。这个只在**真的收到帧**时清零，
+     * 所以它如实反映"到底多久没画面了"。
+     */
+    private var staleBeganAtMs = 0L
+
+    @Volatile
+    private var hardResyncCount = 0
+
     private var lastPitchForLock: Float? = null
     private var lastYawForLock: Float? = null
     private var lastEyeForLock: Float? = null
@@ -1546,18 +1615,21 @@ class GazeCameraService : LifecycleService() {
                 "failures=$probeFailures cameraBound=$cameraBound " +
                 "provider=${cameraProvider != null})",
         )
+        // 先做帧级升级判定：它量的是"与重绑无关的持续时长"，所以必须在下面
+        // 的分级处理**之前**跑，否则重绑会把证据清掉。
+        escalateStaleFrames(now, reference)
         when {
             probeFailures == 1 -> {
                 GazeRuntime.publish { it.copy(note = "检测无画面，正在自动恢复…") }
                 // v5.6：第一次就强制重绑。以前这里调 ensurePipelineForActive，
                 // 而它在 cameraBound==true 时会"确认无事"直接返回 —— 卡死状态因此
                 // 要多等一轮才升级处理，用户感受到的就是"偶尔失效好几秒"。
-                ensurePipelineForActive("liveness-probe")
+                ensurePipelineForActive("no-frame")
             }
 
             probeFailures <= MAX_LIVENESS_ESCALATIONS -> {
                 // 相机可能被别的进程占着：彻底丢开 provider 重新获取。
-                releaseCamera("liveness escalation")
+                releaseCamera("app-switch/no-frame escalation")
                 cameraProvider = null
                 bindCamera()
                 analysisStartedAtMs = now
@@ -1572,6 +1644,49 @@ class GazeCameraService : LifecycleService() {
                 restartPipeline()
             }
         }
+    }
+
+    /**
+     * 帧级升级：`shouldAnalyze()` 为真、相机也绑着，帧却**持续**不来（v5.7）。
+     *
+     * ## 为什么单靠 [checkFrames] 不够
+     *
+     * [checkFrames] 每 1 秒重绑一次，但它每次都把 [lastFrameAtMs] 和计时清了零，
+     * 于是"重绑 → 宽限期 → 重判 → 再重绑"可以无限循环，**永远不会升级**。
+     * 如果坏的是 CameraX 那一层（而不是绑定关系），重绑多少次都没用 —— 因为
+     * `cameraProvider` 本身已经不可用了，只有丢掉它重新 `getInstance` 才能治好。
+     *
+     * 这里用一条**独立于重绑**的计时（[staleBeganAtMs]）来量"到底多久没画面"，
+     * 所以重绑再多次也不会把它清零。超过 [FRAME_HARD_RESYNC_AFTER_MS] 就丢开
+     * provider 重新获取，与人工点通知里的「重启」等价。
+     */
+    private fun escalateStaleFrames(now: Long, reference: Long) {
+        if (staleBeganAtMs == 0L) staleBeganAtMs = reference
+        val staleFor = now - staleBeganAtMs
+        if (staleFor < FRAME_HARD_RESYNC_AFTER_MS) return
+
+        hardResyncCount++
+        Log.w(
+            "GazeCameraService",
+            "no frames for ${staleFor}ms despite rebinds (cameraBound=$cameraBound " +
+                "restartAttempts=$restartAttempts) — dropping the camera provider and " +
+                "re-acquiring (hard resync #$hardResyncCount)",
+        )
+        GazeRuntime.publish { it.copy(note = "相机长时间无画面，已彻底重建（第 $hardResyncCount 次）") }
+
+        // 重新计时，免得同一个卡死状态每轮都触发一次硬重建。
+        staleBeganAtMs = now
+        retryScheduled = false
+        wakeRetryAttempt = 0
+        // 注意这里**不能**把 staleBeganAtMs 交给 resetDetectorStateForFreshStart 去清：
+        // 那个函数是给"正常重绑"用的，会在每次重绑后调用，清掉就等于永远不升级。
+        resetDetectorStateForFreshStart()
+        releaseCamera("hard resync: no frames for ${staleFor}ms")
+        cameraProvider = null
+        analysisStartedAtMs = now
+        analysisGraceUntilMs = now + REBIND_GRACE_MS
+        lastFrameAtMs = 0L
+        bindCameraWithRetry("hard resync: no frames for ${staleFor}ms")
     }
 
     /**
@@ -1676,8 +1791,15 @@ class GazeCameraService : LifecycleService() {
                 "graceMs=${(analysisGraceUntilMs - now).coerceAtLeast(0L)} " +
                 "restartAttempts=$restartAttempts probeFailures=$probeFailures " +
                 "rebinding=${wakeRetryAttempt > 0} " +
+                "hardResyncs=$hardResyncCount " +
+                "noFrameForMs=${if (staleBeganAtMs == 0L) 0L else now - staleBeganAtMs} " +
                 "a11yEnabled=${AccessibilityBootstrap.isServiceEnabled(this)} " +
                 "a11yConnected=${GazeAccessibilityService.isConnected()} " +
+                // v5.7：区分「系统没发事件」与「事件到了我们判错了」。这两个值在排查
+                // 「重开抖音不触发」时是第一分叉：a11yEvents 停涨说明只能靠轮询兜底。
+                "a11yEvents=${GazeAccessibilityService.windowEventCount} " +
+                "a11yEventAgoMs=${GazeAccessibilityService.lastWindowEventAtMs.let { if (it == 0L) -1L else now - it }}" +
+                "a11yForceRebinds=$a11yForceRebinds " +
                 "swipeReady=${SwipeInjector.isReady(this)} " +
                 "backend=${SwipeInjector.activeBackend(this)} " +
                 "injFailures=$injectionFailures " +
@@ -1696,13 +1818,49 @@ class GazeCameraService : LifecycleService() {
      * 这里提前把它做掉：只要开关是开的、实例却是空的，就主动请求系统重新绑定。
      */
     private fun ensureAccessibilityBound(trigger: String) {
-        if (GazeAccessibilityService.isConnected()) return
-        if (!AccessibilityBootstrap.isServiceEnabled(this)) return
+        if (GazeAccessibilityService.isConnected()) {
+            a11yMissingSinceMs = 0L
+            return
+        }
+        if (!AccessibilityBootstrap.isServiceEnabled(this)) {
+            // 开关本身是关的：重绑也无从谈起，用户需要重新授权。明确说出来，
+            // 免得这一条被当成"已经处理过了"。
+            Log.w(
+                "GazeCameraService",
+                "$trigger: accessibility service NOT enabled in settings — " +
+                    "cannot rebind (the ADB authorisation is gone)",
+            )
+            return
+        }
+
+        // v5.7：单次 rebind 失败过就持续升级，别让"一直在重试"看起来像"已经好了"。
+        // 判据用「持续缺失时长」而不是循环次数，因为探针的调用频率会变（探针 + 轮询）。
+        val now = SystemClock.elapsedRealtime()
+        if (a11yMissingSinceMs == 0L) a11yMissingSinceMs = now
+        val missingFor = now - a11yMissingSinceMs
+
         Log.w(
             "GazeCameraService",
             "$trigger: accessibility service enabled in settings but NOT connected " +
-                "— requesting rebind",
+                "(missing ${missingFor}ms) — requesting rebind",
         )
+        if (missingFor >= A11Y_FORCE_REBIND_AFTER_MS) {
+            // 开关是开的、系统却迟迟不给我们实例：典型的"连接失效/被省电回收"。
+            // repairIfNeeded 在这里会因为"设置里已启用"而只做一次 toggle，
+            // 试过一轮仍拿不回实例就直接强绑（关掉再打开），这正是用户手动
+            // 下拉状态栏能达到的效果。
+            a11yMissingSinceMs = now
+            a11yForceRebinds++
+            Log.w(
+                "GazeCameraService",
+                "a11y still missing after ${missingFor}ms — forcing a hard rebind " +
+                    "(#${a11yForceRebinds}, no manual status-bar pull needed)",
+            )
+            runCatching { AccessibilityBootstrap.forceRebind(this, "$trigger: missing for ${missingFor}ms") }
+                .onFailure { Log.w("GazeCameraService", "a11y force rebind failed: ${it.message}") }
+            return
+        }
+
         runCatching { AccessibilityBootstrap.repairIfNeeded(this) }
             .onFailure { Log.w("GazeCameraService", "a11y rebind failed: ${it.message}") }
     }

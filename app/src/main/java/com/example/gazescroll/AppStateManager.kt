@@ -83,6 +83,15 @@ object AppStateManager {
     private const val BLIND_TIMEOUT_MS = 8_000L
 
     /**
+     * 「前台其实是目标应用、我们却认为不是」需要持续多久才判定为判据出错（v5.7）。
+     *
+     * 2 秒足够跨过一整个应用切换的过渡期（[SETTLE_TO_STANDBY_MS] 只有 400ms，
+     * 加上窗口读数本身的抖动也就几百毫秒），又远短于用户能察觉到"没反应"的时间。
+     * 真正的应用切换不会误命中：那时活动窗口确实不是目标应用。
+     */
+    private const val CONTRADICTION_GRACE_MS = 2_000L
+
+    /**
      * Packages that report themselves as foreground without being the app the
      * user is actually using. systemui does this for a moment on every launch.
      */
@@ -138,6 +147,9 @@ object AppStateManager {
     /** Previous raw window reading, only for the poll diagnostic log. */
     private var lastPolledWindow: String? = null
     private var loggedFirstPoll = false
+
+    /** 连续观察到「前台其实是目标应用、我们却认为不是」的起始时刻（v5.7）。 */
+    private var contradictionSinceMs = 0L
 
     private val settleRunnable = Runnable { commitPending() }
 
@@ -308,6 +320,64 @@ object AppStateManager {
         commitPending(force = true, reason = "fail-open")
     }
 
+    /**
+     * 「前台其实是目标应用，我们却认为不是」的兜底（v5.7）。
+     *
+     * ## 为什么需要它
+     *
+     * 这是「隔一会重开抖音又不触发」里**最难自查**的一种失效：整条恢复链都挂在
+     * [targetActive] 上，一旦它错成 false，`shouldAnalyze()` 就恒为 false，
+     * 相机、看门狗、liveness 探针**全部被同一个条件挡住** —— 谁也不会去纠正它。
+     * 而 [checkBlind] 救不了这个方向：它治的是「前台判不出来」（fail-open），
+     * 不是「判错了」（fail-closed 到错误的一边）。
+     *
+     * 所以这里做一件独立的事：**不信任自己记的前台**，直接向无障碍服务再问一次
+     * "现在活动的窗口是谁"。若它明确是目标应用、而我们却认为不是，并且持续了
+     * [CONTRADICTION_GRACE_MS]，就强制按"允许翻页"重算一次。
+     *
+     * 判据要求"明确"：读不到窗口（HyperOS 会隐藏标题）时返回 null，此时**不做任何事**，
+     * 保持现有的待机行为，避免把正常的省电待机判成故障。
+     *
+     * @return true 表示已强制纠正过状态，调用方应跳过本轮的常规 propose 流程
+     */
+    private fun fixContradiction(ctx: Context, actual: String?): Boolean {
+        if (actual == null || actual == ctx.packageName) {
+            contradictionSinceMs = 0L
+            return false
+        }
+        // 用 isAllowed 而不是直接比对白名单：它已经处理了「全局使用翻页」和
+        // 「白名单为空 = 永远允许」两种情况，语义与 commitPending 完全一致。
+        if (!isAllowed(ctx, actual)) {
+            contradictionSinceMs = 0L
+            return false
+        }
+        if (targetActive) {
+            // 状态是对的（或者已经有人纠正过），没什么可做的。
+            contradictionSinceMs = 0L
+            return false
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        if (contradictionSinceMs == 0L) {
+            contradictionSinceMs = now
+            return false
+        }
+        if (now - contradictionSinceMs < CONTRADICTION_GRACE_MS) return false
+
+        Log.w(
+            TAG,
+            "contradiction: active window is $actual (allowed) but targetActive=false " +
+                "for ${now - contradictionSinceMs}ms — forcing an immediate re-evaluation " +
+                "(this is the 'reopen Douyin, nothing works' state)",
+        )
+        contradictionSinceMs = 0L
+        lastObservationAtMs = now
+        pendingPackage = actual
+        syncGlobalPaging(ctx)
+        commitPending(force = true, reason = "contradiction-fail-open")
+        return true
+    }
+
     // ---------------------------------------------------------------- polling --
 
     private fun pollOnce() {
@@ -343,6 +413,12 @@ object AppStateManager {
                 lastPolledWindow = activeWindowPackage
                 Log.i(TAG, "poll: activeWindow=$activeWindowPackage")
             }
+
+            // v5.7：先做一次"前台其实是目标应用、我们却认为不是"的独立核对。
+            // 命中并纠正后本轮不再 propose，避免用同一份读数把它又改回待机。
+            // 放在 `== ctx.packageName` 的早退**之前**：无论读数是否恰好是我们自己，
+            // 这个核对都该跑，它自己会处理"读不到 / 是自己"的情况。
+            if (fixContradiction(ctx, activeWindowPackage)) return
 
             // An opaque top window has to count as UNKNOWN, not as "still the last
             // app". HyperOS hides Douyin's splash completely — no root, not even a

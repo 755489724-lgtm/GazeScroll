@@ -1,5 +1,7 @@
 package com.example.gazescroll
 
+import android.util.Log
+
 /**
  * Blink detector — the primary swipe trigger.
  *
@@ -32,6 +34,8 @@ class BlinkDetector(
 ) {
 
     companion object {
+        private const val TAG = "Blink"
+
         /** Supported consecutive-blink counts. */
         val SUPPORTED_COUNTS = intArrayOf(1, 2, 3)
 
@@ -47,6 +51,20 @@ class BlinkDetector(
 
         /** 中距判定。 */
         private const val MID_FACE_RATIO = 0.38f
+
+        /**
+         * 近距离时要求的**连续闭眼帧数**（v5.11）。
+         *
+         * v5.3 的设计值是 `requiredClosedFrames × 2 = 4` 帧，v5.11 收到 **3 帧**。
+         * 依据是这次终于量到了真实帧率：实机 ctx 日志里相邻帧间隔 63~116ms（**约 11fps**），
+         * 4 帧 ≈ 要求**连续闭眼 360ms 以上**，已经超出一次正常眨眼的总时长，
+         * 很可能把用户**有意的**眨眼触发一起挡掉 —— 而本项目刚在 v5.10 因为
+         * 「连带拖慢真实动作」撤过一次改动，不能重犯。
+         *
+         * 3 帧 ≈ 270ms：足够挡掉短促的自然眨眼，又给有意眨眼留一档余量。
+         * **如果用户反馈「有意眨眼也变难了」，第一个要退的就是这个值。**
+         */
+        private const val NEAR_CLOSED_FRAMES = 3
     }
 
     /** Below this, an eye counts as closed. Raised to 0.55 for glasses. */
@@ -105,6 +123,13 @@ class BlinkDetector(
     /** When the current closure was confirmed, for the stuck-reading guard. */
     private var closedSinceMs = 0L
 
+    /** 本次闭眼的第一帧时刻，用来量「闭眼持续了多久」（v5.11 诊断）。 */
+    private var closureBeganAtMs = 0L
+
+    /** 本次闭眼里左右眼各自的最深读数（v5.11 诊断）。 */
+    private var closureMinLeft = 1f
+    private var closureMinRight = 1f
+
     private var lastBlinkAtMs = 0L
     private var cooldownUntilMs = 0L
 
@@ -130,7 +155,20 @@ class BlinkDetector(
         private set
 
     /**
-     * 按距离收紧眨眼判定（v5.3）。
+     * 统一距离档的「是否近距离」（v5.11），由服务每帧从 [HeadPoseDetector] 同步。
+     *
+     * 为什么必须共用同一个真值：v5.3 的近距离收紧用的是本类自己的
+     * `faceRatio >= 0.55`，而用户 30cm 实测只有 0.49~0.51 —— 于是收紧**从未生效**，
+     * 一直跑在中距档（阈值 0.41 / 2 帧）。实测证据：静止 90 秒里的误触全部是
+     * `lastTrigger=blink`，而诊断行显示 `blinkBelow=0.41 blinkFrames=2`。
+     *
+     * `null` 表示没有可用的距离档（例如头部两个轴都关了），此时退回本类自己的瞬时比值规则。
+     */
+    @Volatile
+    var nearTier: Boolean? = null
+
+    /**
+     * 按距离收紧眨眼判定（v5.3 引入，v5.11 接到统一距离档上）。
      *
      * 近距离时同时做两件事：**降低**闭眼阈值（更难判成闭眼）并**提高**连续帧要求。
      * 只做其中一件不够：阈值降得太多会漏掉真实眨眼，而真实眨眼在近距离下持续帧数也更多
@@ -138,10 +176,13 @@ class BlinkDetector(
      */
     private fun applyDistanceAdaptation() {
         val ratio = faceRatio
+        // v5.11：近距离真值优先用**统一距离档**（带 EMA + 回差，由服务同步），
+        // 这样「头部按近距离给灵敏度」与「眨眼按近距离收紧」用的是同一个真值，
+        // 不会再出现 v5.9 那种「一端按近距离、另一端按中距算」的空档。
+        val isNear = nearTier ?: (ratio != null && ratio >= NEAR_FACE_RATIO)
         val boost = when {
-            ratio == null -> 1f
-            ratio >= NEAR_FACE_RATIO -> 2f
-            ratio >= MID_FACE_RATIO -> 1.35f
+            isNear -> 2f
+            ratio != null && ratio >= MID_FACE_RATIO -> 1.35f
             else -> 1f
         }
         // 阈值往「更难判成闭眼」的方向压，但要留足余量：真实眨眼时读数会掉到 0.2 以下，
@@ -149,10 +190,8 @@ class BlinkDetector(
         // 默认 0.55：中距 → 0.407，近距 → 0.30。
         val below = closedBelow / boost
         effectiveClosedBelow = below.coerceIn(0.30f, closedBelow)
-        // 连续帧要求同步提高：近距离下真实眨眼持续帧数也更多（眼睑扫过的画面距离更长），
-        // 所以这条对真实眨眼几乎无损，却能挡掉短促噪声。
-        effectiveRequiredClosedFrames =
-            (requiredClosedFrames * boost).toInt().coerceIn(requiredClosedFrames, 6)
+        // 连续帧要求：近距离用 [NEAR_CLOSED_FRAMES]（v5.11 从设计的 4 帧收到 3 帧，理由见常量说明）。
+        effectiveRequiredClosedFrames = if (isNear) NEAR_CLOSED_FRAMES else requiredClosedFrames
     }
 
     @Synchronized
@@ -160,6 +199,9 @@ class BlinkDetector(
         eyesClosed = false
         closedFrames = 0
         closedSinceMs = 0L
+        closureBeganAtMs = 0L
+        closureMinLeft = 1f
+        closureMinRight = 1f
         lastBlinkAtMs = 0L
         pendingBlinks = 0
         cooldownUntilMs = 0L
@@ -189,6 +231,14 @@ class BlinkDetector(
             (right != null && right > openAbove)
 
         if (closedNow) {
+            if (closedFrames == 0) {
+                // 新一次闭眼：开始记录这次的持续时间与最深读数（v5.11 诊断）。
+                closureBeganAtMs = nowMs
+                closureMinLeft = 1f
+                closureMinRight = 1f
+            }
+            if (left != null) closureMinLeft = minOf(closureMinLeft, left)
+            if (right != null) closureMinRight = minOf(closureMinRight, right)
             closedFrames++
             if (closedFrames >= effectiveRequiredClosedFrames && !eyesClosed) {
                 eyesClosed = true
@@ -197,9 +247,10 @@ class BlinkDetector(
         } else if (openNow) {
             closedFrames = 0
             val completedBlink = eyesClosed
+            val beganAt = closureBeganAtMs
             eyesClosed = false
             closedSinceMs = 0L
-            if (completedBlink) registerBlink(nowMs)
+            if (completedBlink) registerBlink(nowMs, (nowMs - beganAt).coerceAtLeast(0L))
         }
         // Between the thresholds: keep the previous verdict (hysteresis).
 
@@ -211,7 +262,7 @@ class BlinkDetector(
         }
     }
 
-    private fun registerBlink(nowMs: Long) {
+    private fun registerBlink(nowMs: Long, closureMs: Long) {
         // Swallow everything during cooldown; the state above was still updated
         // so we do not fire the moment it expires.
         if (nowMs < cooldownUntilMs) return
@@ -225,6 +276,18 @@ class BlinkDetector(
         pendingBlinks = if (gapMs in blinkGapMinMs..blinkGapMaxMs) pendingBlinks + 1 else 1
 
         val needed = requiredBlinks.coerceIn(1, 3)
+
+        // v5.11 诊断：每一次「被计数的眨眼」都留痕 —— 闭眼持续了多久、最深读到多少、
+        // 与上一次眨眼的间隔、累计到几次。这是判断「有意眨眼 vs 不由自主的眨眼」
+        // 唯一可靠的依据：前者深（读数掉到 0.2 以下）且久，后者短促。
+        Log.i(
+            TAG,
+            "blink #$blinkCount closure=${closureMs}ms minEye=${"%.2f".format(closureMinLeft)}/" +
+                "${"%.2f".format(closureMinRight)} below=${"%.2f".format(effectiveClosedBelow)} " +
+                "needFrames=$effectiveRequiredClosedFrames " +
+                "gap=${if (gapMs == Long.MAX_VALUE) "-" else "${gapMs}ms"} " +
+                "run=$pendingBlinks/$needed dist=${if (nearTier == true) "near" else "mid/far"}",
+        )
         if (pendingBlinks < needed) return
 
         triggerCount++

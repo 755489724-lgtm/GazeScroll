@@ -942,6 +942,12 @@ class GazeCameraService : LifecycleService() {
             }
             val gate = suppressed || hardLocked
 
+            // v5.11：眨眼收紧必须和头部**用同一个距离档**。v5.3 起眨眼检测器一直用自己
+            // 的 `faceRatio >= 0.55` 判断近距离，而用户 30cm 实测只有 0.49~0.51 ——
+            // 于是收紧从未生效（诊断行 `blinkBelow=0.41 blinkFrames=2`），
+            // 而实测静止 90 秒里的误触**全部**是 `lastTrigger=blink`。
+            // 头部两个轴都关掉时传 null，让眨眼检测器退回自己的瞬时比值规则。
+            val headAxisAvailable = cfg.headPoseEnabled || cfg.horizontalSwipeEnabled
             if (!gate && cfg.blinkTriggerEnabled) {
                 blinkDetector?.let { detector ->
                     detector.requiredBlinks = cfg.blinkTriggerCount
@@ -955,6 +961,10 @@ class GazeCameraService : LifecycleService() {
                     detector.requiredClosedFrames = cfg.blinkClosedFrames
                     // 距离自适应（v5.3）：近距离下收紧眨眼判定，这是 30cm 误触的主因。
                     detector.faceRatio = frame.faceRatio
+                    // 距离档来自头部检测器（同一帧内头部稍后才更新，所以这里用的是上一帧的
+                    // 判定 —— 档位带滞回，晚一帧无影响）。
+                    detector.nearTier =
+                        if (headAxisAvailable) headPoseDetector?.nearDistance else null
                     detector.onEyeProbabilities(
                         frame.leftEyeOpenProbability,
                         frame.rightEyeOpenProbability,

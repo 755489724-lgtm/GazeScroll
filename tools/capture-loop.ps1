@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $adb = 'D:\ruanjian\deepseek harness\.android-build\android-sdk\platform-tools\adb.exe'
-$tags = 'GazeDiag:V HeadPose:V GazeA11y:V GazeCameraService:V GazeSelfCheck:V AppState:V A11yBootstrap:V'
+$tags = 'GazeDiag:V HeadPose:V Blink:V GazeA11y:V GazeCameraService:V GazeSelfCheck:V AppState:V A11yBootstrap:V'
 
 function Find-Serial {
     param([string]$AdbPath)

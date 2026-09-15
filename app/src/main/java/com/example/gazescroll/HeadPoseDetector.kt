@@ -123,6 +123,15 @@ class HeadPoseDetector(
          */
         private const val ARBITRATION_VELOCITY_FRACTION = 0.4f
 
+        /**
+         * 方向仲裁的「占优」系数（v5.11）：偏航速度必须至少是俯仰速度的这么多倍，
+         * 才允许把这次俯仰候选判成「其实在扭头」。见 [isYawMovingNow] 的实机数据。
+         */
+        private const val ARBITRATION_DOMINANCE_RATIO = 1f
+
+        /** 方向仲裁的偏航幅度闸门（v5.11）：至少偏到扭头阈值的这么多倍才算「真在扭头」。 */
+        private const val ARBITRATION_YAW_FRACTION = 0.3f
+
         // ------------------- v5.9 试过、v5.10 已撤销：触发确认窗口 -------------------
         //
         // v5.9 曾要求「阈值必须在最近 3 帧里至少 2 帧被越过」才允许触发，意图是挡掉
@@ -1153,7 +1162,7 @@ class HeadPoseDetector(
             // 近距离俯视扭头会同时带出一个俯仰分量（实测 ±3~±10°），而俯仰阈值被单向
             // 增益压到 0.68 倍（4.1°/5.4°），不让位的话"想扭头"永远先变成上下滑。
             // 真正的点头不带偏航角速度，所以对纯点头零影响。
-            if (signedYawNow != null && isYawMovingNow(signedYawNow, nowMs)) {
+            if (signedYawNow != null && isYawMovingNow(signedYawNow, nowMs, velocity)) {
                 return@run "yaw-dominant-arbitration"
             }
             null
@@ -1460,9 +1469,56 @@ class HeadPoseDetector(
      *
      * @param signedYawNow 本帧刚算出的有符号偏航偏移；null 表示这一帧没有偏航读数
      */
-    /** 偏航是否正在明显转动（v5.8）：所有**俯仰候选**的否决判据。见上一条的说明。 */
-    private fun isYawMovingNow(currentYaw: Float, nowMs: Long): Boolean =
-        yawVelocityWith(currentYaw, nowMs) >= MIN_YAW_VELOCITY * ARBITRATION_VELOCITY_FRACTION
+    /**
+     * 偏航是否正在明显转动（v5.8 引入，v5.11 收紧）：所有**俯仰候选**的否决判据。
+     *
+     * ## v5.11 修的是什么（「点头要更大的角度才触发」）
+     *
+     * v5.8 的判据**只有一条绝对速度门限**：
+     *
+     * ```kotlin
+     * yawVelocity >= MIN_YAW_VELOCITY * ARBITRATION_VELOCITY_FRACTION   // 0.015 × 0.4 = 0.006°/ms
+     * ```
+     *
+     * 0.006°/ms 是 6°/秒 —— 而 30cm 处偏航读数的**正常抖动**（±1~3°）在约 11fps 下折算出来
+     * 就是 **0.01~0.03°/ms**，轻松越过这条线。于是「我在扭头」被误判，点头让位。
+     * 实机日志（v510-verify.log，用户明确在点头）：
+     *
+     * ```
+     * 03:10:35.990 nodDown candidate rejected: pitch=-7.7°  reason=yaw-dominant-arbitration
+     * 03:10:36.065 nodDown candidate rejected: pitch=-12.2° reason=yaw-dominant-arbitration
+     * 03:10:38.915 nodDown candidate rejected: pitch=-13.8° reason=yaw-dominant-arbitration
+     * 03:10:38.985 nodDown candidate rejected: pitch=-15.2° reason=yaw-dominant-arbitration
+     * 03:10:39.062 nodDown triggered                      pitch=-17.3°   ← 加大力气才成
+     * ```
+     *
+     * 阶段④ 一共 **39 次**俯仰候选被这条规则拒掉（点头 19、仰头 18），是最大的一类拒绝。
+     *
+     * ## 三条判据，缺一不可
+     *
+     * 函数叫「偏航占优」，可 v5.8 从来没有比较过两个轴的大小。现在补齐：
+     *
+     *  1. **偏航确实在动**（[ARBITRATION_VELOCITY_FRACTION] × 最低速度门限，保留 v5.8 的原始判据）；
+     *  2. **偏航强过俯仰**（[ARBITRATION_DOMINANCE_RATIO]）—— 这才是"占优"的字面含义。
+     *     实测：真实扭头 0.13~0.25°/ms，扭头带出的俯仰分量只有约 0.02°/ms；
+     *     而点头时俯仰 0.04~0.13°/ms、偏航抖动 0.01~0.02°/ms。**速度的比较在两个方向上都有鉴别力**；
+     *  3. **头部确实偏到轴外**（[ARBITRATION_YAW_FRACTION] × 扭头阈值）—— 真实扭头
+     *     实测 23~45°（阈值 20°），而点头时偏航抖动只有 ±1~3°。
+     *
+     * ⚠️ 第 3 条是**闸门**，不是 v5.8 文档里警告过的"幅度兜底判据"：那次的错误是拿幅度
+     * **替代**速度判据（`yaw >= 阈值×0.6` 就当"俯仰更强"），结果把合格扭头挡掉了。
+     * 这里是"速度已经成立之后，再要求幅度也成立"，两条同时满足才让位，
+     * 所以真正的扭头（幅度 23~45°）照样让位，而姿态抖动（幅度 ±1~3°）不再误伤点头。
+     *
+     * @param currentYaw 本帧的有符号偏航偏移
+     * @param pitchSpeed 本帧的俯仰角速度（已在 evaluatePitch 里算过，直接复用避免重复计算）
+     */
+    private fun isYawMovingNow(currentYaw: Float, nowMs: Long, pitchSpeed: Float): Boolean {
+        val yawSpeed = yawVelocityWith(currentYaw, nowMs)
+        if (yawSpeed < MIN_YAW_VELOCITY * ARBITRATION_VELOCITY_FRACTION) return false
+        if (yawSpeed < pitchSpeed * ARBITRATION_DOMINANCE_RATIO) return false
+        return abs(currentYaw) >= turnThresholdDeg * ARBITRATION_YAW_FRACTION
+    }
 
     /** 扭头候选让位给俯仰。同样只看速度——幅度在两个轴之间没有鉴别力。 */
     private fun isPitchDominantOverYaw(nowMs: Long): Boolean =

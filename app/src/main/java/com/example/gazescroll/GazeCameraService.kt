@@ -129,6 +129,9 @@ class GazeCameraService : LifecycleService() {
         /** 活跃探针连续失败几次后升级为「丢弃 provider 重取」。 */
         private const val MAX_LIVENESS_ESCALATIONS = 3
 
+        /** 相机获取失败的退避重试间隔（v5.4）。 */
+        private val WAKE_RETRY_DELAYS_MS = longArrayOf(500L, 1000L, 2000L)
+
         /** 硬锁定只在这么近的距离启用（脸高占画面比例）。 */
         private const val HARD_LOCK_NEAR_RATIO = 0.55f
 
@@ -206,7 +209,6 @@ class GazeCameraService : LifecycleService() {
             svc.onLivenessProbe()
         }
     }
-
     private val running = AtomicBoolean(false)
 
     private var analysisExecutor: ExecutorService? = null
@@ -286,6 +288,9 @@ class GazeCameraService : LifecycleService() {
 
     /** 活跃探针连续失败次数（v5.3），用于递进升级恢复手段。 */
     private var probeFailures = 0
+
+    /** 亮屏恢复时相机获取的重试计数（v5.4）。 */
+    private var wakeRetryAttempt = 0
 
     private var frameWatchdog: Runnable? = null
 
@@ -417,9 +422,137 @@ class GazeCameraService : LifecycleService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> setScreenActive(false)
-                Intent.ACTION_SCREEN_ON -> setScreenActive(true)
+                Intent.ACTION_SCREEN_ON -> {
+                    setScreenActive(true)
+                    onScreenAwake("ACTION_SCREEN_ON")
+                }
+                // 解锁。亮屏但没解锁时相机拿到的是锁屏画面，毫无意义；
+                // 真正"可以用"的时刻是这里，所以恢复动作放在这个事件上最准。
+                Intent.ACTION_USER_PRESENT -> {
+                    setScreenActive(true)
+                    onScreenAwake("ACTION_USER_PRESENT")
+                }
             }
         }
+    }
+
+    /**
+     * 亮屏 / 解锁后的主动恢复（v5.4）。
+     *
+     * 这是「息屏久了再打开抖音偶尔仍需下拉状态栏」的修复点。之前有两个死角：
+     *
+     *  1. [setScreenActive] 里有 `if (screenActive == active) return`——亮屏时如果标志
+     *     已经是 true（息屏事件没收到、或被别处改回），整个更新流程直接被跳过；
+     *  2. [updateCameraState] 只在 `!cameraBound` 时才重绑。而息屏释放相机走的路径与
+     *     实际状态可能不一致（相机栈已经坏了但标志还是 true），于是永远不再重绑。
+     *
+     * 所以这里不再"根据标志推断该不该动"，而是**无条件做一次完整重建**：作废全部检测器
+     * 与抑制状态、丢弃 provider 重新获取、失败则按 500/1000/2000ms 退避重试。
+     */
+    private fun onScreenAwake(trigger: String) {
+        Log.i(
+            "GazeCameraService",
+            "$trigger -> proactive reactivation requested " +
+                "(screenActive=$screenActive running=${running.get()} " +
+                "cameraBound=$cameraBound provider=${cameraProvider != null} " +
+                "foreground=${AppStateManager.foregroundPackage})",
+        )
+        wakeRetryAttempt = 0
+        if (!running.get()) {
+            // 服务不在（被系统回收）：交给活跃探针去拉起来。
+            Log.i("GazeCameraService", "$trigger: service not running — will be restarted by probe")
+            return
+        }
+        rebuildPipelineNow("$trigger reactivation")
+    }
+
+    /**
+     * 立即重建整条相机流水线：作废检测器状态 + 丢弃 provider 重新获取。
+     *
+     * 与 [ensurePipelineForActive] 的区别：那个是"检查后补齐"（轻，可能什么都不做），
+     * 这个是"推倒重来"（重，但能治好标志与实际不符的情况），并带退避重试。
+     */
+    private fun rebuildPipelineNow(reason: String) {
+        resetDetectorStateForFreshStart()
+        releaseCamera("$reason: dropping provider")
+        cameraProvider = null
+        analysisStartedAtMs = SystemClock.elapsedRealtime()
+        analysisGraceUntilMs = analysisStartedAtMs + REBIND_GRACE_MS
+        lastFrameAtMs = 0L
+        Log.i("GazeCameraService", "rebuild pipeline: $reason")
+        bindCameraWithRetry(reason)
+    }
+
+    /**
+     * 获取 CameraX provider，失败按 500 / 1000 / 2000ms 退避重试。
+     *
+     * 相机在息屏后可能需要一段时间才真正可用（HAL 重新打开、被别的进程占着），
+     * 一次失败就放弃正是"偶发失效"的来源之一。
+     */
+    private fun bindCameraWithRetry(reason: String) {
+        if (!running.get()) return
+        val attempt = wakeRetryAttempt
+        if (attempt >= WAKE_RETRY_DELAYS_MS.size) {
+            Log.w("GazeCameraService", "camera bind gave up after ${attempt + 1} attempts ($reason)")
+            return
+        }
+        wakeRetryAttempt++
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            val provider = runCatching { future.get() }.getOrNull()
+            if (provider != null) {
+                wakeRetryAttempt = 0
+                cameraProvider = provider
+                rebind()
+                Log.i(
+                    "GazeCameraService",
+                    "camera provider ready (attempt $wakeRetryAttempt/$attempt) ($reason) " +
+                        "bound=$cameraBound",
+                )
+            } else {
+                scheduleBindRetry(reason)
+            }
+        }, ContextCompat.getMainExecutor(this))
+        // addListener 只在 future 完成时回调；失败路径靠下面这个超时兜底。
+        mainHandler.postDelayed({
+            if (cameraProvider == null && running.get()) scheduleBindRetry(reason)
+        }, WAKE_RETRY_DELAYS_MS[attempt])
+    }
+
+    private fun scheduleBindRetry(reason: String) {
+        if (!running.get()) return
+        if (wakeRetryAttempt > WAKE_RETRY_DELAYS_MS.size) return
+        val delay = WAKE_RETRY_DELAYS_MS[
+            (wakeRetryAttempt - 1).coerceIn(0, WAKE_RETRY_DELAYS_MS.size - 1),
+        ]
+        Log.w(
+            "GazeCameraService",
+            "camera bind failed, retrying in ${delay}ms (attempt $wakeRetryAttempt, $reason)",
+        )
+        mainHandler.postDelayed({ bindCameraWithRetry(reason) }, delay)
+    }
+
+    /**
+     * 把所有检测器与抑制状态恢复到"刚从零开始"。
+     *
+     * 亮屏后必须做这件事：息屏期间人脸消失、画面变化，旧基准线、旧冷却、旧抑制窗口
+     * 全都失去意义，留着只会制造误判。
+     */
+    private fun resetDetectorStateForFreshStart() {
+        headPoseDetector?.recalibrate()
+        blinkDetector?.reset()
+        mouthDetector?.reset()
+        globalGate.reset()
+        occlusionUntilMs = 0L
+        faceLostAtMs = 0L
+        lastOcclusionAtMs = 0L
+        hardStillSinceMs = 0L
+        staticHardLock = false
+        lastPitchForLock = null
+        lastYawForLock = null
+        lastEyeForLock = null
+        restartAttempts = 0
+        probeFailures = 0
     }
 
     /**
@@ -507,6 +640,8 @@ class GazeCameraService : LifecycleService() {
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
+            // v5.4：解锁事件。亮屏但锁屏时相机拍到的是锁屏界面，恢复动作放在解锁后更准。
+            addAction(Intent.ACTION_USER_PRESENT)
         }
         ContextCompat.registerReceiver(
             this,
@@ -529,7 +664,16 @@ class GazeCameraService : LifecycleService() {
     }
 
     private fun setScreenActive(active: Boolean) {
-        if (screenActive == active) return
+        if (screenActive == active) {
+            // v5.4：这里不能再静默返回。亮屏时若标志已经是 true（息屏事件没收到、
+            // 或被别处改回），直接 return 会让整条更新流程被跳过——这正是"偶尔失效"
+            // 的来源之一。屏幕**变亮**时无论如何都要重新校准一次。
+            if (active) {
+                Log.i("GazeCameraService", "screen already marked active — re-syncing pipeline anyway")
+                refreshAnalysisState()
+            }
+            return
+        }
         screenActive = active
         updateCameraState()
     }
@@ -1076,6 +1220,9 @@ class GazeCameraService : LifecycleService() {
                 " staticHardLock=$staticHardLock" +
                 // v5.0：回中锁定 / 张嘴基准健康度。
                 " recenterLock=${headPoseDetector?.recenterLocked ?: false}" +
+                // v5.4：俯视姿态补偿与一般姿势校正的次数。
+                " downGaze=${headPoseDetector?.downGazeCount ?: 0}" +
+                " biasRecenter=${headPoseDetector?.biasRecenterCount ?: 0}" +
                 " mouthForced=${mouthDetector?.forcedReloads ?: 0}" +
                 " mouthRejected=${mouthDetector?.rejectedSamples ?: 0}" +
                 " occl=${frame.occlusionReason?.label ?: "none"}" +
@@ -1214,6 +1361,9 @@ class GazeCameraService : LifecycleService() {
         // 只在近距离启用：50cm 以上本来就正常，不要平白增加限制。
         val ratio = frame.faceRatio
         if (ratio == null || ratio < HARD_LOCK_NEAR_RATIO) {
+            if (staticHardLock) {
+                Log.i("GazeDiag", "staticHardLock released: face no longer near (ratio=$ratio)")
+            }
             hardStillSinceMs = 0L
             staticHardLock = false
             lastPitchForLock = null
@@ -1273,7 +1423,7 @@ class GazeCameraService : LifecycleService() {
     }
 
     /**
-     * 活跃检查（v5.3）：应分析却没有帧在动时，递进式恢复。
+     * 活跃检查（v5.3 引入，v5.4 加入电源状态自校正）。
      *
      * 由 [AppStateManager] 的 800ms 轮询驱动，所以**不依赖任何窗口事件**——这正是
      * 「重开抖音必须下拉状态栏才生效」的修复点。
@@ -1284,7 +1434,14 @@ class GazeCameraService : LifecycleService() {
      *  3. 再不行 → 重建整个服务管线。
      */
     private fun onLivenessProbe() {
-        if (!running.get() || !shouldAnalyze()) return
+        if (!running.get()) return
+
+        // 先自校正屏幕状态，再判断该不该分析。
+        // 顺序很重要：screenActive 错了会让 shouldAnalyze() 永远返回 false，
+        // 后面所有恢复逻辑都会被这一个条件挡住。
+        syncPowerState()
+
+        if (!shouldAnalyze()) return
         val now = SystemClock.elapsedRealtime()
         // 刚恢复 / 刚绑定：正在打开相机，不算故障。
         if (now < analysisGraceUntilMs) return
@@ -1297,11 +1454,13 @@ class GazeCameraService : LifecycleService() {
         }
 
         probeFailures++
+        val fg = AppStateManager.foregroundPackage
         Log.w(
             "GazeCameraService",
-            "liveness probe: no frames for ${now - reference}ms while active " +
-                "(failures=$probeFailures cameraBound=$cameraBound provider=${cameraProvider != null}) " +
-                "-> recovering",
+            "Periodic check: foreground=$fg, cameraRunning=${cameraBound && !stale}, " +
+                "rebind requested (no frames for ${now - reference}ms, " +
+                "failures=$probeFailures cameraBound=$cameraBound " +
+                "provider=${cameraProvider != null})",
         )
         when {
             probeFailures == 1 -> {
@@ -1326,6 +1485,41 @@ class GazeCameraService : LifecycleService() {
                 probeFailures = 0
                 restartPipeline()
             }
+        }
+    }
+
+    /**
+     * 用系统的真实电源状态校正 [screenActive]（v5.4）。
+     *
+     * ## 为什么必须有这一步
+     *
+     * [screenActive] 只在收到 `ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF` 广播时才更新。而
+     * HyperOS 的省电策略下这些广播**可能被丢掉**——一旦丢了，这个标志就永久停在错误值上：
+     *
+     *  - 广播丢了 → `screenActive` 停在 `false`；
+     *  - `shouldAnalyze()` 永远返回 false；
+     *  - 所以**什么都不分析**，而且 liveness 探针、看门狗、强恢复全都被这一个条件挡住；
+     *  - 用户看到的就是"功能死了，下拉一下状态栏又活了"。
+     *
+     * 系统自己的 `PowerManager.isInteractive` 是真相来源，不受广播影响，所以定期比对一次
+     * 就能把这类死角堵死。这个方法每 800ms 被调用一次，实现必须极轻。
+     */
+    private fun syncPowerState() {
+        val power = getSystemService(PowerManager::class.java) ?: return
+        val reallyActive = power.isInteractive
+        if (reallyActive == screenActive) return
+
+        Log.w(
+            "GazeCameraService",
+            "power state correction: screenActive=$screenActive but isInteractive=$reallyActive " +
+                "— missed broadcast, re-syncing",
+        )
+        screenActive = reallyActive
+        if (reallyActive) {
+            // 屏幕其实是亮的：当作一次亮屏恢复处理。
+            onScreenAwake("power-state correction")
+        } else {
+            updateCameraState()
         }
     }
 

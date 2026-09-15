@@ -145,6 +145,15 @@ class HeadPoseDetector(
         private const val BIAS_RECENTER_ALPHA = 0.06f
 
         /**
+         * 俯视姿态的门限与持续时间（v5.4）。
+         *
+         * 判定的是**相对基准线**偏负多少度：3° 足以把"俯视"和"静止噪声"分开，又小到
+         * 不会把正常的略微低头当成姿势变化。持续 2 秒是用户明确要求的时长。
+         */
+        private const val DOWN_GAZE_MIN_DEG = 3f
+        private const val DOWN_GAZE_AFTER_MS = 2000L
+
+        /**
          * 回中锁定的**最长**持续时间（v5.2）。
          *
          * 没有这条兜底时，锁会永久卡住：人的自然姿势长期偏离基准线（实测偏差 6.5°），
@@ -372,6 +381,11 @@ class HeadPoseDetector(
     var biasRecenterCount: Int = 0
         private set
 
+    /** 累计识别到多少次俯视姿态并完成补偿，仅用于诊断（v5.4）。 */
+    @Volatile
+    var downGazeCount: Int = 0
+        private set
+
     // ---- 速度估计：用最近两个样本的差值判断「这是不是一次快速动作」 ----
     private var prevSignedPitch = 0f
     private var prevSignedPitchAtMs = 0L
@@ -522,8 +536,10 @@ class HeadPoseDetector(
             return
         }
 
-        if (pitchReady) evaluatePitch(pitchDeg!!, nowMs)
-        if (turnEnabled && yawReady) evaluateYaw(yawDeg!!, nowMs)
+        // 距离系数每帧只算一次，俯仰与偏航共用（v5.4）。
+        val boost = distanceBoost()
+        if (pitchReady) evaluatePitch(pitchDeg!!, nowMs, boost)
+        if (turnEnabled && yawReady) evaluateYaw(yawDeg!!, nowMs, boost)
     }
 
     /**
@@ -565,16 +581,8 @@ class HeadPoseDetector(
         return max - min
     }
 
-    /** 当前生效的俯仰阈值：静止锁定期间会被放大。 */
-    private fun effectivePitchThreshold(): Float =
-        if (staticLocked) thresholdDeg * staticLockFactor else thresholdDeg
-
-    /** 当前生效的偏航阈值：静止锁定期间会被放大。 */
-    private fun effectiveTurnThreshold(): Float =
-        if (staticLocked) turnThresholdDeg * staticLockFactor else turnThresholdDeg
-
     /**
-     * 距离放大系数：脸离得越近，同样的头部微晃在画面里折算出的角度越大（v5.2）。
+     * 距离放大系数：脸离得越近，同样的头部微晃在画面里折算出的角度越大（v5.2 起）。
      *
      * 实测数据：50cm 时 `faceRatio≈0.35` 一切正常；30cm 时 `faceRatio≈0.68`，静止也会误触。
      * 所以近距离下静止门限与速度门限都要同步提高——**只提高一个是不够的**：抬高幅度门限
@@ -589,6 +597,10 @@ class HeadPoseDetector(
         }
     }
 
+    /** 静止锁定 + 距离，对动作阈值的联合放大系数。 */
+    private fun thresholdScale(distanceBoost: Float): Float =
+        (if (staticLocked) staticLockFactor else 1f) * distanceBoost
+
     /** 按距离缩放后的静止峰峰值门限。 */
     private fun effectiveStaticRange(): Float = STATIC_RANGE_DEG * distanceBoost()
 
@@ -599,6 +611,9 @@ class HeadPoseDetector(
      * 30cm 下提到 0.024°/ms，仍然远低于真实动作，但把静止时的角度噪声挡在外面。
      */
     private fun effectivePitchSpeedGate(): Float = MIN_PITCH_VELOCITY * distanceBoost()
+
+    /** 按距离缩放后的偏航速度门限。 */
+    private fun effectiveYawSpeedGate(): Float = MIN_YAW_VELOCITY * distanceBoost()
 
     /**
      * 判定「峰值是否保持住了」所需的时间（v4.8）。
@@ -617,12 +632,13 @@ class HeadPoseDetector(
 
     // ------------------------------------------------------------- 俯仰：点头 --
 
-    private fun evaluatePitch(pitchDeg: Float, nowMs: Long) {
+    private fun evaluatePitch(pitchDeg: Float, nowMs: Long, distanceBoost: Float) {
         val delta = pitchDeg - baselineDeg
         val signedPitch = if (invertPitch) -delta else delta
         val magnitude = abs(signedPitch)
         // 静止锁定期间的阈值会被放大，用来压掉「一动不动也触发」的噪声。
-        val threshold = effectivePitchThreshold()
+        // v5.4：距离系数由调用方传入，与偏航共用同一份，保证两条轴一致。
+        val threshold = thresholdDeg * thresholdScale(distanceBoost)
         lastSignedPitch = signedPitch
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedPitch - lastLoggedPitch) >= 3f) {
@@ -672,7 +688,7 @@ class HeadPoseDetector(
             null
         }
 
-        updateBiasRecenterRun(pitchDeg, baselineDeg, magnitude, threshold, reject, nowMs)
+        updatePostureRecenter(pitchDeg, baselineDeg, magnitude, threshold, reject, nowMs)
 
         if (reject != null) {
             // 只在「看起来像一次动作」时才记录，避免每帧刷屏。
@@ -736,16 +752,29 @@ class HeadPoseDetector(
     }
 
     /**
-     * 姿势偏置自动校正（v5.2）。
+     * 姿势偏置自动校正 + 俯视姿态识别（v5.2 引入，v5.4 扩展）。
      *
-     * 只有当「偏离已经越过死区、但始终没到阈值、而且持续了很久」时才动基准线。三个条件
-     * 缺一不可：
-     *  - 越过死区：静止时基准线本来就该跟着走，不需要专门处理；
-     *  - 没到阈值：到了阈值就是一次动作，绝不能把动作当成姿势；
-     *  - 持续 [BIAS_RECENTER_AFTER_MS]：有意动作在 500ms 内就结束了（或者早就触发了），
-     *    能维持 1.5 秒的那是姿势。
+     * ## 为什么需要
+     *
+     * 用户大多数时间是**俯视**看手机（手机在下方、眼睛往下看），此时俯仰角长期偏负。
+     * 如果基准线不跟着走，这个偏负的偏移就会被当成"一直在低头"，白白吃掉阈值余量：
+     * 往下动一点立刻越过阈值（误触），往上一动却要走很远（不灵敏）。
+     *
+     * 两条路径共用同一套动作，只是**触发所需的持续时间不同**：
+     *
+     *  - **俯视姿态**（持续 [DOWN_GAZE_AFTER_MS] = 2 秒）：用户明确要求的行为——
+     *    长期俯视时把当前姿态当作新的中性点。
+     *  - **一般姿势偏置**（持续 [BIAS_RECENTER_AFTER_MS] = 1.5 秒）：靠椅背、凑近屏幕
+     *    这类缓慢变化。
+     *
+     * 两者都必须满足「越过死区、但始终没到阈值」：到了阈值就是一次动作，绝不能把动作
+     * 当成姿势。有意动作在 500ms 内就结束或已触发，能维持 1.5~2 秒的只可能是姿势。
+     *
+     * 判据用的是**相对基准线**的偏移，不是绝对俯仰角 —— 所以倒着拿手机、躺着看这些
+     * 姿势同样适用，不需要为每个姿势单独设阈值。该逻辑只作用于俯仰轴，
+     * 不碰偏航（扭头）与眨眼。
      */
-    private fun updateBiasRecenterRun(
+    private fun updatePostureRecenter(
         pitchDeg: Float,
         baseline: Float,
         magnitude: Float,
@@ -763,23 +792,49 @@ class HeadPoseDetector(
             biasSinceMs = nowMs
             return
         }
-        if (nowMs - biasSinceMs < BIAS_RECENTER_AFTER_MS) return
 
-        // 认定是新姿势：把基准线往当前角度挪一点（渐进，避免画面跳变）。
+        val heldMs = nowMs - biasSinceMs
+        val relative = pitchDeg - baseline
+
+        // 俯视：相对基准线长期偏负超过门限。
+        if (relative <= -DOWN_GAZE_MIN_DEG && heldMs >= DOWN_GAZE_AFTER_MS) {
+            downGazeCount++
+            val corrected = applyBaselineShift(pitchDeg, baseline, nowMs)
+            Log.i(
+                TAG,
+                "posture: looking down detected (held ${heldMs}ms, " +
+                    "relative ${"%.1f".format(relative)}°), baseline gradually shifted to " +
+                    "${"%.1f".format(corrected)}° (#${downGazeCount})",
+            )
+            return
+        }
+
+        // 一般姿势偏置（任何方向）。
+        if (heldMs >= BIAS_RECENTER_AFTER_MS) {
+            biasRecenterCount++
+            val corrected = applyBaselineShift(pitchDeg, baseline, nowMs)
+            Log.i(
+                TAG,
+                "posture bias recentred #$biasRecenterCount: baseline " +
+                    "${"%.1f".format(baseline)}° -> ${"%.1f".format(corrected)}° " +
+                    "(held ${"%.1f".format(magnitude)}° for ${heldMs}ms without reaching " +
+                    "${"%.1f".format(threshold)}°, lastReject=$reject)",
+            )
+        }
+    }
+
+    /**
+     * 把基准线往当前姿态挪一个比例（渐进，避免画面跳变），并重新计时，让它在随后几帧
+     * 继续收敛而不是一帧到位。
+     *
+     * @return 挪动后的基准线，便于日志显示
+     */
+    private fun applyBaselineShift(pitchDeg: Float, baseline: Float, nowMs: Long): Float {
         val corrected = baseline + (pitchDeg - baseline) * BIAS_RECENTER_ALPHA
         pitchWindow.fill(corrected)
         baselineDeg = corrected
-        biasRecenterCount++
-        // 重新计时，让它继续慢慢收敛，而不是一帧到位。
         biasSinceMs = nowMs
-        Log.i(
-            TAG,
-            "posture bias recentred #$biasRecenterCount: baseline ${
-                "%.1f".format(baseline)
-            }° -> ${"%.1f".format(corrected)}° (was holding ${"%.1f".format(magnitude)}° "
-                + "for ${BIAS_RECENTER_AFTER_MS}ms without reaching ${"%.1f".format(threshold)}°, "
-                + "lastReject=$reject)",
-        )
+        return corrected
     }
 
     /**
@@ -877,15 +932,16 @@ class HeadPoseDetector(
 
     // ----------------------------------------------------------- 偏航：左右扭头 --
 
-    private fun evaluateYaw(yawDeg: Float, nowMs: Long) {
+    private fun evaluateYaw(yawDeg: Float, nowMs: Long, distanceBoost: Float) {
         // 前面是前置摄像头，画面是镜像的：往自己右边扭头，画面里的脸是往它的左边转，
         // ML Kit 给出的偏航角符号因此与物理方向相反，这里先翻正。
         val delta = yawDeg - baselineYawDeg
         val mirrored = -delta
         val signedYaw = if (invertYaw) -mirrored else mirrored
         val magnitude = abs(signedYaw)
-        // 静止锁定同样作用于扭头，压制「手在脸旁晃动」这类横向噪声。
-        val turnThreshold = effectiveTurnThreshold()
+        // 静止锁定同样作用于扭头，压制「手在脸旁晃动」这类横向噪声；
+        // v5.4 起再乘距离系数，近距离下阈值同步放大。
+        val turnThreshold = turnThresholdDeg * thresholdScale(distanceBoost)
         lastSignedYaw = signedYaw
 
         if (magnitude >= DIAGNOSTIC_LOG_DEG && abs(signedYaw - lastLoggedYaw) >= 5f) {
@@ -940,7 +996,7 @@ class HeadPoseDetector(
         }
 
         // 最低速度门限，理由同俯仰：噪声有幅度但没有速度（近距离同样放大）。
-        if (!fast && velocity < MIN_YAW_VELOCITY * distanceBoost()) {
+        if (!fast && velocity < effectiveYawSpeedGate()) {
             clearTurn()
             yawSign = sign
             updateYawVelocitySample(signedYaw, nowMs)

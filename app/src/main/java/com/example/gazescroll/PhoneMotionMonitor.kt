@@ -77,8 +77,14 @@ class PhoneMotionMonitor(context: Context) : SensorEventListener {
         /** 判定成立后保持「手机在动」的时长（毫秒）。 */
         private const val LURCH_HOLD_MS = 500L
 
-        /** 峰值统计窗口：诊断行里的 `accel=` / `gyro=` 取这段时间内的最大值。 */
-        private const val PEAK_WINDOW_MS = 1000L
+        /**
+         * 峰值统计窗口：诊断行里的 `accel=` / `gyro=` 取这段时间内的最大值。
+         *
+         * v5.15 从 1000ms 放宽到 5000ms：`GazeDiag` 每 3 秒才打一行，
+         * 1 秒的窗口意味着诊断行**几乎永远读到 0**（v5.14 那次日志里 accel/gyro 整场都是 0.00，
+         * 走路、晃手机都看不见），白白浪费了调参依据。窗口必须 ≥ 诊断间隔。
+         */
+        private const val PEAK_WINDOW_MS = 5000L
 
         /** 没有线性加速度传感器时，重力低通系数（越小越稳）。 */
         private const val GRAVITY_ALPHA = 0.85f

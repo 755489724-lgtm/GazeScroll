@@ -409,6 +409,39 @@ class HeadPoseDetector(
          */
         private const val EYE_UNRELIABLE_MS = 120L
 
+        // ------------------- v5.15：区分「渐进动作」与「单帧跳变」 --
+
+        /**
+         * 判断「上一帧」是否还在这个时间窗内（v5.15）。实测帧间隔 63~116ms，取 250ms 留足余量。
+         */
+        private const val JUMP_RAMP_WINDOW_MS = 250L
+
+        /**
+         * 单帧跳变的确认时间（v5.15）：越过阈值后必须再撑过这么久才放行。
+         *
+         * ## 判据：看**前一帧**在不在动，而不是看这一帧跳得多高
+         *
+         * v5.14 用户复测反馈「②误触了 4 次以上，说实话不如上一版」。日志里两种形状一眼可分：
+         *
+         * ```
+         * 真实轻点头：… -0.2  0.0  0.3  -2.0  -2.8  -2.4  -2.7  -3.4   ← 前一帧已经在动
+         * 误触      ：… -0.5  0.4  -3.1                              ← 前一帧还在 +0.4
+         * ```
+         *
+         * 也就是：**真实动作是渐进的**（越过阈值那一帧的前一帧已经在向同一方向移动），
+         * 而噪声/眨眼造成的跳变是"前一帧还在 0 附近、一帧跳过去"。
+         *
+         * 所以规则是：**渐进动作零延迟**（照旧立刻触发，绝不拖慢手感），
+         * 只有"前一帧还没动"的跳变才要求**再撑过一帧**（本帧 ≥ 阈值、下一帧仍 ≥ 阈值）。
+         * 单帧跳变在下一帧必然掉回值以下 → 被 `below-threshold` 清掉，永远不会触发。
+         *
+         * ⚠️ **这不是 v5.9 那个被撤销的确认窗口**。v5.9 要求"最近 3 帧里至少 2 帧越过
+         * **完整阈值**"，于是轻点头被二次抬高门槛、用户反馈"要更大角度、要等 0.5 秒"。
+         * 这里只针对**跳变型**（渐进型完全不受影响），而且确认帧走的是正常阈值判定，
+         * 代价只有**跳变型动作**多一帧（约 90ms）。
+         */
+        private const val JUMP_CONFIRM_MS = 60L
+
         /** chinRatio 滑动中位数的窗口（约 0.6 秒 @15fps，只用于标定显示）。 */
         private const val CHIN_WINDOW_SAMPLES = 9
 
@@ -793,6 +826,10 @@ class HeadPoseDetector(
 
     /** 闭眼不可信期的截止时刻（v5.14），由 [eyeUnreliable] 维护。 */
     private var eyeUnreliableUntilMs = 0L
+
+    /** 上一帧的有符号俯仰与时刻（v5.15），用来判断这次越阈值是"渐进"还是"跳变"。 */
+    private var previousFramePitch = 0f
+    private var previousFramePitchAtMs = 0L
 
     /**
      * `faceRatio` 的 EMA 平滑值（v5.9），距离档判定的依据；日志/界面显示用。
@@ -1369,6 +1406,14 @@ class HeadPoseDetector(
                 if (!pitchArmed) Log.i(TAG, "ignored slow lean: rise ${riseMs}ms > ${motionWindowMs}ms")
             }
             if (!pitchArmed) return@run "slow-rise"
+            // v5.15：这次越阈值是「渐进动作」还是「单帧跳变」？见 JUMP_CONFIRM_MS。
+            // 渐进动作（前一帧已经在阈值以上方向移动）**零延迟**放行，
+            // 只有跳变型才要求再撑过一帧 —— 于是不会重犯 v5.9 拖慢全部动作的错。
+            val cameFromRamp = nowMs - previousFramePitchAtMs <= JUMP_RAMP_WINDOW_MS &&
+                abs(previousFramePitch) >= threshold * ONSET_FRACTION
+            if (!cameFromRamp && nowMs - pitchReachedAtMs < JUMP_CONFIRM_MS) {
+                return@run "jump-confirm"
+            }
             val fast = velocity >= FAST_PITCH_VELOCITY
             // v5.13：近距离俯视的**轻点头通道** —— 见 LIGHT_NOD_FAST_VELOCITY 的实机数据。
             val light = !fast && lightNodAllowed && velocity >= LIGHT_NOD_FAST_VELOCITY
@@ -1412,6 +1457,8 @@ class HeadPoseDetector(
             // 免得用户动作做到一半就被重置掉。
             if (reject == "below-onset") clearExcursion()
             updatePitchVelocitySample(signedPitch, nowMs)
+            previousFramePitch = signedPitch
+            previousFramePitchAtMs = nowMs
             return
         }
 
@@ -1421,6 +1468,9 @@ class HeadPoseDetector(
         triggerCount++
         cooldownUntilMs = nowMs + cooldownMs
         clearExcursion()
+        // v5.15：触发路径同样要维护"上一帧"的快照，否则冷却结束后的第一帧会被当成跳变。
+        previousFramePitch = signedPitch
+        previousFramePitchAtMs = nowMs
 
         // 回中锁定（v5.0）：记下这次的方向，反方向要等头部回到中性区才放行，
         // 这样「仰头之后把头放回去」不会被当成一次点头。v5.2 加了 400ms 兜底，

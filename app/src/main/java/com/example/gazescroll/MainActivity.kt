@@ -292,6 +292,7 @@ class MainActivity : AppCompatActivity() {
             when (cfg.blinkTriggerCount) {
                 1 -> R.id.rbBlink1
                 3 -> R.id.rbBlink3
+                4 -> R.id.rbBlink4
                 else -> R.id.rbBlink2
             }
         )
@@ -299,6 +300,9 @@ class MainActivity : AppCompatActivity() {
             val count = when (checkedId) {
                 R.id.rbBlink1 -> 1
                 R.id.rbBlink3 -> 3
+                // v5.19：新增 4 次档。实测用户"不由自主"的连续眨眼正好是 3 连眨
+                // （间隔 350ms / 583ms），而门槛是 3 次 —— 静止时的上滑误触就是它。
+                R.id.rbBlink4 -> 4
                 else -> 2
             }
             updateConfig { it.copy(blinkTriggerCount = count) }

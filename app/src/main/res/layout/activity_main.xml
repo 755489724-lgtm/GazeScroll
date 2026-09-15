@@ -82,6 +82,14 @@
                 android:text="@string/settings_blink_3"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbBlink4"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_blink_4"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
         </RadioGroup>
 
         <androidx.appcompat.widget.SwitchCompat

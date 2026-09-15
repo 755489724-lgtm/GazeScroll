@@ -37,7 +37,7 @@ class BlinkDetector(
         private const val TAG = "Blink"
 
         /** Supported consecutive-blink counts. */
-        val SUPPORTED_COUNTS = intArrayOf(1, 2, 3)
+        val SUPPORTED_COUNTS = intArrayOf(1, 2, 3, 4)
 
         /**
          * Nobody keeps their eyes shut for this long; if the "closed" verdict
@@ -309,7 +309,7 @@ class BlinkDetector(
         // Consecutive run: a gap inside the window extends it, anything else restarts it.
         pendingBlinks = if (gapMs in blinkGapMinMs..blinkGapMaxMs) pendingBlinks + 1 else 1
 
-        val needed = requiredBlinks.coerceIn(1, 3)
+        val needed = requiredBlinks.coerceIn(1, 4)
 
         // v5.11 诊断：每一次「被计数的眨眼」都留痕 —— 闭眼持续了多久、最深读到多少、
         // 与上一次眨眼的间隔、累计到几次。这是判断「有意眨眼 vs 不由自主的眨眼」

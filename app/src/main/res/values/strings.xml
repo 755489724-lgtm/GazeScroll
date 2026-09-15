@@ -25,6 +25,7 @@
     <string name="settings_blink_1">眨眼 1 次（最灵敏，容易误触）</string>
     <string name="settings_blink_2">眨眼 2 次（默认，推荐）</string>
     <string name="settings_blink_3">眨眼 3 次（最不容易误触）</string>
+    <string name="settings_blink_4">眨眼 4 次（躲开不由自主的连续眨眼）</string>
     <string name="settings_head_pose">开启「点头 / 仰头」翻页（默认关闭）</string>
     <string name="settings_head_invert">反转俯仰方向（点头仰头反了就打开）</string>
     <string name="settings_static_lock">静止防误触（人不动时自动抬高阈值，压掉静止误触）</string>

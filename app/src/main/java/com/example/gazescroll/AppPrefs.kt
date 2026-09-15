@@ -200,10 +200,10 @@ object AppPrefs {
 
     /** Number of consecutive blinks the user wants, clamped to 1..3. */
     fun blinkTriggerCount(ctx: Context): Int =
-        sp(ctx).getInt(K_BLINK_COUNT, GazeConfig().blinkTriggerCount).coerceIn(1, 3)
+        sp(ctx).getInt(K_BLINK_COUNT, GazeConfig().blinkTriggerCount).coerceIn(1, 4)
 
     fun setBlinkTriggerCount(ctx: Context, count: Int) {
-        sp(ctx).edit().putInt(K_BLINK_COUNT, count.coerceIn(1, 3)).apply()
+        sp(ctx).edit().putInt(K_BLINK_COUNT, count.coerceIn(1, 4)).apply()
     }
 
     /**

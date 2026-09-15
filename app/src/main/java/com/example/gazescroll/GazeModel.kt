@@ -239,7 +239,7 @@ data class GazeConfig(
             cooldownMs = cooldownMs.coerceIn(0L, 10_000L),
             smoothingAlpha = smoothingAlpha.coerceIn(0.05f, 1f),
             swipeDurationMs = swipeDurationMs.coerceIn(60L, 1000L),
-            blinkTriggerCount = blinkTriggerCount.coerceIn(1, 3),
+            blinkTriggerCount = blinkTriggerCount.coerceIn(1, 4),
             blinkClosedBelow = blinkClosedBelow.coerceIn(0.10f, 0.90f),
             blinkOpenAbove = blinkOpenAbove.coerceIn(0.20f, 0.99f),
             blinkClosedFrames = blinkClosedFrames.coerceIn(1, 6),

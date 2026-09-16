@@ -278,6 +278,16 @@ class MainActivity : AppCompatActivity() {
                 append("（左歪头 = ").append(if (cfg.tiltLeftVolumeUp) "调高" else "调低")
                 append("，右歪头 = ").append(if (cfg.tiltRightVolumeUp) "调高" else "调低")
                 append("）    已调音量 ").append(s.tiltVolumeSteps).append(" 档\n")
+                // v5.37：两秒间隔倒计时 + 最近一次作废原因 —— 用户说"判断不好时间"，
+                // 看着这个数字决定什么时候歪就不用猜了。
+                append("两秒动作间隔：")
+                if (s.gapRemainMs > 0L) {
+                    append("还差 ").append(s.gapRemainMs).append("ms（现在歪会作废）")
+                } else {
+                    append("已就绪（可以歪）")
+                }
+                if (s.tiltNotice.isNotEmpty()) append("    ").append(s.tiltNotice)
+                append('\n')
             }
 
             append("眨眼累计 ").append(s.blinkCount)

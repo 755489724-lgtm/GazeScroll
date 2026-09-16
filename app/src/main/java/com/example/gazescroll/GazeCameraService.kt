@@ -1226,6 +1226,14 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 tiltVolumeSteps = tiltVolumeSteps,
                 tiltDeg = tiltDetector?.tiltDeg,
                 tiltHeldMs = tiltDetector?.heldMs ?: 0L,
+                // v5.37：设置页实时显示"两秒间隔还剩多久"和最近的作废说明 ——
+                // 用户明确说"我判断不好时间"，这两个字段让他能看着数字决定什么时候歪。
+                gapRemainMs = if (lastActionAtMs == 0L) {
+                    0L
+                } else {
+                    (lastActionAtMs + ACTION_GAP_MS - now).coerceAtLeast(0L)
+                },
+                tiltNotice = tiltDetector?.lastNotice ?: "",
                 swipeProfile = AdaptiveSwipe.describe(
                     cfg.adaptiveSwipeEnabled,
                     AppStateManager.foregroundPackage,

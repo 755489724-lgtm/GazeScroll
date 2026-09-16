@@ -70,6 +70,10 @@ object GazeRuntime {
         val tiltDeg: Float? = null,
         /** 当前已经超过阈值多久（毫秒）；0 = 没超过。 */
         val tiltHeldMs: Long = 0L,
+        /** v5.37：距离"两秒动作间隔"走完还剩多久（0 = 现在可以做新动作）。 */
+        val gapRemainMs: Long = 0L,
+        /** v5.37：歪头通道最近一条说明（例如"上一次动作后还差 Nms 满两秒，这次歪头已作废"）。 */
+        val tiltNotice: String = "",
 
         /** 当前前台应用对应的纵向滑动配置（人话描述），设置页显示用。 */
         val swipeProfile: String = "",

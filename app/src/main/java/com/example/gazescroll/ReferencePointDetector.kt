@@ -227,6 +227,18 @@ class ReferencePointDetector {
         fun stateLine(): String =
             "$name dy=${"%+.3f".format(dy)} thr=${"%.3f".format(thresholdNow)} " +
                 "spd=${"%.5f".format(speed)} would=$wouldTriggerCount opt=$reject"
+
+        /**
+         * v5.24：把**两个关键点各自的位移**也打出来。
+         *
+         * v5.23 的数据显示：位移通道对"点头"方向一致率 68%（21/31），
+         * 对"仰头"却是 9 对 9（掷硬币）。要弄清是"鼻子/下巴哪一个更可靠"、
+         * 还是"仰头这个动作本来就不产生干净的竖直位移"，就必须把两者分开看 ——
+         * 合并成一个 dy 之后这些信息被平均掉了。
+         */
+        fun detailLine(): String =
+            "$name a=${"%+.3f".format(dyA)} b=${"%+.3f".format(dyB)} " +
+                "dy=${"%+.3f".format(dy)} opt=$reject"
     }
 
     /** 与设置页「反转俯仰方向」同步。 */
@@ -300,4 +312,7 @@ class ReferencePointDetector {
 
     /** 一行诊断：两条轨道都打出来。 */
     fun stateLine(): String = trackAbs.stateLine() + " | " + trackRel.stateLine()
+
+    /** v5.24：两条轨道各自的关键点明细（鼻子 a / 下巴 b），用于定位仰头方向为何不可靠。 */
+    fun detailLine(): String = trackAbs.detailLine() + " | " + trackRel.detailLine()
 }

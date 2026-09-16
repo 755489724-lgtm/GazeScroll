@@ -1302,6 +1302,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
                             "(pitchCh=${"%.1f".format(event.degrees)}° faceH=" +
                             "${faceRatioText()} nearDown=${ref.nearDownBoost} invert=${ref.invert})",
                     )
+                    // v5.24：关键点明细（鼻子 / 下巴各自的位移），用来定位仰头方向为何不可靠。
+                    Log.i("RefPoint", "$kind detail: ${ref.detailLine()}")
                 }
             }
             else -> Unit

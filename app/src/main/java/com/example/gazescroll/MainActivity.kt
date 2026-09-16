@@ -559,41 +559,41 @@ class MainActivity : AppCompatActivity() {
             renderTiltVolumeUi()
         }
 
-        // 触发角度（用户要求"得到一定的角度才触发"）。
+        // 触发角度（用户要求"得到一定的角度才触发"；v5.36 按"再灵敏一点"整体下调一档）。
         binding.rgTiltThreshold.check(
             when {
-                cfg.tiltThresholdDeg <= 12f -> R.id.rbTiltThr12
-                cfg.tiltThresholdDeg >= 22f -> R.id.rbTiltThr22
-                cfg.tiltThresholdDeg >= 18f -> R.id.rbTiltThr18
-                else -> R.id.rbTiltThr15
+                cfg.tiltThresholdDeg <= 10f -> R.id.rbTiltThr10
+                cfg.tiltThresholdDeg >= 20f -> R.id.rbTiltThr20
+                cfg.tiltThresholdDeg >= 16f -> R.id.rbTiltThr16
+                else -> R.id.rbTiltThr13
             },
         )
         binding.rgTiltThreshold.setOnCheckedChangeListener { _, checkedId ->
             val deg = when (checkedId) {
-                R.id.rbTiltThr12 -> 12f
-                R.id.rbTiltThr22 -> 22f
-                R.id.rbTiltThr18 -> 18f
-                else -> 15f
+                R.id.rbTiltThr10 -> 10f
+                R.id.rbTiltThr20 -> 20f
+                R.id.rbTiltThr16 -> 16f
+                else -> 13f
             }
             updateConfig { it.copy(tiltThresholdDeg = deg) }
             renderTiltVolumeUi()
         }
 
-        // 保持时长。
+        // 保持时长（v5.36 同样调灵一档，默认 0.3 秒）。
         binding.rgTiltHold.check(
             when {
-                cfg.tiltHoldMs <= 300L -> R.id.rbTiltHold300
-                cfg.tiltHoldMs >= 1000L -> R.id.rbTiltHold1000
+                cfg.tiltHoldMs <= 200L -> R.id.rbTiltHold200
                 cfg.tiltHoldMs >= 800L -> R.id.rbTiltHold800
-                else -> R.id.rbTiltHold500
+                cfg.tiltHoldMs >= 500L -> R.id.rbTiltHold500
+                else -> R.id.rbTiltHold300
             },
         )
         binding.rgTiltHold.setOnCheckedChangeListener { _, checkedId ->
             val hold = when (checkedId) {
-                R.id.rbTiltHold300 -> 300L
+                R.id.rbTiltHold200 -> 200L
+                R.id.rbTiltHold500 -> 500L
                 R.id.rbTiltHold800 -> 800L
-                R.id.rbTiltHold1000 -> 1000L
-                else -> 500L
+                else -> 300L
             }
             updateConfig { it.copy(tiltHoldMs = hold) }
             renderTiltVolumeUi()
@@ -633,8 +633,8 @@ class MainActivity : AppCompatActivity() {
             binding.tvTiltStep,
         )
         for (id in intArrayOf(
-            R.id.rbTiltThr12, R.id.rbTiltThr15, R.id.rbTiltThr18, R.id.rbTiltThr22,
-            R.id.rbTiltHold300, R.id.rbTiltHold500, R.id.rbTiltHold800, R.id.rbTiltHold1000,
+            R.id.rbTiltThr10, R.id.rbTiltThr13, R.id.rbTiltThr16, R.id.rbTiltThr20,
+            R.id.rbTiltHold200, R.id.rbTiltHold300, R.id.rbTiltHold500, R.id.rbTiltHold800,
             R.id.rbTiltStep1, R.id.rbTiltStep2, R.id.rbTiltStep3, R.id.rbTiltStep5,
         )) {
             binding.root.findViewById<android.view.View>(id)?.let { views.add(it) }

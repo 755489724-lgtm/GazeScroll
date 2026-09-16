@@ -1,44 +1,71 @@
 package com.example.gazescroll
 
 /**
- * v5.35 歪头（roll）判据的离线回归验证。
+ * v5.36 歪头（roll）判据的离线回归验证。
  *
- * 直接编译并运行**真实的** TiltDetector.kt（只把 android.util.Log 换成打印到 stdout 的桩），
- * 覆盖：触发 / 保持不够不触发 / 角度不够不触发 / 抖一下不触发 / 一次歪头只调一次 /
- * 回到中位才能再来 / 本人头姿偏移由基准线自动吸收 / 读数太歪时不动。
+ * 直接编译并运行**真实的** TiltDetector.kt（只把 android.util.Log 换成打印到 stdout 的桩）。
+ * Feeder 会像服务那样维护"上一次动作 + 2 秒"的禁判窗口，所以两秒规则也一起被验证。
  *
  * 跑法见同目录 run.ps1。
  */
-private class Feeder(threshold: Float = 18f, holdMs: Long = 500L) {
+private class Feeder(
+    threshold: Float = TiltDetector.DEFAULT_THRESHOLD_DEG,
+    holdMs: Long = TiltDetector.DEFAULT_HOLD_MS,
+) {
     val events = ArrayList<TiltEvent>()
     val detector = TiltDetector { events.add(it) }
-    private var now = 0L
+    var now = 0L
+
+    /** 上一次动作的时刻（服务里是 lastActionAtMs）。 */
+    private var lastActionAtMs = 0L
+
+    /** 服务里那条全局规则：动作的起手必须晚于"上一次动作 + 2 秒"。 */
+    var actionGapMs = 2000L
 
     init {
         detector.thresholdDeg = threshold
         detector.holdMs = holdMs
         detector.nearTier = true
+        detector.gapStartAfterMs = 0L
     }
 
     /** 把滚转角保持 [ms] 毫秒，每 ≤90ms 喂一帧（实测帧间隔 63~116ms）。 */
     fun feed(roll: Float?, ms: Long, step: Long = 90L) {
         var remaining = ms
         while (true) {
+            detector.gapStartAfterMs =
+                if (lastActionAtMs == 0L) 0L else lastActionAtMs + actionGapMs
+            val before = events.size
             detector.onRoll(roll, now)
+            if (events.size > before) lastActionAtMs = now
             if (remaining <= 0L) break
             val s = minOf(step, remaining)
             now += s
             remaining -= s
             if (remaining == 0L) {
+                detector.gapStartAfterMs =
+                    if (lastActionAtMs == 0L) 0L else lastActionAtMs + actionGapMs
+                val b2 = events.size
                 detector.onRoll(roll, now)
+                if (events.size > b2) lastActionAtMs = now
                 break
             }
         }
     }
 
-    /** 逐帧喂一串滚转角。 */
+    /** 逐帧喂一串滚转角（每个值 2 帧，因为 [feed] 是"保持 ms 毫秒"的语义）。 */
     fun frames(vararg rolls: Float, step: Long = 90L) {
         for (r in rolls) feed(r, step, step)
+    }
+
+    /** 精确喂**一帧**并前进一个帧间隔（用来测量启动阶段的行为）。 */
+    fun tick(roll: Float?) {
+        detector.gapStartAfterMs =
+            if (lastActionAtMs == 0L) 0L else lastActionAtMs + actionGapMs
+        val before = events.size
+        detector.onRoll(roll, now)
+        if (events.size > before) lastActionAtMs = now
+        now += 90L
     }
 }
 
@@ -56,43 +83,28 @@ private fun check(name: String, ok: Boolean, detail: String = "") {
 // ------------------------------------------------------------- 必须触发 ----
 
 private fun testBasicTilt() {
-    println("\n[1] 基本触发：头正着 → 歪到 +20° 保持 0.6 秒（阈值 18°/保持 0.5 秒）")
+    println("\n[1] 基本触发（v5.36 默认更灵敏：阈值 13°/保持 0.3 秒）：歪到 +14° 保持 0.4 秒")
     val f = Feeder()
     f.feed(0f, 1200)
-    f.feed(20f, 600)
+    f.feed(14f, 400)
     check("触发一次", f.events.size == 1, "触发 ${f.events.size} 次")
     check("方向是 +（右）", f.events.firstOrNull()?.side == TiltSide.RIGHT, "实际 ${f.events.firstOrNull()?.side}")
-    check("峰值 ≥ 20°", (f.events.firstOrNull()?.peakDeg ?: 0f) >= 20f, "峰值 ${f.events.firstOrNull()?.peakDeg}")
 }
 
 private fun testNegativeTilt() {
-    println("\n[2] 反方向：歪到 -20° → 左歪头")
+    println("\n[2] 反方向：歪到 −14° → 左歪头")
     val f = Feeder()
     f.feed(0f, 1200)
-    f.feed(-20f, 600)
+    f.feed(-14f, 400)
     check("触发一次", f.events.size == 1, "触发 ${f.events.size} 次")
     check("方向是 −（左）", f.events.firstOrNull()?.side == TiltSide.LEFT, "实际 ${f.events.firstOrNull()?.side}")
 }
 
-private fun testHoldOption1000() {
-    println("\n[3] 保持 1.0 秒档：歪 20° 只坚持 0.6 秒不触发，坚持 1.1 秒才触发")
-    val short = Feeder(holdMs = 1000L)
-    short.feed(0f, 1200)
-    short.feed(20f, 600)
-    short.feed(0f, 500)
-    check("0.6 秒不够 → 不触发", short.events.isEmpty(), "触发了 ${short.events.size} 次")
-
-    val long = Feeder(holdMs = 1000L)
-    long.feed(0f, 1200)
-    long.feed(20f, 1100)
-    check("1.1 秒 → 触发", long.events.size == 1, "触发 ${long.events.size} 次")
-}
-
 private fun testOffsetBaseline() {
-    println("\n[4] 本人平时就歪着头（基准线 −12°）：歪到 −32°（相对 20°）应触发")
+    println("\n[3] 本人平时就歪着头（基准线 −12°）：歪到 −26°（相对 14°）应触发")
     val f = Feeder()
-    f.feed(-12f, 3000)      // 自然头姿
-    f.feed(-32f, 600)       // 相对基准线歪 20°
+    f.feed(-12f, 3000)
+    f.feed(-26f, 400)
     check("触发一次", f.events.size == 1, "触发 ${f.events.size} 次")
     check(
         "基准线学到了 −12° 附近",
@@ -101,54 +113,117 @@ private fun testOffsetBaseline() {
     )
 }
 
-private fun testRearmNeedsNeutral() {
-    println("\n[5] 需要回正才能再来一次：歪着不动只触发一次，回正后再歪 → 第二次")
+private fun testHoldOptions() {
+    println("\n[4] 保持 0.8 秒档：歪 14° 只坚持 0.4 秒不触发，坚持 0.9 秒才触发")
+    val short = Feeder(holdMs = 800L)
+    short.feed(0f, 1200)
+    short.feed(14f, 400)
+    short.feed(0f, 500)
+    check("0.4 秒不够 → 不触发", short.events.isEmpty(), "触发了 ${short.events.size} 次")
+
+    val long = Feeder(holdMs = 800L)
+    long.feed(0f, 1200)
+    long.feed(14f, 900)
+    check("0.9 秒 → 触发", long.events.size == 1, "触发 ${long.events.size} 次")
+}
+
+// ------------------------------------------- 回正脖子 / 两秒规则（v5.36 重点）----
+
+private fun testReturnToNeutralDoesNotFire() {
+    println("\n[5] 歪着头停 6 秒再回正：基准线不能被带走，回正不能触发（v5.36 的根因修复）")
     val f = Feeder()
-    f.feed(0f, 1200)
-    f.feed(20f, 3000)       // 一直歪着
-    check("一直歪着只触发一次", f.events.size == 1, "触发 ${f.events.size} 次")
-    f.feed(0f, 800)         // 回正
-    f.feed(20f, 600)
-    check("回正后再歪 → 第二次", f.events.size == 2, "触发 ${f.events.size} 次")
+    f.feed(0f, 1500)
+    f.feed(20f, 6000)               // 一直歪着（old 代码这里会把基准线拖到 20°）
+    val firedWhileTilted = f.events.size
+    f.feed(0f, 2000)                // 回正
+    check("歪着时只触发一次", firedWhileTilted == 1, "触发了 $firedWhileTilted 次")
+    check("回正没有触发", f.events.size == 1, "触发 ${f.events.size} 次")
+    check(
+        "回正后倾斜角回到 0 附近（基准线没被带走）",
+        kotlin.math.abs(f.detector.tiltDeg ?: 99f) <= 2f,
+        "tilt=${f.detector.tiltDeg}",
+    )
+}
+
+private fun testOvershootOnReturn() {
+    println("\n[6] 回正时甩到另一边（+20° → −20°）：两秒内不许触发，等满两秒后重新歪才触发")
+    val f = Feeder()
+    f.feed(0f, 1500)
+    f.feed(20f, 500)                // 触发（t≈1.5s）
+    check("第一次触发", f.events.size == 1, "触发 ${f.events.size} 次")
+    f.feed(-20f, 900)               // 回正时甩到另一边（距上次动作 ~0.2~1.1s，在 2 秒内）
+    check("甩到另一边没触发（在 2 秒内）", f.events.size == 1, "触发 ${f.events.size} 次")
+    f.feed(0f, 1100)                // 回到中位并把两秒走满
+    f.feed(-20f, 500)               // 两秒后重新歪
+    check("两秒后重新歪 → 触发", f.events.size == 2, "触发 ${f.events.size} 次")
+}
+
+private fun testNoLeadTime() {
+    println("\n[7] 不能有提前量：起手卡在 1.99 秒（下一个动作在 2.1 秒）")
+    val f = Feeder()
+    f.feed(0f, 1500)
+
+    // 先制造一次动作（歪头触发）
+    f.feed(20f, 400)
+    check("基准动作触发", f.events.size == 1, "触发 ${f.events.size} 次")
+
+    // 回到中位，等到"距上次动作 1.9 秒"时开始歪，并一直歪过 2 秒
+    f.feed(0f, 1400)                // 距上次动作约 1.8~2.0s（含保持时间）
+    f.feed(20f, 1200)               // 起手落在两秒之内 → 整段作废，即使坚持超过两秒也不触发
+    check("起手早于两秒 → 即使坚持过两秒也不触发", f.events.size == 1, "触发 ${f.events.size} 次")
+}
+
+private fun testGapBlocksRepeatedTilt() {
+    println("\n[8] 两秒内连续歪两次：第二次必须等满两秒（回中位并重新歪）")
+    val f = Feeder()
+    f.feed(0f, 1500)
+    f.feed(20f, 400)                // 第一次触发
+    f.feed(0f, 500)                 // 回中位
+    f.feed(20f, 400)                // 距第一次约 0.9s → 起手太早，不算
+    check("第二次（在 2 秒内）不触发", f.events.size == 1, "触发 ${f.events.size} 次")
+    f.feed(0f, 1500)                // 等过两秒
+    f.feed(20f, 400)                // 第三次（2 秒后起手）
+    check("等满两秒后触发", f.events.size == 2, "触发 ${f.events.size} 次")
 }
 
 // ------------------------------------------------------------- 必须不触发 ----
 
 private fun testTooShort() {
-    println("\n[6] 抖一下头：歪 20° 只 200ms 就回正 → 不触发")
+    println("\n[9] 抖一下头：歪 14° 只 150ms 就回正 → 不触发")
     val f = Feeder()
     f.feed(0f, 1200)
-    f.feed(20f, 200)
+    f.feed(14f, 150)
     f.feed(0f, 1500)
     check("不触发", f.events.isEmpty(), "触发了 ${f.events.size} 次")
 }
 
 private fun testBelowThreshold() {
-    println("\n[7] 角度不够：歪 10°（< 18°）保持 3 秒 → 不触发")
+    println("\n[10] 角度不够：歪 8°（< 13°）保持 3 秒 → 不触发")
     val f = Feeder()
     f.feed(0f, 1200)
-    f.feed(10f, 3000)
+    f.feed(8f, 3000)
     check("不触发", f.events.isEmpty(), "触发了 ${f.events.size} 次")
 }
 
 private fun testSingleFrameSpike() {
-    println("\n[8] 单帧尖峰：一帧 30° 再立刻回正 → 不触发")
+    println("\n[11] 单帧尖峰：一帧 25° 再立刻回正 → 不触发")
     val f = Feeder()
     f.feed(0f, 1200)
-    f.frames(30f, 0f, 0f, 0f, 0f)
+    f.frames(25f, 0f, 0f, 0f, 0f)
     f.feed(0f, 1500)
     check("不触发", f.events.isEmpty(), "触发了 ${f.events.size} 次")
 }
 
 private fun testNotEnoughSamples() {
-    println("\n[9] 刚有脸（基准线还没攒够）时歪头 → 不触发")
+    println("\n[12] 刚有脸（基准线还不到 8 帧）时歪头 → 不判定（不触发）")
     val f = Feeder()
-    f.frames(0f, 0f, 0f, 20f, 20f, 20f, 20f, 20f)   // 只有 3 帧基准就歪
+    repeat(3) { f.tick(0f) }
+    repeat(4) { f.tick(20f) }
     check("不触发", f.events.isEmpty(), "触发了 ${f.events.size} 次")
 }
 
 private fun testInsaneTilt() {
-    println("\n[10] 读数太歪（70°，例如整个人躺下）→ 不触发且重置")
+    println("\n[13] 读数太歪（70°，例如整个人躺下）→ 不触发且重置")
     val f = Feeder()
     f.feed(0f, 1200)
     f.feed(70f, 2000)
@@ -156,23 +231,35 @@ private fun testInsaneTilt() {
 }
 
 private fun testFaceLostResets() {
-    println("\n[11] 歪到一半丢脸（null）→ 不触发")
+    println("\n[14] 歪到一半丢脸（null）→ 不触发")
     val f = Feeder()
     f.feed(0f, 1200)
-    f.feed(20f, 300)
-    f.feed(null, 400)       // 丢脸
-    f.feed(20f, 300)
+    f.feed(20f, 200)
+    f.feed(null, 400)
+    f.feed(20f, 200)
     check("不触发", f.events.isEmpty(), "触发了 ${f.events.size} 次")
 }
 
+private fun testOneShotPerEpisode() {
+    println("\n[15] 一直歪着只触发一次（不会一直调音量）")
+    val f = Feeder()
+    f.feed(0f, 1500)
+    f.feed(20f, 4000)
+    check("只触发一次", f.events.size == 1, "触发 ${f.events.size} 次")
+}
+
 fun main() {
-    println("=== TiltDetector v5.35 离线回放验证（真实代码 + 打印版 Log 桩）===")
+    println("=== TiltDetector v5.36 离线回放验证（真实代码 + 打印版 Log 桩）===")
     println("--- 必须触发 ---")
     testBasicTilt()
     testNegativeTilt()
-    testHoldOption1000()
     testOffsetBaseline()
-    testRearmNeedsNeutral()
+    testHoldOptions()
+    println("--- 回正脖子 / 两秒规则（v5.36 重点）---")
+    testReturnToNeutralDoesNotFire()
+    testOvershootOnReturn()
+    testNoLeadTime()
+    testGapBlocksRepeatedTilt()
     println("--- 必须不触发 ---")
     testTooShort()
     testBelowThreshold()
@@ -180,6 +267,7 @@ fun main() {
     testNotEnoughSamples()
     testInsaneTilt()
     testFaceLostResets()
+    testOneShotPerEpisode()
     println("\n=== 结果：${if (failures == 0) "全部通过" else "$failures 项失败"} ===")
     if (failures != 0) throw IllegalStateException("$failures 项失败")
 }

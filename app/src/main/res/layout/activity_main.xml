@@ -702,34 +702,34 @@
             android:orientation="vertical">
 
             <RadioButton
-                android:id="@+id/rbTiltThr12"
+                android:id="@+id/rbTiltThr10"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_12"
+                android:text="@string/settings_tilt_thr_10"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbTiltThr15"
+                android:id="@+id/rbTiltThr13"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_15"
+                android:text="@string/settings_tilt_thr_13"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbTiltThr18"
+                android:id="@+id/rbTiltThr16"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_18"
+                android:text="@string/settings_tilt_thr_16"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbTiltThr22"
+                android:id="@+id/rbTiltThr20"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_22"
+                android:text="@string/settings_tilt_thr_20"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
         </RadioGroup>
@@ -748,6 +748,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbTiltHold200"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_tilt_hold_200"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
 
             <RadioButton
                 android:id="@+id/rbTiltHold300"
@@ -770,14 +778,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/settings_tilt_hold_800"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbTiltHold1000"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_hold_1000"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
         </RadioGroup>

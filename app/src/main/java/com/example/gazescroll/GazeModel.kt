@@ -182,15 +182,17 @@ data class GazeConfig(
 
     /**
      * 触发角度（度）：相对本人头姿基准线的倾斜必须超过它。
-     * 选项 [TiltDetector.THRESHOLD_OPTIONS]：12 / 15 / 18（默认）/ 22。
+     * 选项 [TiltDetector.THRESHOLD_OPTIONS]：10 / **13（默认）** / 16 / 20。
+     * v5.36 按用户"再灵敏一点"的要求整体下调（原来默认 18°）。
      */
-    val tiltThresholdDeg: Float = 18f,
+    val tiltThresholdDeg: Float = TiltDetector.DEFAULT_THRESHOLD_DEG,
 
     /**
      * 超过阈值后要再保持多久（毫秒）才触发。
-     * 选项 [TiltDetector.HOLD_OPTIONS]：300 / 500（默认）/ 800 / 1000。
+     * 选项 [TiltDetector.HOLD_OPTIONS]：0.2 / **0.3（默认）** / 0.5 / 0.8 秒。
+     * v5.36 同样调灵一档（原来默认 0.5 秒）。
      */
-    val tiltHoldMs: Long = 500L,
+    val tiltHoldMs: Long = TiltDetector.DEFAULT_HOLD_MS,
 
     /**
      * 一次歪头调几档音量（1 档 = 按一次音量键，小米 13 上 = 音量索引 10）。

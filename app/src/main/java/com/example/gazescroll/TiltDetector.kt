@@ -44,18 +44,21 @@ data class TiltEvent(
  * "有意单闭"与"低头眯眼"：绝对阈值试过 0.70/0.65/0.55，合眼快慢（onset）真单闭
  * 55~1732ms 与误触 1.6~3.2s 完全重叠。用户最终决定放弃这条通道，改用**歪头**。
  *
- * ## 判据
+ * ## 判据（v5.36）
  *
- *  1. **相对本人基准线的倾斜**：`tilt = roll − baseline`。基准线是最近
- *     [BASELINE_SAMPLES] 帧滚转角的中位数（与头部通道的俯仰基准线同一套做法），
- *     所以**天生歪着头看手机的人不会被误触发**，也自动跟随换姿势。
- *  2. **必须真的歪到一定角度**：`|tilt| ≥ thresholdDeg`（用户可在设置里选 12/15/18/22°，
- *     默认 18°）。用户原话：「仰头得到一定的角度，才会触发」。
- *  3. **并且保持 [holdMs]**（用户可在设置里选 0.3/0.5/0.8/1.0 秒，默认 0.5 秒）——
- *     抖一下头、甩一下头发不会触发。
- *  4. **一次歪头只调一组档位**：触发后必须**回到中位**（`|tilt| ≤ 0.4×阈值`）并保持
- *     [NEUTRAL_REARM_MS] 之后，才允许下一次。歪着头不动不会一直调。
- *  5. 距基准线太远（`|tilt| > [TILT_SANITY_DEG]`，例如整个人躺下/侧卧）时视为不可信，
+ *  1. **相对本人基准线的倾斜**：`tilt = roll − baseline`。基准线是最近 [BASELINE_SAMPLES] 帧
+ *     滚转角的中位数，所以**天生歪着头看手机的人不会被误触发**，也自动跟随换姿势。
+ *     **v5.36 起：歪着的时候不更新基准线**（只在"头基本在中间"时喂样本）——
+ *     否则歪着头不动几秒，中位数会跟着歪过去，回正时就变成反方向的一大坨倾斜。
+ *  2. **必须真的歪到一定角度**：`|tilt| ≥ thresholdDeg`（设置里可选 10 / **13（默认）** /
+ *     16 / 20°，v5.36 整体调灵一档）。
+ *  3. **并且保持 [holdMs]**（可选 0.2 / **0.3（默认）** / 0.5 / 0.8 秒）。
+ *  4. **一次歪头只调一组档位**：触发后必须**回到中位带**（`|tilt| ≤ 0.4×阈值`）并保持
+ *     [NEUTRAL_REARM_MS]（400ms）之后，才允许下一次 —— 顺手挡住"回正时甩到另一边"。
+ *  5. **两秒内不认第二次动作（v5.36，用户要求）**：`上一次任何动作 + 2 秒` 之前**起手**
+ *     的歪头整段作废（[gapStartAfterMs]）。**不能有提前量**：卡在 1.99 秒那一下不算，
+ *     必须等满两秒之后**新起**的歪头才判定。
+ *  6. 距基准线太远（`|tilt| > [TILT_SANITY_DEG]`，例如整个人躺下/侧卧）时视为不可信，
  *     不做判定并重置状态。
  *
  * 本类不触发任何 Android API（只打日志），纯逻辑，可以用 tools/tilt-replay 离线回放。
@@ -73,17 +76,31 @@ class TiltDetector(
         /** 基准线可用前至少要有这么多帧。 */
         private const val MIN_SAMPLES = 8
 
-        /** 回归中位所需的"回到中位"持续时长。 */
-        private const val NEUTRAL_REARM_MS = 250L
+        /**
+         * 只有"头基本在中间"（|tilt| ≤ 阈值）时才把这一帧喂进基准线窗口（v5.36）。
+         *
+         * 这是 v5.36 修掉「回正脖子时误触发」的关键：基准线是 45 帧中位数，
+         * 如果**歪着头不动**几秒，中位数会跟着歪过去 —— 等你回正时，
+         * "相对基准线"的倾斜就变成了反方向的一大坨，于是回正的动作被判成反方向歪头。
+         * 现在歪着的时候不更新基准线，基准线只会跟着"平时的头姿"走（见 [onRoll]）。
+         */
+        /** 回到中位后必须保持这么久，才允许下一次歪头（v5.36：250 → 400ms）。 */
+        private const val NEUTRAL_REARM_MS = 400L
 
         /** 中位带 = 阈值 × 这个系数（回差，避免在阈值附近反复触发）。 */
         private const val NEUTRAL_FACTOR = 0.4f
 
-        /** 触发所需时长的可选档位（毫秒）。 */
-        val HOLD_OPTIONS = longArrayOf(300L, 500L, 800L, 1000L)
+        /** 触发所需时长的可选档位（毫秒）。v5.36：整体调灵一档。 */
+        val HOLD_OPTIONS = longArrayOf(200L, 300L, 500L, 800L)
 
-        /** 触发角度的可选档位（度）。 */
-        val THRESHOLD_OPTIONS = floatArrayOf(12f, 15f, 18f, 22f)
+        /** 触发角度的可选档位（度）。v5.36：整体调灵一档（默认 13°）。 */
+        val THRESHOLD_OPTIONS = floatArrayOf(10f, 13f, 16f, 20f)
+
+        /** 默认触发角度（度）。 */
+        const val DEFAULT_THRESHOLD_DEG = 13f
+
+        /** 默认保持时长（毫秒）。 */
+        const val DEFAULT_HOLD_MS = 300L
 
         /** 超过这个倾斜幅度就认为脸/读数是歪的（躺下、侧卧），不做判定。 */
         private const val TILT_SANITY_DEG = 55f
@@ -91,11 +108,22 @@ class TiltDetector(
 
     /** 触发角度（度）。服务每帧同步成用户选的档位。 */
     @Volatile
-    var thresholdDeg: Float = 18f
+    var thresholdDeg: Float = DEFAULT_THRESHOLD_DEG
 
     /** 需要保持多久（毫秒）。 */
     @Volatile
-    var holdMs: Long = 500L
+    var holdMs: Long = DEFAULT_HOLD_MS
+
+    /**
+     * 「这一次歪头必须在这个时刻之后**才开始**」（v5.36）。
+     *
+     * 服务每帧同步成 `上一次任何动作的时刻 + 2 秒`（用户要求：上一秒做过动作就必须强制等满
+     * 两秒，而且**不能有提前量** —— 卡在 1.99 秒那一下不算，必须等满两秒之后**新起**的歪头
+     * 才判定）。实现方式是：**超过阈值的那一帧（起手）必须晚于这个时刻**，早了就整段作废、
+     * 必须回到中位再重新歪。
+     */
+    @Volatile
+    var gapStartAfterMs: Long = 0L
 
     /** 距离档（只用于日志）。 */
     @Volatile
@@ -144,6 +172,12 @@ class TiltDetector(
     private var firedThisEpisode = false
     private var episodePeakDeg = 0f
 
+    /** 本段是不是"起手太早"（还没等满两秒）→ 整段作废（v5.36）。 */
+    private var episodeGapBlocked = false
+
+    /** 「起手太早」是否已经打过日志（每段只打一次）。 */
+    private var reportedGapBlock = false
+
     /** 回到中位之后再过这么久才允许下一次。 */
     private var neutralSinceMs = 0L
     private var neutralBeforeMs = 0L
@@ -175,6 +209,8 @@ class TiltDetector(
         beyondSide = 0
         firedThisEpisode = false
         episodePeakDeg = 0f
+        episodeGapBlocked = false
+        reportedGapBlock = false
         neutralSinceMs = 0L
         neutralBeforeMs = 0L
         lastFrameAtMs = 0L
@@ -198,10 +234,19 @@ class TiltDetector(
         }
         lastFrameAtMs = nowMs
 
-        // 基准线（中位数）—— 与头部通道的俯仰基准线同一套做法。
-        ring[ringIndex] = rollDeg
-        ringIndex = (ringIndex + 1) % BASELINE_SAMPLES
-        if (ringCount < BASELINE_SAMPLES) ringCount++
+        val thresholdNow = thresholdDeg.coerceIn(4f, 45f)
+        // v5.36：只有"头基本在中间"时才把读数喂进基准线窗口 —— 歪着头不动不会把基准线带走，
+        // 于是回正时不会凭空出现"反方向的大倾斜"。（窗口没填满前一律喂，先把基准线建起来。）
+        val previousTilt = tiltDeg
+        // 只有"头基本在中间"时才更新基准线（窗口还没建起来时一律喂，先把基准线立起来）。
+        // 注意这里**不能**再带 `ringCount < BASELINE_SAMPLES` 当例外：否则刚启动就歪着头时，
+        // 窗口会被歪着的样本填满，基准线照样被带走（v5.36 离线回放第 5 项就是这么抓到的）。
+        val trackBaseline = previousTilt == null || kotlin.math.abs(previousTilt) <= thresholdNow
+        if (trackBaseline) {
+            ring[ringIndex] = rollDeg
+            ringIndex = (ringIndex + 1) % BASELINE_SAMPLES
+            if (ringCount < BASELINE_SAMPLES) ringCount++
+        }
         if (ringCount < MIN_SAMPLES) return
         val base = median(ring, ringCount)
         baselineDeg = base
@@ -215,7 +260,7 @@ class TiltDetector(
             return
         }
 
-        val threshold = thresholdDeg.coerceIn(4f, 45f)
+        val threshold = thresholdNow
         val neutral = threshold * NEUTRAL_FACTOR
 
         if (kotlin.math.abs(tilt) <= neutral) {
@@ -227,6 +272,7 @@ class TiltDetector(
                 beyondSinceMs = 0L
                 beyondSide = 0
                 heldMs = 0L
+                episodeGapBlocked = false
                 peakDeg = maxOf(peakDeg, episodePeakDeg)
                 episodePeakDeg = 0f
             }
@@ -249,6 +295,7 @@ class TiltDetector(
                 beyondSinceMs = 0L
                 beyondSide = 0
                 heldMs = 0L
+                episodeGapBlocked = false
             }
             return
         }
@@ -258,10 +305,22 @@ class TiltDetector(
             beyondSinceMs = nowMs
             beyondSide = side
             heldMs = 0L
+            // v5.36：**起手**必须晚于"上一次动作 + 2 秒"。卡在 1.99 秒那一下不算 ——
+            // 这一段整段作废（不能有提前量），必须回到中位、重新歪一次。
+            episodeGapBlocked = nowMs < gapStartAfterMs
+            if (episodeGapBlocked && !reportedGapBlock) {
+                reportedGapBlock = true
+                val remain = gapStartAfterMs - nowMs
+                Log.i(
+                    TAG,
+                    "${if (side < 0) TiltSide.LEFT.label else TiltSide.RIGHT.label} " +
+                        "起手太早（还剩 ${remain}ms 才满两秒）→ 这一段不算，回正后重新歪",
+                )
+            }
         }
         heldMs = nowMs - beyondSinceMs
 
-        if (!firedThisEpisode && heldMs >= holdMs) {
+        if (!firedThisEpisode && !episodeGapBlocked && heldMs >= holdMs) {
             firedThisEpisode = true
             triggerCount++
             val label = if (side < 0) TiltSide.LEFT.label else TiltSide.RIGHT.label
@@ -280,15 +339,6 @@ class TiltDetector(
                 ),
             )
         }
-    }
-
-    /** 拒绝留痕（服务侧在通道被闸门挡住时调用，方便核对"为什么没反应"）。 */
-    fun logRejectedShort(side: TiltSide, peak: Float, held: Long, threshold: Float) {
-        Log.i(
-            TAG,
-            "${side.label} 只保持 ${held}ms（峰值 ${"%.1f".format(-peak)}°，阈值 ${"%.0f".format(threshold)}°）" +
-                " → 不触发",
-        )
     }
 
     private fun median(values: FloatArray, count: Int): Float {

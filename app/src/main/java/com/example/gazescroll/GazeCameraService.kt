@@ -81,6 +81,17 @@ class GazeCameraService : LifecycleService() {
         /** Analysis resolution (spec: low, to keep the sensor and ML Kit cheap). */
         private val ANALYSIS_SIZE = Size(480, 360)
 
+        /**
+         * 「上一个动作之后必须强制等这么久才允许下一个动作」（v5.36，用户要求）。
+         *
+         * 用户原话：「加一个全局，就是上一秒你做了什么动作，必须强制等两秒，才能触发，
+         * 而且不能提前量……必须是 2 秒后作出的动作，才能判定」。
+         *
+         * 语义（**没有提前量**）：动作的**起手**必须晚于 `上一次动作 + 2 秒`。
+         * 卡在 1.99 秒那一下不算，必须等满两秒之后新起的动作才判定。
+         */
+        private const val ACTION_GAP_MS = 2000L
+
         /** How often the GazeDiag pipeline snapshot is logged. */
         private const val DIAGNOSTIC_INTERVAL_MS = 3000L
 
@@ -279,6 +290,15 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
     /** 上一帧是否处于"歪出中位带"状态（v5.35），用来在歪头结束时重学头部基准线。 */
     private var tiltGateWasActive = false
+
+    /**
+     * 上一次任何动作（翻页 / 调音量 / 张嘴点击）的时刻（v5.36）。
+     *
+     * 歪头通道用它算 [ACTION_GAP_MS]：动作的**起手**必须晚于这个时刻 + 2 秒，
+     * 严格按用户要求执行（没有提前量）。
+     */
+    @Volatile
+    private var lastActionAtMs = 0L
 
     /** 手机自身运动监测（v5.13）：区分「点头」与「急停/急刹」。 */
     private var phoneMotion: PhoneMotionMonitor? = null
@@ -1069,6 +1089,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 if (!gate && cfg.tiltVolumeEnabled) {
                     tilt.thresholdDeg = cfg.tiltThresholdDeg.coerceIn(8f, 40f)
                     tilt.holdMs = cfg.tiltHoldMs.coerceIn(200L, 2000L)
+                    // v5.36：起手必须晚于"上一个动作 + 2 秒"（没有提前量）。
+                    tilt.gapStartAfterMs =
+                        if (lastActionAtMs == 0L) 0L else lastActionAtMs + ACTION_GAP_MS
                     tilt.nearTier = if (headAxisAvailable) headPoseDetector?.nearDistance else null
                     tilt.onRoll(frame.headEulerAngleZ, now)
                     tilting = tilt.isBeyondNeutral()
@@ -1248,6 +1271,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
         // 触发来源（v5.3）：诊断行里直接显示「上一次翻页是谁触发的」。
         // 用户反馈「30cm 静止疯狂误触」时，光看触发次数无法区分是眨眼还是点头，
         // 这一条让问题当场可定位。
+        // v5.36：任何动作都记进全局动作时钟（歪头通道的"两秒"就是按它算的）。
+        lastActionAtMs = now
         lastTriggerSource = reason.substringBefore(':')
         lastTriggerReason = reason
         lastTriggerAtMs = SystemClock.elapsedRealtime()
@@ -1420,6 +1445,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
      * 也**不设置任何暂停状态**：眨眼、点头、左右扭头在张嘴之后照常工作。
      */
     private fun onMouthOpen() {
+        // v5.36：张嘴点击也算"动作"，记进全局动作时钟（之后 2 秒内不认新动作）。
+        lastActionAtMs = SystemClock.elapsedRealtime()
         if (!SwipeInjector.isReady(this)) {
             mouthTapCount++
             GazeRuntime.publish {
@@ -1477,6 +1504,11 @@ private const val REF_LOG_INTERVAL_MS = 400L
     private fun onTiltVolume(event: TiltEvent) {
         val cfg = GazeRuntime.config
         val up = if (event.side == TiltSide.LEFT) cfg.tiltLeftVolumeUp else cfg.tiltRightVolumeUp
+        // v5.36：动作时刻立刻记账，并把翻页闸门一起推到"2 秒后" —— 全局两秒不该只关住
+        // 音量这一条通道（用户要求"上一秒你做了什么动作，必须强制等两秒才能触发"）。
+        val triggeredAt = SystemClock.elapsedRealtime()
+        lastActionAtMs = triggeredAt
+        globalGate.extendCooldown(triggeredAt, ACTION_GAP_MS)
         // 触发发生在帧线程上：姿势读数必须当场抓下来，注入线程上已经没有这一帧了。
         val pose = "roll=${lastFrameRollDeg?.let { "%+.1f".format(it) } ?: "-"}°" +
             " pitch=${lastFramePitchDeg?.let { "%.1f".format(it) } ?: "-"}°" +
@@ -1656,6 +1688,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 "${if (cfg.tiltRightVolumeUp) "R=up" else "R=down"}" +
                 " ${tiltDetector?.stateLine() ?: "tilt=-"}" +
                 " tiltSteps=$tiltVolumeSteps" +
+                // v5.36：全局动作间隔还剩多久（0 = 现在可以做新动作）。
+                " gapRemain=${if (lastActionAtMs == 0L) 0L else (lastActionAtMs + ACTION_GAP_MS - now).coerceAtLeast(0L)}ms" +
                 // v5.31：基准线重建期禁触发的状态（丢脸回来 / 重绑后约 1.1 秒内为 true）。
                 " baselineSettling=${headPoseDetector?.baselineSettling ?: false}" +
                 " triggers=${GazeRuntime.snapshot.triggers}" +

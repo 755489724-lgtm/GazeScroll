@@ -106,6 +106,26 @@ class GlobalTriggerGate {
         lastTriggerAtMs = 0L
     }
 
+    /**
+     * 从外部把冷却**延长**到 `nowMs + ms`（v5.36）。
+     *
+     * 用途：歪头调音量也属于"动作"，用户要求"上一秒做过任何动作都必须强制等两秒"。
+     * 调音量并没有注入翻页手势，所以它不会走 [allow]；用这个方法把翻页闸门的冷却
+     * 推到同一时刻，两边就不会在 2 秒内各自动作。
+     *
+     * 语义是"只延长、不缩短"：已经在冷却里、且剩余时间更长时保持原样。
+     * 闸门关掉时（用户显式关掉全局冷却）不做任何事 —— 尊重用户的开关。
+     */
+    @Synchronized
+    fun extendCooldown(nowMs: Long, ms: Long) {
+        if (!enabled) return
+        val until = nowMs + ms
+        if (until > cooldownUntilMs) {
+            cooldownUntilMs = until
+            lastTriggerAtMs = nowMs
+        }
+    }
+
     companion object {
         /** 默认冷却时长：1.5 秒（与需求一致）。 */
         const val DEFAULT_COOLDOWN_MS = 1500L

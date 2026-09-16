@@ -101,22 +101,22 @@
     <string name="settings_tilt_switch">启用「歪头控音量」</string>
     <string name="settings_tilt_left_up">左歪头：调高音量（关闭 = 调低）</string>
     <string name="settings_tilt_right_up">右歪头：调高音量（关闭 = 调低）</string>
-    <string name="settings_tilt_threshold">触发角度（歪到这么多度才开始算）</string>
-    <string name="settings_tilt_thr_12">12°（最灵敏）</string>
-    <string name="settings_tilt_thr_15">15°</string>
-    <string name="settings_tilt_thr_18">18°（默认，推荐）</string>
-    <string name="settings_tilt_thr_22">22°（最防误触）</string>
-    <string name="settings_tilt_hold">保持时间（超过角度后还要坚持这么久）</string>
-    <string name="settings_tilt_hold_300">0.3 秒（最快）</string>
-    <string name="settings_tilt_hold_500">0.5 秒（默认）</string>
-    <string name="settings_tilt_hold_800">0.8 秒</string>
-    <string name="settings_tilt_hold_1000">1.0 秒（最防误触）</string>
+    <string name="settings_tilt_threshold">灵敏度 · 触发角度（歪到这么多度才开始算）</string>
+    <string name="settings_tilt_thr_10">10°（最灵敏）</string>
+    <string name="settings_tilt_thr_13">13°（默认，推荐）</string>
+    <string name="settings_tilt_thr_16">16°</string>
+    <string name="settings_tilt_thr_20">20°（最防误触）</string>
+    <string name="settings_tilt_hold">灵敏度 · 保持时间（超过角度后还要坚持这么久）</string>
+    <string name="settings_tilt_hold_200">0.2 秒（最快）</string>
+    <string name="settings_tilt_hold_300">0.3 秒（默认）</string>
+    <string name="settings_tilt_hold_500">0.5 秒</string>
+    <string name="settings_tilt_hold_800">0.8 秒（最防误触）</string>
     <string name="settings_tilt_step">每次调整多少音量（1 档 = 按一次音量键）</string>
     <string name="settings_tilt_step_1">1 档（默认，和按一次音量键一样）</string>
     <string name="settings_tilt_step_2">2 档</string>
     <string name="settings_tilt_step_3">3 档</string>
     <string name="settings_tilt_step_5">5 档（一大步）</string>
-    <string name="settings_tilt_hint">把头往一边歪（像把耳朵压向肩膀），歪到设定的角度并坚持住 —— 音量就调高或调低。默认：左歪头 = 调高、右歪头 = 调低；上面两个开关可以各自反过来拨（如果左右和你要的相反，就把两个开关都拨一下）。\n判定是「歪到角度 + 坚持住」：倾斜角按「你本人平时的头姿」自动校准（最近几秒的中位数当基准线），所以要歪出这个角度才算；再坚持上面选的时长才触发，抖一下头、甩头发不会触发。\n防连发：一次歪头只调一次，必须把头歪回中间才算下一次（一直歪着头不会把音量一路推到底）。\n歪头期间翻页判定会暂停（歪头会让俯仰读数串扰几度，近距离俯视的点头阈值只有 2.5°，不暂停就会"歪头顺带翻一页"）；歪回中间后自动重新对齐。\n这是控制指令：不受防误触冷却限制，也不会占用翻页冷却；不需要无障碍服务 —— 音量由系统音频通道直接调节。</string>
+    <string name="settings_tilt_hint">把头往一边歪（像把耳朵压向肩膀），歪到设定的角度并坚持住 —— 音量就调高或调低。默认：左歪头 = 调高、右歪头 = 调低；上面两个开关可以各自反过来拨（如果左右和你要的相反，就把两个开关都拨一下）。\n判定是「歪到角度 + 坚持住」：倾斜角按「你本人平时的头姿」自动校准，所以歪出头姿的角度才算；再坚持上面选的时长才触发，抖一下头、甩头发不会触发。歪着头不动时校准会暂停，所以回正脖子不会被误判成反方向的歪头。\n防连发：① 一次歪头只调一次，必须把头歪回中间并停稳一下才算下一次；② **任何动作（翻页 / 调音量 / 张嘴点击）之后都强制等满 2 秒**，而且不能有提前量 —— 卡在 1.99 秒那一下不算，必须等满两秒之后重新歪才算。\n歪头期间翻页判定会暂停（歪头会让俯仰读数串扰几度，近距离俯视的点头阈值只有 2.5°）；调完音量后 2 秒内也不会翻页。\n这是控制指令：不受防误触冷却限制，也不会占用翻页冷却；不需要无障碍服务 —— 音量由系统音频通道直接调节。</string>
 
 
     <string name="settings_live_title">实时数值（用来挑灵敏度）</string>

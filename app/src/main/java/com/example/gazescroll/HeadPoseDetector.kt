@@ -436,10 +436,36 @@ class HeadPoseDetector(
          * —— 近距离速度门限是 `0.012×2 = 0.024`，**比 0.02 还高**，所以那条路实际上永远走不通。
          * 结果就是"速度不够快的点头一律无效"，而轻点头天然就是慢的。
          *
-         * 这个门槛只作用于**近距离 + 俯视 + 低头**（与 ×0.50 增益完全同一条件），
+         * 这个门槛只作用于**近距离 + 俯视 + 低头**（与 ×0.42 增益完全同一条件），
          * 远距离与仰头方向一概不受影响。
+         *
+         * ## v5.26：门槛从 0.009 拉回 **0.020**（= 标准快通道门槛）
+         *
+         * 用户复测 v5.25 时自己给出了解法，而且是对的：
+         *
+         * > 「点头和仰头你单独写个判定的方式，比如我真要下滑，我就用**快速点头**，
+         * > 而不是**慢慢**的点头。有时候慢慢的点头，还是会被误判，所以要改一改。」
+         *
+         * 实机数据证实了这一点：**慢动作期间基准线/参考点会跟着跑，方向就会飘** ——
+         * 日志里那些"仰头被判成下拉"的事件，位移通道读到的起点（settledPitch）已经过期
+         * （例如 `light=yes(16.5→-12.6)`，29° 的"位移"其实是换了一次姿势），
+         * 而它们的延迟都很大（807ms / 588ms / 544ms）—— 一眼可见是慢动作。
+         *
+         * 快速动作一瞬间完成，基准线与参考点来不及漂，所以方向是可靠的。
+         * 于是两个方向统一要求"够快"，慢动作一律不触发 —— 这也让手势变得**可学习**：
+         * 「快速点头 = 下滑、快速仰头 = 上滑」。
          */
-        private const val LIGHT_NOD_FAST_VELOCITY = 0.009f
+        private const val LIGHT_NOD_FAST_VELOCITY = 0.020f
+
+        /**
+         * 轻通道允许的最大位移（v5.26）。
+         *
+         * 参考点（[settledPitch]）只在头部稳定时更新，所以一次大范围姿势变化之后它可能"过期"：
+         * 实测出现过 `light=yes(16.5→-12.6)` —— 29° 的所谓"位移"根本不是点头，是换姿势，
+         * 却因为位移巨大而轻松越过阈值。加上这个上限（12°）之后，这类事件不再走轻通道，
+         * 只能走标准通道（要求快、且阈值本就是用户设定值）。
+         */
+        private const val LIGHT_MAX_DISPLACEMENT_DEG = 12f
 
         /**
          * 轻点头通道的确认时间（v5.13）：越过阈值后必须**再撑过这么久**才放行。
@@ -1481,7 +1507,10 @@ class HeadPoseDetector(
         // 还叠上基准线偏移，于是 v5.17 初版"轻点头全变上滑、静止时疯狂上拉"。
         // 位移必须在**同一个域**里算 —— 都用有符号值。
         val signedLight = signedPitch - settledPitch
-        val useLight = nearDistance && lookingDown && signedLight < 0f
+        // v5.26：位移超过上限就不走轻通道 —— 参考点在换姿势后可能过期，
+        // 实测出现过 29° 的"位移"（其实是换姿势）被当成点头。
+        val useLight = nearDistance && lookingDown && signedLight < 0f &&
+            abs(signedLight) <= LIGHT_MAX_DISPLACEMENT_DEG
         // 判定用的有符号量与幅度：轻通道用位移，其余用相对基线。
         val signed = if (useLight) signedLight else signedPitch
         val magnitude = abs(signed)
@@ -1549,8 +1578,16 @@ class HeadPoseDetector(
             // v5.25：**仰头方向的参考点确认** —— 见 [TILT_REF_CONFIRM]。
             // 身体动一下只会让整张脸在画面里平移，不会改变"鼻子在脸内部的相对位置"，
             // 所以要求 relNoseDy 确实朝仰头方向动过，才能放行仰头。
-            if (signed > 0f && nearDistance && refRelNoseDy > -TILT_REF_CONFIRM) {
-                return@run "tilt-ref-veto"
+            // v5.26：**对称地给低头方向也加上**。用户复测 v5.25 报「仰头有时候会判定下拉」——
+            // 逐个核对发现 17 次点头里有 4 次证人方向相反（relN 明显在往上），
+            // 那几次正是"仰头被判成下拉"。两个方向都要求"证人没有明确反对"。
+            if (nearDistance) {
+                if (signed > 0f && refRelNoseDy > -TILT_REF_CONFIRM) {
+                    return@run "ref-veto-up"
+                }
+                if (signed < 0f && refRelNoseDy < -TILT_REF_CONFIRM) {
+                    return@run "ref-veto-down"
+                }
             }
             // v5.14：闭眼（哪怕一帧浅闭）之后的姿态读数不可信 —— 见 EYE_UNRELIABLE_MS。
             if (eyeUnreliable(nowMs)) return@run "eyes-unreliable"

@@ -55,6 +55,10 @@ object AppPrefs {
     private const val K_WINK_LEFT_UP = "winkLeftVolumeUp"
     private const val K_WINK_RIGHT_UP = "winkRightVolumeUp"
 
+    // v5.31：单闭保持时长与每次调整的档位数。
+    private const val K_WINK_HOLD_MS = "winkHoldMs"
+    private const val K_WINK_VOLUME_STEP = "winkVolumeStep"
+
     /** v4.5：按前台应用自适应上下滑动幅度。 */
     private const val K_ADAPTIVE_SWIPE = "adaptiveSwipeEnabled"
 
@@ -146,6 +150,9 @@ object AppPrefs {
             winkVolumeEnabled = sp.getBoolean(K_WINK_VOLUME_ENABLED, d.winkVolumeEnabled),
             winkLeftVolumeUp = sp.getBoolean(K_WINK_LEFT_UP, d.winkLeftVolumeUp),
             winkRightVolumeUp = sp.getBoolean(K_WINK_RIGHT_UP, d.winkRightVolumeUp),
+            // v5.31：保持时长默认 600ms、每次 2 档；用户的旧设置继续沿用。
+            winkHoldMs = sp.getLong(K_WINK_HOLD_MS, d.winkHoldMs),
+            winkVolumeStep = sp.getInt(K_WINK_VOLUME_STEP, d.winkVolumeStep),
             adaptiveSwipeEnabled = sp.getBoolean(K_ADAPTIVE_SWIPE, d.adaptiveSwipeEnabled),
             listSwipeDistance = sp.getFloat(K_LIST_SWIPE_DISTANCE, d.listSwipeDistance),
             globalPagingEnabled = sp.getBoolean(K_GLOBAL_PAGING, d.globalPagingEnabled),
@@ -187,6 +194,8 @@ object AppPrefs {
             .putBoolean(K_WINK_VOLUME_ENABLED, s.winkVolumeEnabled)
             .putBoolean(K_WINK_LEFT_UP, s.winkLeftVolumeUp)
             .putBoolean(K_WINK_RIGHT_UP, s.winkRightVolumeUp)
+            .putLong(K_WINK_HOLD_MS, s.winkHoldMs)
+            .putInt(K_WINK_VOLUME_STEP, s.winkVolumeStep)
             .putBoolean(K_ADAPTIVE_SWIPE, s.adaptiveSwipeEnabled)
             .putFloat(K_LIST_SWIPE_DISTANCE, s.listSwipeDistance)
             .putBoolean(K_GLOBAL_PAGING, s.globalPagingEnabled)

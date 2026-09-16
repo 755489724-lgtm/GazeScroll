@@ -687,6 +687,102 @@
             android:textSize="13sp" />
 
         <TextView
+            android:id="@+id/tvWinkHold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/settings_wink_hold"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgWinkHold"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbWinkHold400"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_hold_400"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbWinkHold600"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_hold_600"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbWinkHold800"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_hold_800"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbWinkHold1000"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_hold_1000"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <TextView
+            android:id="@+id/tvWinkStep"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/settings_wink_step"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgWinkStep"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbWinkStep1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_step_1"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbWinkStep2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_step_2"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbWinkStep3"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_step_3"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbWinkStep5"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_wink_step_5"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"

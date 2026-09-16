@@ -271,7 +271,8 @@ class MainActivity : AppCompatActivity() {
             if (cfg.winkVolumeEnabled) {
                 append("单闭保持：左眼 ").append(s.winkHeldLeftMs).append("ms")
                 append("    右眼 ").append(s.winkHeldRightMs).append("ms")
-                append("    满 1000ms 调一档（左眼闭 = ")
+                append("    满 ").append(cfg.winkHoldMs).append("ms 调 ")
+                append(cfg.winkVolumeStep).append(" 档（左眼闭 = ")
                 append(if (cfg.winkLeftVolumeUp) "调高" else "调低")
                 append("，右眼闭 = ")
                 append(if (cfg.winkRightVolumeUp) "调高" else "调低")
@@ -555,17 +556,69 @@ class MainActivity : AppCompatActivity() {
             renderWinkVolumeUi()
         }
 
+        // 单闭保持时长（v5.31：用户反馈 1 秒太长，改成四档可选、默认 0.6 秒）。
+        binding.rgWinkHold.check(
+            when {
+                cfg.winkHoldMs <= 400L -> R.id.rbWinkHold400
+                cfg.winkHoldMs >= 1000L -> R.id.rbWinkHold1000
+                cfg.winkHoldMs >= 800L -> R.id.rbWinkHold800
+                else -> R.id.rbWinkHold600
+            },
+        )
+        binding.rgWinkHold.setOnCheckedChangeListener { _, checkedId ->
+            val hold = when (checkedId) {
+                R.id.rbWinkHold400 -> 400L
+                R.id.rbWinkHold800 -> 800L
+                R.id.rbWinkHold1000 -> 1000L
+                else -> 600L
+            }
+            updateConfig { it.copy(winkHoldMs = hold) }
+            renderWinkVolumeUi()
+        }
+
+        // 每次调整多少档（v5.31：用户要求"一次调整多少也让用户自己选"）。
+        binding.rgWinkStep.check(
+            when (cfg.winkVolumeStep) {
+                1 -> R.id.rbWinkStep1
+                3 -> R.id.rbWinkStep3
+                5 -> R.id.rbWinkStep5
+                else -> R.id.rbWinkStep2
+            },
+        )
+        binding.rgWinkStep.setOnCheckedChangeListener { _, checkedId ->
+            val step = when (checkedId) {
+                R.id.rbWinkStep1 -> 1
+                R.id.rbWinkStep3 -> 3
+                R.id.rbWinkStep5 -> 5
+                else -> 2
+            }
+            updateConfig { it.copy(winkVolumeStep = step) }
+            renderWinkVolumeUi()
+        }
+
         renderWinkVolumeUi()
     }
 
-    /** 总开关关掉时两个方向开关置灰；值仍然保留，重新打开即恢复用户原来的选择。 */
+    /** 总开关关掉时，方向 / 时长 / 档位三组设置一起置灰；值仍保留，重新打开即恢复。 */
     private fun renderWinkVolumeUi() {
         val enabled = GazeRuntime.config.winkVolumeEnabled
-        for (v in listOf<android.view.View>(binding.switchWinkLeftUp, binding.switchWinkRightUp)) {
+        val views = mutableListOf<android.view.View>(
+            binding.switchWinkLeftUp,
+            binding.switchWinkRightUp,
+            binding.tvWinkHold,
+            binding.tvWinkStep,
+        )
+        for (id in intArrayOf(
+            R.id.rbWinkHold400, R.id.rbWinkHold600, R.id.rbWinkHold800, R.id.rbWinkHold1000,
+            R.id.rbWinkStep1, R.id.rbWinkStep2, R.id.rbWinkStep3, R.id.rbWinkStep5,
+        )) {
+            binding.root.findViewById<android.view.View>(id)?.let { views.add(it) }
+        }
+        for (v in views) {
             v.isEnabled = enabled
             v.setAlpha(if (enabled) 1f else 0.45f)
         }
-        // 方向一变，"左眼闭=调高/调低"那两行文字也跟着变，所以立刻重画实时区。
+        // 方向 / 时长 / 档位一变，实时区那行文字也跟着变，所以立刻重画。
         renderLive(GazeRuntime.snapshot)
     }
 

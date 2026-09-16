@@ -1057,7 +1057,7 @@ private const val REF_LOG_INTERVAL_MS = 400L
             val wink = winkDetector
             if (wink != null) {
                 if (!gate && cfg.winkVolumeEnabled) {
-                    wink.holdMs = WinkDetector.DEFAULT_HOLD_MS
+                    wink.holdMs = cfg.winkHoldMs.coerceIn(300L, 2000L)
                     // 单闭是"完全闭上"的动作（读数掉到 0.1 以下），所以这里用**原始**
                     // 灵敏度阈值、不按距离放松 —— 更严正是防误触要的方向。
                     wink.closedBelow = cfg.blinkClosedBelow
@@ -1477,7 +1477,10 @@ private const val REF_LOG_INTERVAL_MS = 400L
         val detail = "held=${event.heldMs}ms eyeL=${"%.2f".format(event.eyeL)}" +
             " eyeR=${"%.2f".format(event.eyeR)} min=${"%.2f".format(event.minClosed)}" +
             " other=${"%.2f".format(event.otherEye)} thr=${"%.2f".format(event.closedBelow)}" +
+            " openRun=${event.openRunMs}ms onset=${event.onsetMs}ms" +
             " dist=${if (event.nearTier == true) "near" else "mid/far"}"
+        // 一次调几档由用户选（1 档 = 按一次音量键）；逐档调用，用的就是系统自己的步长。
+        val steps = cfg.winkVolumeStep.coerceIn(1, 5)
         ensureSwipeExecutor().execute {
             val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             if (am == null) {
@@ -1486,21 +1489,27 @@ private const val REF_LOG_INTERVAL_MS = 400L
             }
             val before = am.getStreamVolume(AudioManager.STREAM_MUSIC)
             val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            val applied = runCatching {
-                am.adjustStreamVolume(
-                    AudioManager.STREAM_MUSIC,
-                    if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
-                    AudioManager.FLAG_SHOW_UI,
-                )
-            }.isSuccess
+            var applied = true
+            repeat(steps) { i ->
+                // 只有最后一次带 FLAG_SHOW_UI，免得连弹好几次音量面板。
+                val flags = if (i == steps - 1) AudioManager.FLAG_SHOW_UI else 0
+                applied = applied && runCatching {
+                    am.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+                        flags,
+                    )
+                }.isSuccess
+            }
             val after = am.getStreamVolume(AudioManager.STREAM_MUSIC)
             winkVolumeSteps++
             // 这一行是「单闭控音量」唯一的可核对真值：闭了多久、两只眼各读到多少、
-            // 当时的姿势、以及音量实际从几变到几（applied=false 说明系统拒了这次调节）。
+            // 起手睁了多久/合得多快、当时的姿势，以及音量实际从几变到几
+            // （applied=false 说明系统拒了这次调节）。
             Log.i(
                 "Wink",
                 "wink ${event.side.label} $detail -> volume ${if (up) "UP" else "DOWN"} " +
-                    "$before->$after/$max applied=$applied $pose",
+                    "$steps 档 $before->$after/$max applied=$applied $pose",
             )
             GazeRuntime.publish {
                 it.copy(
@@ -1621,6 +1630,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 "${if (cfg.winkRightVolumeUp) "R=up" else "R=down"}" +
                 " wink=${winkDetector?.stateLine() ?: "-"}" +
                 " winkSteps=$winkVolumeSteps" +
+                // v5.31：基准线重建期禁触发的状态（丢脸回来 / 重绑后约 1.1 秒内为 true）。
+                " baselineSettling=${headPoseDetector?.baselineSettling ?: false}" +
                 " triggers=${GazeRuntime.snapshot.triggers}" +
                 " needBlinks=${cfg.blinkTriggerCount}" +
                 " pending=${blinkDetector?.pendingBlinks ?: 0}" +

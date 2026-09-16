@@ -176,6 +176,22 @@ data class GazeConfig(
      */
     val winkRightVolumeUp: Boolean = true,
 
+    /**
+     * 单闭要保持多久才触发（毫秒）。选项 [WinkDetector.HOLD_OPTIONS]：400 / 600 / 800 / 1000。
+     *
+     * v5.30 固定 1000ms；用户实测后反馈「触发时间太长了」，v5.31 改成可选、默认 600ms。
+     * 缩短保持时间靠的是新增的「起手」判据（睁得稳 + 闭得快）来挡误触，而不是靠拖长时间。
+     */
+    val winkHoldMs: Long = WinkDetector.DEFAULT_HOLD_MS,
+
+    /**
+     * 一次单闭调几档音量（1 档 = 按一次音量键，小米 13 上 = 音量索引 10）。
+     *
+     * 用户要求「一次调整多少也让用户自己选」，可选 1 / 2 / 3 / 5，默认 2
+     * （单闭 0.6 秒是刻意动作，一次给到能听出来的变化）。
+     */
+    val winkVolumeStep: Int = 2,
+
     // ------------------------------------------------- v4.5：自适应滑动 --
 
     /**
@@ -282,6 +298,9 @@ data class GazeConfig(
                 AdaptiveSwipe.MAX_LIST_DISTANCE,
             ),
             globalCooldownMs = globalCooldownMs.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS),
+            // v5.31：单闭保持时长与每次音量档位。
+            winkHoldMs = winkHoldMs.coerceIn(300L, 2000L),
+            winkVolumeStep = winkVolumeStep.coerceIn(1, 5),
         )
     }
 

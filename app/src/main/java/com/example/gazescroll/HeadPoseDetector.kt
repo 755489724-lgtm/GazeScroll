@@ -379,6 +379,22 @@ class HeadPoseDetector(
         /** 稳定判定的样本数。 */
         private const val SETTLED_WINDOW_SAMPLES = 3
 
+        // ------------------- v5.31：基准线重建期禁止触发 --
+
+        /**
+         * 基准线被作废（丢脸回来 / recalibrate / reset）后，必须攒够这么多帧才允许触发。
+         *
+         * 为什么需要：`MIN_SAMPLES`（5）只保证"有 5 个样本能算中位数"，而**丢脸回来后的
+         * 头几帧角度读数本身是脏的**（v5.30 实测：脸消失 100 秒回来后，原始俯仰从 -1.9°
+         * 跳到 10.2°，45 帧中位数基准线一度算成 15.7°），于是 `signedPitch = 原始 − 基准`
+         * 凭空差出 5°，在近距离俯视档（阈值 2.5°）直接触发一次下滑。
+         *
+         * 12 帧 ≈ 1.1 秒（实测帧间隔 63~116ms），足够让中位数基准线稳定下来；正常换应用
+         * 进目标 App 时服务会用 [seedBaseline] 预填窗口，所以**这条门只在"基准线刚被作废"
+         * 之后生效**，不影响日常响应速度。
+         */
+        private const val BASELINE_SETTLE_SAMPLES = 12
+
         /**
          * 连续 [SETTLED_WINDOW_SAMPLES] 帧的峰峰值小于这个度数，就认为"头是稳的"，
          * 把当前值记作 [settledPitch]（轻通道的运动起点）。
@@ -894,6 +910,20 @@ class HeadPoseDetector(
     var calibrated: Boolean = false
         private set
 
+    /**
+     * 基准线正在重建（v5.31）：这段窗口内**不允许任何头部触发**。
+     *
+     * 置位时机：丢脸回来（基准线作废）、[recalibrate]、[reset]。
+     * 解除时机：俯仰窗口重新攒够 [BASELINE_SETTLE_SAMPLES] 帧。
+     *
+     * 依据（v5.30 实测日志 22:05:32）：脸消失 100 秒后回来，头几帧的原始俯仰从 -1.9°
+     * 跳到 10.2°、中位数基准线一度算成 15.7°（真实值约 10.5°），于是 `原始 − 基准`
+     * 凭空差出 5°，在近距离俯视档（阈值 2.5°）触发了一次**没人动过头部**的下滑。
+     */
+    @Volatile
+    var baselineSettling: Boolean = false
+        private set
+
     @Volatile
     var baselineDeg: Float = 0f
         private set
@@ -1241,6 +1271,7 @@ class HeadPoseDetector(
         pitchIndex = 0
         yawIndex = 0
         calibrated = false
+        baselineSettling = true
         baselineDeg = 0f
         baselineYawDeg = 0f
         clearExcursion()
@@ -1284,6 +1315,8 @@ class HeadPoseDetector(
         pitchIndex = 0
         yawIndex = 0
         calibrated = false
+        // v5.31：基准线重建期间不允许触发（见 [BASELINE_SETTLE_SAMPLES]）。
+        baselineSettling = true
         clearExcursion()
         clearTurn()
         Log.i(TAG, "baseline cleared, re-learning")
@@ -1383,6 +1416,9 @@ class HeadPoseDetector(
             pitchIndex = 0
             yawIndex = 0
             calibrated = false
+            // v5.31：重建期间不允许触发 —— 丢脸回来后的头几帧角度读数是脏的，
+            // 拿它减一个还没稳定的中位数基准线会凭空造出 5° 的"位移"。
+            baselineSettling = true
             motionCount = 0
             clearExcursion()
             clearTurn()
@@ -1398,6 +1434,12 @@ class HeadPoseDetector(
         if (pitchReady) baselineDeg = median(pitchWindow, pitchCount)
         if (yawReady) baselineYawDeg = median(yawWindow, yawCount)
         calibrated = true
+
+        // v5.31：窗口攒够了，解除"基准线重建期禁止触发"。
+        if (baselineSettling && pitchCount >= BASELINE_SETTLE_SAMPLES) {
+            baselineSettling = false
+            Log.i(TAG, "baseline settled (pitchCount=$pitchCount) — head triggers re-armed")
+        }
 
         // v5.9：距离档必须**最先**更新，因为静止峰峰值门限、速度门限、点头增益
         // 三者都读它。放在 updateStaticLock 之前，本帧的档位与本帧的判定才自洽。
@@ -1419,6 +1461,15 @@ class HeadPoseDetector(
         // v5.6：先更新距离/姿态判定，再让 v5.4 的时间型俯视增益失效，最后才评估动作。
         updateDistanceAndPosture(nowMs)
         refreshDownGazeBoost(nowMs)
+
+        // v5.31：基准线重建期一律不判定动作。这段窗口里角度读数与基准线都是脏的，
+        // 判出来的"位移"不是用户的动作（证据见 [baselineSettling]）。
+        if (baselineSettling) {
+            clearExcursion()
+            clearTurn()
+            return
+        }
+
         if (pitchReady) evaluatePitch(pitchDeg!!, yawDeg, nowMs, boost)
         if (turnEnabled && yawReady) evaluateYaw(yawDeg!!, nowMs, boost)
     }

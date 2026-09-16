@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
         setupCooldownUi()
         setupHorizontalSwipeUi()
         setupMouthTapUi()
+        setupWinkVolumeUi()
         setupAdaptiveSwipeUi()
         setupGlobalPagingUi()
         setupSensitivityUi()
@@ -263,6 +264,18 @@ class MainActivity : AppCompatActivity() {
                         append("    已点击 ").append(s.mouthTapCount).append(" 次\n")
                     }
                 }
+            }
+
+            // v5.30：单眼闭眼控音量 —— 把「已经闭了多久」直接显示出来。用户能看着数字
+            // 涨到 1000ms，也能立刻分辨到底是哪只眼被读成闭着（单闭不灵时第一个要看的）。
+            if (cfg.winkVolumeEnabled) {
+                append("单闭保持：左眼 ").append(s.winkHeldLeftMs).append("ms")
+                append("    右眼 ").append(s.winkHeldRightMs).append("ms")
+                append("    满 1000ms 调一档（左眼闭 = ")
+                append(if (cfg.winkLeftVolumeUp) "调高" else "调低")
+                append("，右眼闭 = ")
+                append(if (cfg.winkRightVolumeUp) "调高" else "调低")
+                append("）    已调音量 ").append(s.winkSteps).append(" 档\n")
             }
 
             append("眨眼累计 ").append(s.blinkCount)
@@ -510,6 +523,50 @@ class MainActivity : AppCompatActivity() {
                 it.setAlpha(if (enabled) 1f else 0.45f)
             }
         }
+    }
+
+    // ------------------------------------------- v5.30 单眼闭眼控音量 --
+
+    /**
+     * 「单眼闭眼 1 秒 → 音量加 / 减」的总开关 + 左右眼方向开关。
+     *
+     * 方向完全交给用户（这是 v5.30 用户点名的「反方向的开关」）：左右眼各一个开关，
+     * 决定那只眼闭上是「调高」还是「调低」，两个开关互不影响。
+     *
+     * 判定阈值跟随眨眼灵敏度（同一对闭眼 / 睁眼阈值），所以这里不放灵敏度档位；
+     * 下面的「实时数值」会显示两只眼**各自已经保持的单闭时长**，闭到 1000ms 就调一档。
+     */
+    private fun setupWinkVolumeUi() {
+        val cfg = GazeRuntime.config
+        binding.switchWinkVolume.isChecked = cfg.winkVolumeEnabled
+        binding.switchWinkLeftUp.isChecked = cfg.winkLeftVolumeUp
+        binding.switchWinkRightUp.isChecked = cfg.winkRightVolumeUp
+
+        binding.switchWinkVolume.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(winkVolumeEnabled = checked) }
+            renderWinkVolumeUi()
+        }
+        binding.switchWinkLeftUp.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(winkLeftVolumeUp = checked) }
+            renderWinkVolumeUi()
+        }
+        binding.switchWinkRightUp.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(winkRightVolumeUp = checked) }
+            renderWinkVolumeUi()
+        }
+
+        renderWinkVolumeUi()
+    }
+
+    /** 总开关关掉时两个方向开关置灰；值仍然保留，重新打开即恢复用户原来的选择。 */
+    private fun renderWinkVolumeUi() {
+        val enabled = GazeRuntime.config.winkVolumeEnabled
+        for (v in listOf<android.view.View>(binding.switchWinkLeftUp, binding.switchWinkRightUp)) {
+            v.isEnabled = enabled
+            v.setAlpha(if (enabled) 1f else 0.45f)
+        }
+        // 方向一变，"左眼闭=调高/调低"那两行文字也跟着变，所以立刻重画实时区。
+        renderLive(GazeRuntime.snapshot)
     }
 
     // --------------------------------------------------- v4.5 自适应滑动幅度 --

@@ -62,6 +62,15 @@ object GazeRuntime {
         /** 累计由张嘴触发的「屏幕中央点击」次数。 */
         val mouthTapCount: Int = 0,
 
+        // ---- v5.30 单眼闭眼控音量：设置页要能看到"闭了多久"，才好确认判定有效 ----
+
+        /** 累计由单眼闭眼触发的音量档位数。 */
+        val winkSteps: Int = 0,
+        /** 左眼当前已保持的单闭时长（毫秒）；0 = 左眼没在单闭。 */
+        val winkHeldLeftMs: Long = 0L,
+        /** 右眼当前已保持的单闭时长（毫秒）；0 = 右眼没在单闭。 */
+        val winkHeldRightMs: Long = 0L,
+
         /** 当前前台应用对应的纵向滑动配置（人话描述），设置页显示用。 */
         val swipeProfile: String = "",
         /**

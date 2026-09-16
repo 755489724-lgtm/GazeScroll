@@ -95,6 +95,14 @@
     <string name="settings_head_medium">中 · 8°（默认）</string>
     <string name="settings_head_low">低 · 12°（需要明显动作）</string>
 
+    <!-- ================= v5.30：单眼闭眼控音量 ================= -->
+
+    <string name="settings_wink_title">单眼闭眼 → 音量加 / 减</string>
+    <string name="settings_wink_switch">启用「单眼闭眼控音量」</string>
+    <string name="settings_wink_left_up">左眼闭：调高音量（关闭 = 调低）</string>
+    <string name="settings_wink_right_up">右眼闭：调高音量（关闭 = 调低）</string>
+    <string name="settings_wink_hint">闭上一只眼睛并「保持 1 秒以上」，另一只眼睛要睁着 —— 就会把音量调高一档或调低一档。\n默认：右眼闭 = 调高、左眼闭 = 调低；上面两个开关可以各自反过来拨。\n防误触：① 必须闭满 1 秒才触发（短于 1 秒是普通眨眼，不调音量）；② 一次单闭只调一档，必须睁眼之后再闭才算下一次（一直闭着眼不会把音量一路推到底）；③ 两只眼同时闭（正常眨眼）不算单闭。\n这是控制指令：不受防误触冷却限制，也不会占用翻页冷却；不需要无障碍服务 —— 音量由系统音频通道直接调节。</string>
+
     <string name="settings_live_title">实时数值（用来挑灵敏度）</string>
     <string name="settings_live_hint">对着前置摄像头自然睁眼，看「睁眼」时的数值；再眨一下，看「闭眼」时能降到多少。\n把灵敏度阈值选在两者之间即可。</string>
     <string name="settings_live_empty">（未检测到人脸）</string>

@@ -14,6 +14,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+      v5.30：单眼闭眼调音量走 AudioManager（STREAM_MUSIC）。这是 normal 级权限，
+      安装时自动授予、不弹窗，也不需要用户做任何额外操作。
+    -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!--
       Development permission, granted over adb (`pm grant`). It lets the app
       write `enabled_accessibility_services` itself, which is how the
       accessibility fallback gets enabled without the user fighting the

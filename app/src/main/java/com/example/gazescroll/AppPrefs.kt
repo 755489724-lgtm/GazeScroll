@@ -50,6 +50,11 @@ object AppPrefs {
     /** v4.5 的旧键，只用于升级时把用户的开关状态继承过来（缺省也是开）。 */
     private const val K_LEGACY_MOUTH_PAUSE = "mouthPauseEnabled"
 
+    // v5.30：单眼闭眼控音量（一只眼闭 1 秒 → 音量加/减）。
+    private const val K_WINK_VOLUME_ENABLED = "winkVolumeEnabled"
+    private const val K_WINK_LEFT_UP = "winkLeftVolumeUp"
+    private const val K_WINK_RIGHT_UP = "winkRightVolumeUp"
+
     /** v4.5：按前台应用自适应上下滑动幅度。 */
     private const val K_ADAPTIVE_SWIPE = "adaptiveSwipeEnabled"
 
@@ -136,6 +141,11 @@ object AppPrefs {
             mouthSensitivity = sp.getString(K_MOUTH_SENSITIVITY, null)
                 ?.let { name -> MouthSensitivity.entries.firstOrNull { it.name == name } }
                 ?: d.mouthSensitivity,
+            // v5.30：单眼闭眼控音量。默认开；方向默认「右眼闭 = 调高、左眼闭 = 调低」，
+            // 用户可以在设置页各自反向（两个开关互相独立）。
+            winkVolumeEnabled = sp.getBoolean(K_WINK_VOLUME_ENABLED, d.winkVolumeEnabled),
+            winkLeftVolumeUp = sp.getBoolean(K_WINK_LEFT_UP, d.winkLeftVolumeUp),
+            winkRightVolumeUp = sp.getBoolean(K_WINK_RIGHT_UP, d.winkRightVolumeUp),
             adaptiveSwipeEnabled = sp.getBoolean(K_ADAPTIVE_SWIPE, d.adaptiveSwipeEnabled),
             listSwipeDistance = sp.getFloat(K_LIST_SWIPE_DISTANCE, d.listSwipeDistance),
             globalPagingEnabled = sp.getBoolean(K_GLOBAL_PAGING, d.globalPagingEnabled),
@@ -174,6 +184,9 @@ object AppPrefs {
             .putBoolean(K_H_SWIPE_INVERT, s.horizontalSwipeInvertYaw)
             .putBoolean(K_MOUTH_TAP_ENABLED, s.mouthTapEnabled)
             .putString(K_MOUTH_SENSITIVITY, s.mouthSensitivity.name)
+            .putBoolean(K_WINK_VOLUME_ENABLED, s.winkVolumeEnabled)
+            .putBoolean(K_WINK_LEFT_UP, s.winkLeftVolumeUp)
+            .putBoolean(K_WINK_RIGHT_UP, s.winkRightVolumeUp)
             .putBoolean(K_ADAPTIVE_SWIPE, s.adaptiveSwipeEnabled)
             .putFloat(K_LIST_SWIPE_DISTANCE, s.listSwipeDistance)
             .putBoolean(K_GLOBAL_PAGING, s.globalPagingEnabled)

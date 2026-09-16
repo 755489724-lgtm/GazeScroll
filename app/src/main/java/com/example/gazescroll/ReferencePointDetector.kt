@@ -3,40 +3,43 @@ package com.example.gazescroll
 import kotlin.math.abs
 
 /**
- * 参考点位移检测器（v5.22）—— 按用户提出的算法实现。
+ * 参考点位移检测器（v5.22 引入，v5.23 增加"平移无关"的第二条轨道）。
  *
  * ## 用户的原始思路
  *
  * > 「用一个参考点，来计算我点头还是仰头。标准的仰头就是我的下巴会往上移动几厘米，
  * > 点头就是鼻子会往下移动几厘米。做一个参考点，**不能硬算**。」
  *
- * 也就是**不看俯仰角**，只看面部关键点在画面里的**位移**，并且用脸框高度归一化，
- * 消除远近距离带来的像素差异。近距离俯视时角度变化不明显，但关键点位移依然清晰 ——
- * 这正是它比"硬算角度"更稳的地方。
+ * 也就是**不看俯仰角**，只看面部关键点的**位移**，并用脸框高度归一化消除远近差异。
  *
- * ## 实现
+ * ## 实测发现（v5.22 首轮日志，26 条对照记录）
  *
- * 1. **参考点**（[refNose] / [refChin]）：关键点在**脸框内**的归一化 Y。
- *    只在头部稳定时更新（连续 [REF_WINDOW] 帧峰峰值 < [REF_STILL_RANGE]），
- *    所以它天然是"这次动作的起点"，不会像滑动窗口中位数基线那样滞后好几度
- *    （v5.16~v5.21 反复踩的就是那个坑）。
- * 2. **位移**：`noseDy = noseNormY − refNose`、`chinDy = chinNormY − refChin`，
- *    单位是**脸高比例**（1.0 = 一个脸高），所以远近无关 —— 这就是"距离归一化"。
- * 3. **方向**：图像坐标 Y 向下为正。按用户描述，**鼻子下移 = 点头**（`dy > 0`）、
- *    **下巴上移 = 仰头**（`dy < 0`）。同一动作下两个关键点同向，取二者均值 [faceDy]
- *    更抗单点抖动；若两者反向（关键点检测抖动），退回用鼻子。
- *    [invert] 对应设置页的「反转俯仰方向」，打开时两个方向**一起**反转。
- * 4. **阈值**：归一化位移超过 [THRESHOLD]（默认 4.5% 脸高，约 3~5% 的用户预期区间）。
- *    近距离俯视时用 [THRESHOLD_NEAR_DOWN]（更灵敏）——**只作用于上下轴**，不影响左右扭头。
- * 5. **时间与速度**：从 onset（阈值的 40%）涨到阈值必须在 [MOTION_WINDOW_MS] 内完成，
- *    且要么速度 ≥ [MIN_SPEED]，要么在阈值以上保持住（[HOLD_MS]）；单帧位移超过
- *    [MAX_FRAME_STEP] 视为关键点抖动，直接丢弃。
+ * **符号关系成立** ✓：pitch 通道真实触发时，位移通道的读数与动作一致 ——
  *
- * ## 本版（v5.22）只观测、不接管触发
+ * ```
+ * 19:01:53.566  pitchCh=-9.0°(点头)  →  noseDy=+0.086 chinDy=+0.065  脸往下移 ✓
+ * 19:01:56.050  pitchCh=+13.0°(仰头) →  noseDy=-0.036 chinDy=-0.034  脸往上移 ✓
+ * ```
  *
- * 符号（哪一侧是"鼻子下移"）与阈值必须用**实测数据**确认，不能猜 —— 前两轮
- * "全部乱了"都是猜符号造成的。所以本版把这条通道**完整跑起来并打日志**，
- * 但触发权仍在原有 pitch 通道手里；下一版按实测符号/阈值把它切成主判据。
+ * **但绝对位移的噪声底和真实动作一样大** ✗：4.5% 阈值下 `would-trigger` 达到
+ * **54 次/分钟**，而真实仰头那一次位移只有 **0.035**（低于阈值）。
+ * 原因很直接：**脸在画面里的绝对位置会被"手机本身在动"带着走** —— 抬一下手、
+ * 换个姿势都会让整个脸平移，于是"位移"既包含头部转动、也包含手机平移。
+ *
+ * ## 所以有两条轨道，一起观测、用数据决定用哪条
+ *
+ *  - **轨道 A（绝对位移）**：`noseNormY` / `chinNormY` 相对参考点的位移。
+ *    就是用户描述的那个量（鼻子在画面里下移）。缺点见上：平移不区分。
+ *  - **轨道 B（平移无关）**：`noseRelEye` / `chinRelEye`（关键点相对**眼睛中心**的归一化距离）
+ *    相对参考点的变化。手机平移时它**不变**，只有头部真的俯仰（透视缩短）才变 ——
+ *    同一个思路，但把"手机在动"这个污染源去掉了。
+ *
+ * 两条轨道的 `dy`、`would` 计数、丢弃原因都打进日志，用同一次实机动作做对照，
+ * 谁的信噪比高就用谁（v5.24 切主判据）。
+ *
+ * ## 仍然只观测、不接管触发
+ *
+ * 触发权仍在 pitch 通道手里；本类只计算与记录，这样现有可用行为零风险。
  */
 class ReferencePointDetector {
 
@@ -50,8 +53,16 @@ class ReferencePointDetector {
         /** 默认触发阈值：归一化位移（1.0 = 一个脸高）= 4.5% 脸高。 */
         private const val THRESHOLD = 0.045f
 
-        /** 近距离俯视时的放宽阈值 = 3.2% 脸高（用户要求：只放宽上下方向）。 */
-        private const val THRESHOLD_NEAR_DOWN = 0.032f
+        /**
+         * 轨道 B（平移无关）的阈值。
+         *
+         * 取 2.5%：它不受手机平移污染，所以同一动作的读数比轨道 A 小，
+         * 阈值也要相应小 —— 具体值等实测数据出来后 v5.24 定稿。
+         */
+        private const val REL_THRESHOLD = 0.025f
+
+        /** 近距离俯视时的放宽系数（用户要求：只放宽上下方向）。 */
+        private const val NEAR_DOWN_FACTOR = 0.72f
 
         /** onset = 阈值的这个比例，用来计时"这次涨得够不够快"。 */
         private const val ONSET_FRACTION = 0.4f
@@ -59,17 +70,166 @@ class ReferencePointDetector {
         /** 从 onset 到阈值的最长时间；更慢说明是姿势漂移而不是动作。 */
         private const val MOTION_WINDOW_MS = 700L
 
-        /** 最低速度门限（比例/毫秒）：0.00012 ≈ 300ms 走 3.6% 脸高。 */
+        /** 最低速度门限（比例/毫秒）。 */
         private const val MIN_SPEED = 0.00012f
 
         /** 达不到速度门限时，必须在阈值以上保持这么久（帧间隔 63~116ms）。 */
         private const val HOLD_MS = 90L
 
-        /** 单帧位移超过这个比例（6% 脸高）视为关键点抖动。 */
-        private const val MAX_FRAME_STEP = 0.06f
+        /** 单帧位移超过这个比例（8% 脸高）视为关键点抖动（轨道 A）。 */
+        private const val MAX_FRAME_STEP = 0.08f
     }
 
-    /** 与设置页「反转俯仰方向」同步（v5.22）。 */
+    /**
+     * 一条轨道：两个关键点的位移 → 参考点 → 归一化位移 → 判定。
+     *
+     * @param name 轨道名（`abs` / `rel`），进日志
+     * @param threshold 该轨道的默认阈值
+     */
+    private inner class Track(private val name: String, private val threshold: Float) {
+        private val ringA = FloatArray(REF_WINDOW)
+        private val ringB = FloatArray(REF_WINDOW)
+        private var ringIndex = 0
+        private var ringCount = 0
+        private var haveRef = false
+
+        private var refA = 0f
+        private var refB = 0f
+        private var prevDy = 0f
+        private var prevAtMs = 0L
+        private var onsetAtMs = 0L
+        private var reachedAtMs = 0L
+        private var lastDir = 0
+
+        /** 当前生效阈值（含近距离俯视放宽）。 */
+        var thresholdNow = threshold
+            private set
+
+        var dyA = 0f
+            private set
+
+        var dyB = 0f
+            private set
+
+        /** 判定用的位移：两点同向取均值。 */
+        var dy = 0f
+            private set
+
+        var speed = 0f
+            private set
+
+        var wouldTriggerCount = 0
+            private set
+
+        var reject = "-"
+            private set
+
+        fun reset() {
+            ringCount = 0
+            ringIndex = 0
+            haveRef = false
+            prevDy = 0f
+            prevAtMs = 0L
+            onsetAtMs = 0L
+            reachedAtMs = 0L
+            lastDir = 0
+            dyA = 0f
+            dyB = 0f
+            dy = 0f
+            speed = 0f
+            reject = "-"
+        }
+
+        /** @return 0 / -1（点头方向）/ +1（仰头方向） */
+        fun update(a: Float?, b: Float?, nowMs: Long): Int {
+            if (a == null && b == null) return 0
+            pushAndLearnReference(a, b)
+            if (!haveRef) return 0
+
+            val da = a?.minus(refA)
+            val db = b?.minus(refB)
+            dyA = da ?: 0f
+            dyB = db ?: 0f
+            val value = when {
+                da != null && db != null -> if (da * db > 0f) (da + db) / 2f else da
+                da != null -> da
+                else -> db ?: 0f
+            }
+            val step = abs(value - prevDy)
+            dy = value
+
+            val dt = nowMs - prevAtMs
+            speed = if (prevAtMs != 0L && dt in 1..300) abs(value - prevDy) / dt else 0f
+            prevDy = value
+            prevAtMs = nowMs
+
+            thresholdNow = threshold * (if (nearDownBoost) NEAR_DOWN_FACTOR else 1f)
+            val magnitude = abs(value)
+            // 图像坐标 Y 向下为正：位移为正 = 脸/鼻子下移 = 点头。
+            val rawDirection = if (value > 0f) -1 else 1
+            val direction = if (invert) -rawDirection else rawDirection
+
+            val onset = thresholdNow * ONSET_FRACTION
+            if (magnitude < onset) {
+                onsetAtMs = 0L
+                reachedAtMs = 0L
+                lastDir = 0
+                reject = "below-onset"
+                return 0
+            }
+            if (onsetAtMs == 0L || direction != lastDir) {
+                onsetAtMs = nowMs
+                reachedAtMs = 0L
+                lastDir = direction
+            }
+            if (magnitude < thresholdNow) {
+                reject = "below-threshold"
+                return 0
+            }
+            if (reachedAtMs == 0L) reachedAtMs = nowMs
+            if (step > MAX_FRAME_STEP) {
+                reject = "frame-step"
+                return 0
+            }
+            if (nowMs - onsetAtMs > MOTION_WINDOW_MS) {
+                reject = "slow"
+                return 0
+            }
+            if (speed < MIN_SPEED && nowMs - reachedAtMs < HOLD_MS) {
+                reject = "hold-not-met"
+                return 0
+            }
+            reject = "ok"
+            wouldTriggerCount++
+            return direction
+        }
+
+        /** 只在头部稳定时更新参考点。 */
+        private fun pushAndLearnReference(a: Float?, b: Float?) {
+            ringA[ringIndex] = a ?: Float.NaN
+            ringB[ringIndex] = b ?: Float.NaN
+            ringIndex = (ringIndex + 1) % REF_WINDOW
+            if (ringCount < REF_WINDOW) {
+                ringCount++
+                if (ringCount < REF_WINDOW) return
+            }
+            val rangeA = range(ringA)
+            val rangeB = range(ringB)
+            val stableA = rangeA != null && rangeA < REF_STILL_RANGE
+            val stableB = rangeB != null && rangeB < REF_STILL_RANGE
+            if (!stableA && !stableB) return
+            if (stableA) refA = mid(ringA)
+            if (stableB) refB = mid(ringB)
+            haveRef = true
+        }
+
+        /** 一行诊断：`abs dy=+0.075 thr=0.045 would=3 opt=ok`。 */
+        fun stateLine(): String =
+            "$name dy=${"%+.3f".format(dy)} thr=${"%.3f".format(thresholdNow)} " +
+                "spd=${"%.5f".format(speed)} would=$wouldTriggerCount opt=$reject"
+    }
+
+    /** 与设置页「反转俯仰方向」同步。 */
     @Volatile
     var invert: Boolean = false
 
@@ -77,178 +237,41 @@ class ReferencePointDetector {
     @Volatile
     var nearDownBoost: Boolean = false
 
-    // ---- 实时值（诊断行与触发日志用） ----
+    private val trackAbs = Track("abs", THRESHOLD)
+    private val trackRel = Track("rel", REL_THRESHOLD)
 
-    @Volatile
-    var noseDy: Float = 0f
-        private set
+    /** 轨道 A：绝对位移（用户描述的"鼻子在画面里下移"）。 */
+    val absDy: Float get() = trackAbs.dy
 
-    @Volatile
-    var chinDy: Float = 0f
-        private set
-
-    /** 判定用的位移：两个关键点同向时取均值。 */
-    @Volatile
-    var faceDy: Float = 0f
-        private set
-
-    @Volatile
-    var speed: Float = 0f
-        private set
-
-    @Volatile
-    var threshold: Float = THRESHOLD
-        private set
-
-    @Volatile
-    var refNose: Float = 0f
-        private set
-
-    @Volatile
-    var refChin: Float = 0f
-        private set
-
-    /** 累计"参考点通道本来会触发"的次数（本版不真正触发，用于对比实测）。 */
-    @Volatile
-    var wouldTriggerCount: Int = 0
-        private set
-
-    // ---- 内部状态 ----
-    private val noseRing = FloatArray(REF_WINDOW)
-    private val chinRing = FloatArray(REF_WINDOW)
-    private var ringIndex = 0
-    private var ringCount = 0
-    private var haveRef = false
-
-    private var prevDy = 0f
-    private var prevDyAtMs = 0L
-    private var onsetAtMs = 0L
-    private var reachedAtMs = 0L
-    private var lastDir = 0
-
-    /** 最近一次被丢弃的原因（诊断用）。 */
-    @Volatile
-    var lastReject: String = "-"
-        private set
+    /** 轨道 B：平移无关（关键点相对眼睛）。 */
+    val relDy: Float get() = trackRel.dy
 
     @Synchronized
     fun reset() {
-        ringCount = 0
-        ringIndex = 0
-        haveRef = false
-        prevDy = 0f
-        prevDyAtMs = 0L
-        onsetAtMs = 0L
-        reachedAtMs = 0L
-        lastDir = 0
-        faceDy = 0f
-        noseDy = 0f
-        chinDy = 0f
-        speed = 0f
-        lastReject = "-"
+        trackAbs.reset()
+        trackRel.reset()
     }
 
     /**
-     * 喂一帧。
+     * 喂一帧。四条输入分别是：鼻子的绝对/相对位置、下巴的绝对/相对位置。
      *
-     * @return 0 = 无动作；-1 = 点头方向越阈值；+1 = 仰头方向越阈值。
-     *         本版（v5.22）调用方**只记录**，不据此触发。
+     * @return 0 = 无动作；±1 = **轨道 B（平移无关）**越阈值；±2 = **轨道 A（绝对位移）**越阈值。
+     *         正负号 = 方向（负 = 点头方向）。本版调用方**只记录**，不据此触发。
      */
     @Synchronized
-    fun onFrame(noseNormY: Float?, chinNormY: Float?, nowMs: Long): Int {
-        if (noseNormY == null && chinNormY == null) return 0
-
-        updateReference(noseNormY, chinNormY)
-        if (!haveRef) return 0
-
-        // ---- 位移（单位：脸高比例）----
-        val nose = noseNormY?.minus(refNose)
-        val chin = chinNormY?.minus(refChin)
-        noseDy = nose ?: 0f
-        chinDy = chin ?: 0f
-        val dy = when {
-            nose != null && chin != null ->
-                // 同向取均值（更抗单点抖动）；反向说明关键点抖动，只信鼻子。
-                if (nose * chin > 0f) (nose + chin) / 2f else nose
-            nose != null -> nose
-            else -> chin ?: 0f
-        }
-        val step = abs(dy - prevDy)
-        faceDy = dy
-
-        // ---- 速度（用最近两个样本，与 pitch 通道同一套做法）----
-        val dt = nowMs - prevDyAtMs
-        speed = if (prevDyAtMs != 0L && dt in 1..300) abs(dy - prevDy) / dt else 0f
-        prevDy = dy
-        prevDyAtMs = nowMs
-
-        // ---- 阈值 ----
-        threshold = if (nearDownBoost) THRESHOLD_NEAR_DOWN else THRESHOLD
-        val magnitude = abs(dy)
-
-        // ---- 方向：图像 Y 向下为正；鼻子/下巴下移 = 点头 ----
-        val rawDirection = if (dy > 0f) -1 else 1
-        val direction = if (invert) -rawDirection else rawDirection
-
-        val onset = threshold * ONSET_FRACTION
-        if (magnitude < onset) {
-            onsetAtMs = 0L
-            reachedAtMs = 0L
-            lastDir = 0
-            lastReject = "below-onset"
-            return 0
-        }
-        if (onsetAtMs == 0L || direction != lastDir) {
-            onsetAtMs = nowMs
-            reachedAtMs = 0L
-            lastDir = direction
-        }
-        if (magnitude < threshold) {
-            lastReject = "below-threshold"
-            return 0
-        }
-        if (reachedAtMs == 0L) reachedAtMs = nowMs
-        if (step > MAX_FRAME_STEP) {
-            lastReject = "frame-step"
-            return 0
-        }
-        if (nowMs - onsetAtMs > MOTION_WINDOW_MS) {
-            lastReject = "slow"
-            return 0
-        }
-        // 够快直接放行；否则要在阈值以上保持住（HOLD_MS 约一帧）。
-        if (speed < MIN_SPEED && nowMs - reachedAtMs < HOLD_MS) {
-            lastReject = "hold-not-met"
-            return 0
-        }
-        lastReject = "ok"
-        wouldTriggerCount++
-        return direction
-    }
-
-    /**
-     * 参考点更新：只在头部稳定时把当前关键点位置记为参考点。
-     *
-     * 稳定判据是"最近 [REF_WINDOW] 帧峰峰值 < [REF_STILL_RANGE]"，
-     * 所以动作一开始参考点就冻结在起点上，动作结束、头停下来之后又重新对齐。
-     */
-    private fun updateReference(noseNormY: Float?, chinNormY: Float?) {
-        noseRing[ringIndex] = noseNormY ?: Float.NaN
-        chinRing[ringIndex] = chinNormY ?: Float.NaN
-        ringIndex = (ringIndex + 1) % REF_WINDOW
-        if (ringCount < REF_WINDOW) {
-            ringCount++
-            if (ringCount < REF_WINDOW) return
-        }
-        val noseRange = range(noseRing)
-        val chinRange = range(chinRing)
-        // 两个关键点都稳（或者只有一个可用且它稳）时才更新。
-        val noseStable = noseRange != null && noseRange < REF_STILL_RANGE
-        val chinStable = chinRange != null && chinRange < REF_STILL_RANGE
-        if (!noseStable && !chinStable) return
-        if (noseStable) refNose = mid(noseRing)
-        if (chinStable) refChin = mid(chinRing)
-        haveRef = true
+    fun onFrame(
+        noseNormY: Float?,
+        chinNormY: Float?,
+        noseRelEye: Float?,
+        chinRelEye: Float?,
+        nowMs: Long,
+    ): Int {
+        val absDir = trackAbs.update(noseNormY, chinNormY, nowMs)
+        val relDir = trackRel.update(noseRelEye, chinRelEye, nowMs)
+        // 优先报"平移无关"那条轨道（它更干净）；两条都照常计数与记录。
+        if (relDir != 0) return if (relDir > 0) 1 else -1
+        if (absDir != 0) return if (absDir > 0) 2 else -2
+        return 0
     }
 
     private fun range(values: FloatArray): Float? {
@@ -275,13 +298,6 @@ class ReferencePointDetector {
         return (min + max) / 2f
     }
 
-    /**
-     * 一行诊断（v5.22）：把位移链路的每个量与最近一次丢弃原因都打出来。
-     *
-     * 形如 `ref noseDy=+0.045 chinDy=+0.041 dy=+0.043 thr=0.032 spd=0.00031 opt=ok`。
-     */
-    fun stateLine(): String =
-        "ref noseDy=${"%.3f".format(noseDy)} chinDy=${"%.3f".format(chinDy)} " +
-            "dy=${"%.3f".format(faceDy)} thr=${"%.3f".format(threshold)} " +
-            "spd=${"%.5f".format(speed)} would=${wouldTriggerCount} opt=$lastReject"
+    /** 一行诊断：两条轨道都打出来。 */
+    fun stateLine(): String = trackAbs.stateLine() + " | " + trackRel.stateLine()
 }

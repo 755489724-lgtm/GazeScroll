@@ -104,6 +104,17 @@ data class AnalyzedFrame(
     val chinNormY: Float?,
     /** 眼睛中心在脸框内的归一化 Y（v5.22），作为**不动的参照**用于交叉校验。 */
     val eyeNormY: Float?,
+    /**
+     * 鼻子相对**眼睛**的归一化距离（v5.23）：`(noseY − eyeY) / boxHeight`。
+     *
+     * 与 [noseNormY] 的区别是**平移无关**：手机随手一动，整个脸在画面里上下平移，
+     * [noseNormY] 立刻变化（实测噪声能到 0.05~0.09 脸高，和真实动作一样大 ✗），
+     * 而"鼻子在脸内部的相对位置"不受平移影响，**只有头真的转动（透视缩短）才会变** ✓。
+     * 这就是用户"参考点位移"思路的平移无关版本。
+     */
+    val noseRelEye: Float?,
+    /** 下巴相对**眼睛**的归一化距离（v5.23）。见 [noseRelEye]。 */
+    val chinRelEye: Float?,
     /** 这一帧为什么不可信；null 表示数据正常。 */
     val occlusionReason: OcclusionReason?,
     val faceDetected: Boolean,
@@ -290,6 +301,8 @@ class FaceGazeAnalyzer(
                 noseNormY = landmarkNormY(face, FaceLandmark.NOSE_BASE),
                 chinNormY = landmarkNormY(face, FaceLandmark.MOUTH_BOTTOM),
                 eyeNormY = eyeCenterNormY(face),
+                noseRelEye = landmarkRelEye(face, FaceLandmark.NOSE_BASE),
+                chinRelEye = landmarkRelEye(face, FaceLandmark.MOUTH_BOTTOM),
                 occlusionReason = reason,
                 faceDetected = face != null,
                 standby = standby,
@@ -326,9 +339,31 @@ class FaceGazeAnalyzer(
         return ((y - box.top) / h).coerceIn(-0.5f, 1.5f)
     }
 
-    /** 眼睛中心的归一化 Y（v5.22），作为"不动参照"。 */
-    private fun eyeCenterNormY(face: Face?): Float? {
+    /**
+     * 关键点相对**眼睛中心**的归一化距离（v5.23）：`(y − eyeY) / boxHeight`。
+     *
+     * **平移无关**：手机随手上下移动时整个脸在画面里平移，这个量不变；
+     * 只有头部真的俯仰（透视缩短）才会变。所以它比 [landmarkNormY] 干净得多。
+     */
+    private fun landmarkRelEye(face: Face?, landmark: Int): Float? {
         if (face == null) return null
+        val box = face.boundingBox
+        val h = box.height().toFloat()
+        if (h <= 1f) return null
+        val y = face.getLandmark(landmark)?.position?.y ?: return null
+        val left = face.getLandmark(FaceLandmark.LEFT_EYE)?.position?.y
+        val right = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position?.y
+        val eyeY = when {
+            left != null && right != null -> (left + right) / 2f
+            left != null -> left
+            right != null -> right
+            else -> return null
+        }
+        return ((y - eyeY) / h).coerceIn(-1.5f, 1.5f)
+    }
+
+    /** 眼睛中心的归一化 Y（v5.22），作为"不动参照"。 */
+    private fun eyeCenterNormY(face: Face?): Float? {        if (face == null) return null
         val box = face.boundingBox
         val h = box.height().toFloat()
         if (h <= 1f) return null

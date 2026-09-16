@@ -1036,13 +1036,20 @@ private const val REF_LOG_INTERVAL_MS = 400L
                     if (ref != null) {
                         ref.invert = cfg.headPoseInvertPitch
                         ref.nearDownBoost = head.nearDistance && head.lookingDown
-                        val would = ref.onFrame(frame.noseNormY, frame.chinNormY, now)
+                        val would = ref.onFrame(
+                            frame.noseNormY,
+                            frame.chinNormY,
+                            frame.noseRelEye,
+                            frame.chinRelEye,
+                            now,
+                        )
                         if (would != 0 && now - lastRefLogAtMs >= REF_LOG_INTERVAL_MS) {
                             lastRefLogAtMs = now
+                            val track = if (kotlin.math.abs(would) == 2) "abs" else "rel"
+                            val kind = if (would < 0) "nodDown" else "tiltUp"
                             Log.i(
                                 "RefPoint",
-                                "would-trigger ${if (would < 0) "nodDown" else "tiltUp"} " +
-                                    "ref: ${ref.stateLine()} " +
+                                "would-trigger($track) $kind ref: ${ref.stateLine()} " +
                                     "faceH=${frame.faceRatio?.let { "%.2f".format(it) } ?: "-"} " +
                                     "nearDown=${ref.nearDownBoost} invert=${ref.invert} " +
                                     "(pitchCh untouched)",

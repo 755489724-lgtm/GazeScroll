@@ -539,6 +539,9 @@ class HeadPoseDetector(
          * 近距离俯视的阈值是点头 2.5° / 仰头 3.8°，加上 2.0° 余量分别是 4.5° / 5.8°，
          * 都高于 3.5°；而且跳变确认（[JUMP_CONFIRM_MS]）、晃动判据、手机运动判据
          * 三道门都还在强候选前面，一个都没去掉。
+         *
+         * ⚠️ 只在**近距离档**（`nearDistance`）生效：用户的反馈只针对"近距离俯视"，
+         * 远距离那一套一个字都不改。
          */
         private const val STRONG_MARGIN_DEG = 2.0f
 
@@ -1629,7 +1632,9 @@ class HeadPoseDetector(
 
         // v5.27：强候选 = 幅度已经明显越过阈值，见 [STRONG_MARGIN_DEG]。
         // 必须在下面的 run 之前算出来，好让软性门（闭眼/保持时间/最低速度）对它让路。
-        val strong = magnitude >= threshold + STRONG_MARGIN_DEG
+        // **只在近距离档生效**：用户的反馈只针对"近距离俯视"，远距离那一套（v5.16 之后
+        // 一直好用）一个字都不改。
+        val strong = nearDistance && magnitude >= threshold + STRONG_MARGIN_DEG
 
         // 所有「不触发」的原因都收敛到这一个变量，便于日志里直接说明为什么没触发。
         val reject: String? = run {

@@ -1889,6 +1889,15 @@ class HeadPoseDetector(
             // 只有「真的回到静止」才清掉进行中的动作；被锁或速度不足时保留计时段，
             // 免得用户动作做到一半就被重置掉。
             if (reject == "below-onset") clearExcursion()
+            // v5.29：**闭眼期这一帧的读数不可信，不能当成"上一帧在动"的证据。**
+            // 因果链见 [EYE_UNRELIABLE_MS]：闭眼会让 ML Kit 的姿态跳一下。
+            // v5.27 的强候选豁免让那一帧能直接触发也就罢了，但它还会被记成 `previousFramePitch`，
+            // 于是下一帧的跳变确认看到"前一帧已经越阈值"→ 判定为渐进动作 → 零延迟放行 ✗。
+            // 实测（21:00:29.848，用户报"人没动"）：
+            //   ctx … -123ms|-0.4 → -72ms|-3.5 → 0ms|-5.4   （静止 2 秒后突然单帧跳 3.1°）
+            //   29.768 那一帧已经被 eyes-unreliable 拒掉，却正是它让 29.848 这一帧"看起来是渐进"。
+            // 所以闭眼帧既不作证据、也不留速度样本 —— 下一帧必须自己站稳（跳变确认会等一帧）。
+            if (reject == "eyes-unreliable") return
             updatePitchVelocitySample(signedPitch, nowMs)
             previousFramePitch = signedPitch
             previousFramePitchAtMs = nowMs

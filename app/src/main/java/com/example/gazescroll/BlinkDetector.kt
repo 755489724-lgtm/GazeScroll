@@ -46,6 +46,16 @@ class BlinkDetector(
          */
         private const val MAX_CLOSURE_MS = 3000L
 
+        /**
+         * 一次**眨眼**最长能有多久（v5.29）。
+         *
+         * 实测（v5.28 日志）：用户有意的眨眼持续 139~758ms；而被误计数的那一批是
+         * 845 / 869 / 1035 / 1098 / 1130 / 1187 / 1719 / 3103ms —— 那些不是眨眼，
+         * 是眼睛被读成闭着（低头看屏幕时最关键点质量下降、脸角度变差、或用户真的闭眼休息）。
+         * 取 900ms：卡在两类中间，离用户有意眨眼的最长值（758ms）留有余量。
+         */
+        private const val MAX_BLINK_MS = 900L
+
         /** 近距判定：脸高占画面比例 ≥ 此值时收紧眨眼判定。 */
         private const val NEAR_FACE_RATIO = 0.55f
 
@@ -242,8 +252,22 @@ class BlinkDetector(
 
         applyDistanceAdaptation()
 
-        val closedNow = (left != null && left < effectiveClosedBelow) ||
-            (right != null && right < effectiveClosedBelow)
+        // v5.29：**必须两只眼睛都低于阈值**（只有一只眼可用时才只看那一只）。
+        //
+        // 原版是「任一只眼低于阈值就算闭眼」。近距离俯视时这个口径被系统性地打穿：
+        // 头一低，ML Kit 经常只把**一只**眼睛读成半闭（另一只仍然 0.8~1.0）。
+        // 实测 v5.28 日志（用户报"人没动却翻页"的 21:00:28 前后）：
+        //
+        //   真眨眼（用户有意）：minEye=0.02/0.03  0.03/0.09  0.04/0.03  0.06/0.11  0.08/0.28  ← 两只都低
+        //   误计数（俯视眯眼）：minEye=0.90/0.17  0.83/0.05  0.99/0.26  0.94/0.26  0.78/0.26  ← 只有一只低
+        //
+        // 两类分得干干净净，"两只都低"既保住用户有意的三连眨，又把俯视眯眼造成的假眨眼清掉。
+        val closedNow = when {
+            left != null && right != null -> left < effectiveClosedBelow && right < effectiveClosedBelow
+            left != null -> left < effectiveClosedBelow
+            right != null -> right < effectiveClosedBelow
+            else -> false
+        }
         val openNow = (left != null && left > openAbove) ||
             (right != null && right > openAbove)
         // v5.14：暴露本帧的闭眼状态（含单帧浅闭），供头部判定在姿态不可信期暂停。
@@ -300,6 +324,21 @@ class BlinkDetector(
         // Swallow everything during cooldown; the state above was still updated
         // so we do not fire the moment it expires.
         if (nowMs < cooldownUntilMs) return
+
+        // v5.29：**闭得太久的不算眨眼。**
+        // 实测同一场：用户有意眨眼的持续时间是 139~758ms，而误计数的那一批是
+        // 845 / 869 / 1035 / 1098 / 1130 / 1187 / 1719 / 3103ms —— 那不是眨眼，
+        // 是"眼睛被读成闭着"（低头看屏幕、脸角度变差、或者真的闭着眼休息）。
+        // 900ms 正好卡在两类中间，且离用户有意的眨眼（最长 758ms）留有余量。
+        if (closureMs > MAX_BLINK_MS) {
+            Log.i(
+                TAG,
+                "closure ignored: ${closureMs}ms > ${MAX_BLINK_MS}ms " +
+                    "minEye=${"%.2f".format(closureMinLeft)}/${"%.2f".format(closureMinRight)} " +
+                    "dist=${if (nearTier == true) "near" else "mid/far"}",
+            )
+            return
+        }
 
         blinkCount++
         val previousBlinkAt = lastBlinkAtMs

@@ -1,7 +1,7 @@
 package com.example.gazescroll
 
 /**
- * v5.38 歪头（roll）判据的离线回归验证。
+ * v5.36 歪头（roll）判据的离线回归验证。
  *
  * 直接编译并运行**真实的** TiltDetector.kt（只把 android.util.Log 换成打印到 stdout 的桩）。
  * Feeder 会像服务那样维护"上一次动作 + 2 秒"的禁判窗口，所以两秒规则也一起被验证。
@@ -130,62 +130,19 @@ private fun testHoldOptions() {
 // ------------------------------------------- 回正脖子 / 两秒规则（v5.36 重点）----
 
 private fun testReturnToNeutralDoesNotFire() {
-    println("\n[5] 歪着不动停一会再回正：回正不能触发（基准线在歪着时不更新）")
+    println("\n[5] 歪着头停 6 秒再回正：基准线不能被带走，回正不能触发（v5.36 的根因修复）")
     val f = Feeder()
     f.feed(0f, 1500)
-    f.feed(20f, 3000)               // 歪 20° 停 3 秒（0.3s 就触发；歪着期间不更新基准线）
+    f.feed(20f, 6000)               // 一直歪着（old 代码这里会把基准线拖到 20°）
     val firedWhileTilted = f.events.size
-    f.feed(0f, 1500)                // 回正（一段快速运动）
+    f.feed(0f, 2000)                // 回正
     check("歪着时只触发一次", firedWhileTilted == 1, "触发了 $firedWhileTilted 次")
-    check("回正没有触发（尤其不能反方向触发）", f.events.size == 1, "触发 ${f.events.size} 次")
-    f.feed(0f, 4200)                // 回到中位停稳（顺便把两秒走满）
+    check("回正没有触发", f.events.size == 1, "触发 ${f.events.size} 次")
     check(
-        "自愈：静止后倾斜角回到 0 附近",
+        "回正后倾斜角回到 0 附近（基准线没被带走）",
         kotlin.math.abs(f.detector.tiltDeg ?: 99f) <= 2f,
         "tilt=${f.detector.tiltDeg}",
     )
-    f.feed(-14f, 400)               // 自愈之后正常歪一次（左/升），方向必须正确
-    check("停稳后重新歪照常触发", f.events.size == 2, "触发 ${f.events.size} 次")
-}
-
-private fun testResetKeepsBaseline() {
-    println("\n[16] 服务 reset（遮挡/换应用）**不能丢掉头姿基准线** —— v5.36 那次事故的根源")
-    val f = Feeder()
-    f.feed(0f, 2000)
-    val baseBefore = f.detector.baselineDeg ?: 0f
-    f.detector.reset()              // 服务在遮挡/重绑时会这么调
-    f.feed(0f, 300)
-    val baseAfter = f.detector.baselineDeg ?: 99f
-    check("reset 后基准线仍然是 0 附近（没被清掉）", kotlin.math.abs(baseAfter) <= 2f, "base=$baseAfter")
-    check("reset 前后基准线一致", kotlin.math.abs(baseAfter - baseBefore) <= 2f, "$baseBefore -> $baseAfter")
-    // 正常一次歪头（+14）应当照常触发，且**方向正确**（+ → 右 → 默认降）
-    f.feed(14f, 400)
-    check("reset 后的正常歪头照常触发", f.events.size == 1, "触发 ${f.events.size} 次")
-    check("方向是 +（右/降）", f.events.firstOrNull()?.side == TiltSide.RIGHT, "实际 ${f.events.firstOrNull()?.side}")
-    // 回正不能反方向触发
-    f.feed(0f, 1500)
-    check("回正没有触发反方向", f.events.size == 1, "触发 ${f.events.size} 次")
-    check(
-        "回正后倾斜角回到 0 附近",
-        kotlin.math.abs(f.detector.tiltDeg ?: 99f) <= 3f,
-        "tilt=${f.detector.tiltDeg}",
-    )
-}
-
-private fun testFastSwingDoesNotFire() {
-    println("\n[17] 回正/甩头（快速运动，中途经过中位）→ 不触发")
-    val f = Feeder()
-    f.feed(0f, 1500)
-    f.feed(20f, 400)                // 正常触发一次（右/降）
-    check("第一次触发", f.events.size == 1, "触发 ${f.events.size} 次")
-    // 快速甩到另一边：一帧 0、一帧 -20（模拟 11fps 下"运动中途经过中位"）
-    f.feed(0f, 90)
-    f.feed(-20f, 900)
-    check("运动中甩到另一边不触发", f.events.size == 1, "触发 ${f.events.size} 次")
-    // 停稳 + 等满两秒之后，重新歪才算
-    f.feed(0f, 2200)
-    f.feed(-20f, 400)
-    check("停稳等满两秒后重新歪 → 触发", f.events.size == 2, "触发 ${f.events.size} 次")
 }
 
 private fun testOvershootOnReturn() {
@@ -292,16 +249,14 @@ private fun testOneShotPerEpisode() {
 }
 
 fun main() {
-    println("=== TiltDetector v5.38 离线回放验证（真实代码 + 打印版 Log 桩）===")
+    println("=== TiltDetector v5.36 离线回放验证（真实代码 + 打印版 Log 桩）===")
     println("--- 必须触发 ---")
     testBasicTilt()
     testNegativeTilt()
     testOffsetBaseline()
     testHoldOptions()
-    println("--- 回正脖子 / 两秒规则（v5.36-v5.37 重点）---")
+    println("--- 回正脖子 / 两秒规则（v5.36 重点）---")
     testReturnToNeutralDoesNotFire()
-    testResetKeepsBaseline()
-    testFastSwingDoesNotFire()
     testOvershootOnReturn()
     testNoLeadTime()
     testGapBlocksRepeatedTilt()

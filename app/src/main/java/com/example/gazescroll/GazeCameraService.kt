@@ -1474,14 +1474,14 @@ private const val REF_LOG_INTERVAL_MS = 400L
             " base=${headPoseDetector?.baselineDeg?.let { "%.1f".format(it) } ?: "-"}°" +
             " chin=${lastFrameChinRatio?.let { "%.3f".format(it) } ?: "-"}" +
             " faceRatio=${faceRatioText()}"
-        // v5.33：把「两只眼的读数差」也打进日志 —— 它就是本通道的核心判据，
-        // 事后核对一次触发时，这一项和 onset 一起看就够了。
+        // v5.33/v5.34：把「两只眼的读数差」和「这只眼最近有多常被读成闭着」也打进日志 ——
+        // 它们就是本通道的两个判据，事后核对一次触发时看这两项 + held 就够了。
         val closedEye = if (event.side == WinkSide.LEFT) event.eyeL else event.eyeR
         val detail = "held=${event.heldMs}ms eyeL=${"%.2f".format(event.eyeL)}" +
             " eyeR=${"%.2f".format(event.eyeR)} min=${"%.2f".format(event.minClosed)}" +
             " other=${"%.2f".format(event.otherEye)} sep=${"%.2f".format(event.otherEye - closedEye)}" +
+            " duty=${"%.2f".format(event.dutyAtStart)}" +
             " thr=${"%.2f".format(event.closedBelow)}" +
-            " onset=${event.onsetMs}ms" +
             " dist=${if (event.nearTier == true) "near" else "mid/far"}"
         // 一次调几档由用户选（1 档 = 按一次音量键）。
         val steps = cfg.winkVolumeStep.coerceIn(1, 5)

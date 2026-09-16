@@ -16,7 +16,7 @@ enum class WinkSide(val label: String) {
  * 一次被确认的「有意单闭」。
  *
  * 带上判定当时的全部读数，服务那边原样打进 `I/Wink` 日志 —— 「这只眼读到多少、另一只眼
- * 读到多少、闭了多久、合得多快」在日志里一眼能核对。
+ * 读到多少、闭了多久、最近这只眼有多常被读成闭着」在日志里一眼能核对。
  */
 data class WinkEvent(
     val side: WinkSide,
@@ -34,44 +34,55 @@ data class WinkEvent(
     /** 距离档（来自头部检测器），仅用于日志核对。 */
     val nearTier: Boolean?,
     /**
-     * 从「最后一次没闭着」到「第一次深闭」用了多久（毫秒）。
+     * 本次单闭**开始时**这只眼「最近有多常被读成闭着」（0~1，约 5 秒的指数滑动平均）。
      *
-     * 这是本通道**唯一**的"是不是有意动作"判据：真单闭是眼皮"啪"一下合上（实测 63~432ms），
-     * 而低头看屏幕时 ML Kit 把一只眼慢慢读低要用好几秒。越小越像真闭眼。
+     * 这是本通道判断"是不是有意动作"的时间域判据：有意单闭是偶尔闭一下（≈0.05），
+     * 而低头看屏幕时 ML Kit 会把这**一只眼反复读低**（≈0.4~0.9）。
      */
-    val onsetMs: Long,
+    val dutyAtStart: Float,
 )
 
 /**
- * 单眼闭眼（wink）检测器 —— v5.30 新增，v5.31/v5.32/v5.33 按实机数据三次重定判据。
+ * 单眼闭眼（wink）检测器 —— v5.30 新增，v5.31→v5.34 按实机数据四次重定判据。
  *
- * ## 判据（v5.33）
+ * ## 判据（v5.34，全部要满足）
  *
- * 「**一只眼明显比另一只眼闭、而且是"啪"一下闭上的、再保持住**」：
- *
- *  1. **两只眼的读数必须差 ≥ [SEPARATION_MIN]（0.30）** —— 一只明显闭着、另一只明显睁着。
- *     这是核心判据：眨眼 / 半闭时两只眼会一起落在 0.5~0.7（差不到 0.30），必然被挡掉。
- *  2. 另一只眼不能是闭的（读数 ≥ [closedBelow]）—— 两只眼同时闭 = 眨眼，整段作废。
- *  3. **合眼要快**：从「最后一次读到没闭着」到「第一次深闭 < [DEEP_CLOSED_BELOW]」
- *     必须 ≤ [ONSET_MAX_MS]（500ms）。真单闭实测 63~432ms；低头时被慢慢读低要好几秒。
- *  4. 保持 [holdMs]（默认 400ms，可在设置里选 0.4/0.6/0.8/1.0 秒）。
+ *  1. **两只眼的读数差 ≥ [SEPARATION_MIN]（0.30）** —— 一只明显闭着、另一只明显睁着。
+ *  2. 另一只眼不是闭着（≥ [closedBelow]）—— 两只眼同时闭 = 眨眼，不判定。
+ *  3. 保持 [holdMs]（默认 400ms），且这条闭合不超过 [MAX_CLOSURE_MS]（闭太久是休息/眯眼）。
+ *  4. **这只眼"最近不常被读成闭着"**：闭合开始时 [Track.duty] ≤ [DUTY_MAX]（0.28）。
  *  5. 一次单闭只调一组档位：触发后闩锁，**必须重新睁大（> [REOPEN_ABOVE]）**才能再来一次。
  *
- * ## 为什么是这几条（三轮实机数据）
+ * ## 为什么最终是这几条（四轮实机数据，每一步都留了证据）
  *
- * - **v5.30**：只有「一只眼低于阈值 + 另一只眼 >0.70 + 保持 1 秒」。低头看屏幕时 ML Kit
- *   会把一只眼**慢慢读低、一读几十秒**，一场 90 秒里被判成 11 次"单闭"，音量从 50 打到 0。
- * - **v5.31**：加了「闭之前必须连续明确睁着(>0.65) ≥600ms」。这条是错的 —— 30cm 俯视时
- *   **睁着的那只眼读数也常在 0.55~0.70**，于是把用户连续 5 次真单闭全否掉（"一点动静没有"）。
- * - **v5.32**：删掉那条、把「另一只眼」的门槛降到"不是闭着"、onset 窗口放到 500ms。
- *   结果**眨眼也能调音量了**（22:25:56：闭的那只 0.54、另一只 0.65 —— 两只眼一起半闭，
- *   只差 0.11 就被判成"单闭"）。原因是**绝对阈值分不开这两类**：眨眼时两只眼一起落在
- *   0.5~0.7，真单闭时闭的那只也能停在 0.54。能分开的只有**两只眼差多少** → 于是有了
- *   判据 1（0.11 vs 0.47/0.82/0.52/0.74，0.30 卡在中间）。
+ * - **v5.30**「一只眼 < 阈值 + 另一只眼 >0.70 + 保持 1 秒」：低头看屏幕时 ML Kit 把一只眼
+ *   **反复读低**，90 秒里被判成 11 次"单闭"，音量从 50 打到 0。
+ * - **v5.31** 加「闭之前必须连续明确睁着(>0.65) ≥600ms」：错。30cm 俯视时睁着的那只眼读数
+ *   也常在 0.55~0.70 → 用户连续 5 次真单闭全被否（"一点动静没有"）。
+ * - **v5.32** 删掉那条、把"另一只眼"门槛降到"不是闭着"：结果**眨眼也能调音量**
+ *   （22:25:56：2 只眼一起半闭 0.54/0.65，差只有 0.11 就被判成单闭）。
+ * - **v5.33** 加「合眼 ≤500ms」当核心判据：**误触没了，但真单闭又被挡掉大半**。事后核对
+ *   （本次日志）发现这条根本不能用 —— ML Kit 的概率是逐帧软分类，**真单闭的下降也常常很慢**：
  *
- * 另外记录一条被证伪的假设：**"闭上一只眼时读不到另一只眼的数据"** 在本设备上不成立 ——
- * 翻遍所有历史验证日志（v5.10 起）：**3153 帧有脸画面里，没有任何一帧只缺一只眼的读数**
- * （ML Kit 只要有脸就会同时给出两只眼的概率）。所以"读不到"不能当判据。
+ *   ```
+ *   成功：held=406ms sep=0.88 onset=88ms     被拒：held=466ms sep=0.93 onset=658ms
+ *   成功：held=475ms sep=0.84 onset=100ms    被拒：held=449ms sep=0.99 onset=1216ms
+ *   成功：held=410ms sep=0.50 onset=147ms    被拒：held=480ms sep=1.00 onset=1732ms
+ *   ```
+ *
+ *   被拒的那几条 sep 高达 0.93~1.00 —— 一眼就是有意单闭（一只 0.0x、另一只 0.9x），
+ *   却因为"概率下降慢"被判成误触。而 v5.30 那批误触的 onset 是 1.6~3.2 秒，**与真单闭重叠**
+ *   → 结论：**onset 分不开这两类，判据废掉**。
+ * - **v5.34** 换成时间域判据：不看"这一下多快"，而看"**这只眼最近有多常被读成闭着**"。
+ *   有意单闭是偶尔闭一下（duty≈0.05，用户实测那些被拒的也都属于这一类）；低头眯眼是这只眼
+ *   被**反复**读低（v5.30 那批实测 duty≈0.4~0.9，因为同一次低头里它一直被读低）。
+ *   duty 是约 5 秒的指数滑动平均，对单帧噪声不敏感，也不会因为"某一下闭得慢"就误杀。
+ *
+ * ## 另一条被证伪的假设（用户提出，已留档）
+ *
+ * 「闭一只眼时读不到另一只眼的数据」在本设备上不成立：全部历史日志（v5.10 起 33 个文件）
+ * **3153 帧有脸画面里，没有任何一帧只缺一只眼的读数** —— ML Kit 只要有脸就同时给出两只眼的
+ * 概率，闭上那只给的是 0.02~0.15 的低值。所以"读不到"不能当判据。
  *
  * 本类不触发任何 Android API（只打日志），纯逻辑。
  */
@@ -82,39 +93,16 @@ class WinkDetector(
     companion object {
         private const val TAG = "Wink"
 
-        /**
-         * 「重新睁大」的读数（v5.32）：只有重新睁到这么开，才允许下一次单闭。
-         *
-         * 这是**防连发**用的（一次单闭只调一组档位），不是"起手"判据。
-         */
+        /** 「重新睁大」的读数：只有重新睁到这么开，才解除触发闩锁。 */
         private const val REOPEN_ABOVE = 0.65f
 
-        /**
-         * 两只眼的读数必须差这么多，才算「一只闭着、另一只睁着」（v5.33）。
-         *
-         * 这是本通道的核心判据。实测（v5.32 日志，用户报"我眨眼也能调音量"）：
-         *
-         * ```
-         * 22:25:56 误触发（眨眼/半闭）  闭的那只=0.54  另一只=0.65  → 差 0.11  ✗
-         * 22:26:12 真单闭              闭的那只=0.30  另一只=0.77  → 差 0.47  ✓
-         * 22:26:17 真单闭              闭的那只=0.13  另一只=0.95  → 差 0.82  ✓
-         * 22:26:25 真单闭              闭的那只=0.43  另一只=0.95  → 差 0.52  ✓
-         * 22:26:27 真单闭              闭的那只=0.24  另一只=0.98  → 差 0.74  ✓
-         * ```
-         *
-         * 0.30 正好卡在 0.11 与 0.47 之间。**绝对阈值分不开这两类**（眨眼时两只眼会
-         * 一起落在 0.5~0.7，真单闭时闭的那只也能停在 0.54），能分开的只有"两只眼
-         * 差多少"——所以判据用它。
-         */
+        /** 两只眼的读数必须差这么多，才算「一只闭着、另一只睁着」。 */
         private const val SEPARATION_MIN = 0.30f
 
-        /** 从「最后一次没闭着」到「第一次深闭」的最大用时（v5.32）。 */
-        private const val ONSET_MAX_MS = 500L
-
-        /** 「深闭」的读数：真正的合眼会掉到这里。 */
+        /** 「深闭」的读数。 */
         private const val DEEP_CLOSED_BELOW = 0.30f
 
-        /** 默认保持时长。v5.31 是 600ms，v5.32 按实测（有意单闭 400~620ms）收到 400ms。 */
+        /** 默认保持时长（实测用户有意单闭 400~620ms）。 */
         const val DEFAULT_HOLD_MS = 400L
 
         /** 保持时长的可选档位（毫秒）。 */
@@ -123,8 +111,22 @@ class WinkDetector(
         /** 短于这个时长的单闭不打日志（滤掉单帧抖动）。 */
         private const val LOG_MIN_MS = 250L
 
-        /** 单只眼一直闭着超过这么久 = 读数卡住或用户闭着眼休息，清掉状态。 */
+        /** 单次闭合超过这个时长 = 休息 / 眯眼，不算单闭。 */
+        private const val MAX_CLOSURE_MS = 2500L
+
+        /** 一只眼一直闭着超过这么久 = 读数卡住，清掉状态等睁眼。 */
         private const val STUCK_MS = 6000L
+
+        /** duty 的时间常数（毫秒）：约 5 秒的指数滑动平均。 */
+        private const val DUTY_WINDOW_MS = 5000f
+
+        /**
+         * 闭合开始时这只眼的 duty 上限。
+         *
+         * 实测：有意单闭 ≈0.02~0.10（偶尔闭一下）；低头时被反复读低 ≈0.4~0.9。
+         * 0.28 卡在中间，并且留出"连续点几次音量"的余量（1 秒内闭 2 次也只到 ~0.2）。
+         */
+        private const val DUTY_MAX = 0.28f
     }
 
     /** 需要保持多久（毫秒）。服务每帧同步，日志与界面都显示它。 */
@@ -161,29 +163,26 @@ class WinkDetector(
 
     /** 单只眼的状态。 */
     private class Track {
-        /** 最后一次"没闭着"（读数 ≥ 闭眼阈值）的时刻 —— onset 的起点。 */
-        var lastNotClosedAtMs = 0L
+        /** 上一帧时刻，用来算 duty 的时间权重。 */
+        var lastFrameAtMs = 0L
 
-        /** 本段单闭开始时刻；0 = 当前没有单闭。 */
+        /** 「最近这只眼有多常被读成闭着」：约 5 秒的指数滑动平均（0~1）。 */
+        var duty = 0f
+
+        /** 本次闭合的起点；0 = 当前没有闭合。 */
         var closedSinceMs = 0L
 
-        /** 本段是否已经触发过（一次单闭只调一组）。 */
+        /** 本次闭合开始时的 duty（诊断 + 判据）。 */
+        var dutyAtStart = 0f
+
+        /** 触发闩锁：触发后必须重新睁大（> [REOPEN_ABOVE]）才解除。 */
         var fired = false
 
         /** 本段里闭着的那只眼的最深读数。 */
         var minReading = 1f
 
-        /** 本段是否已经读到「深闭」。 */
-        var deepSeen = false
-
-        /** 起手是否够快。 */
-        var onsetOk = false
-
-        /** 从最后一次没闭着到第一次深闭的用时（诊断，-1 = 还没读到深闭）。 */
-        var onsetMs = -1L
-
-        /** 是否已经打过「保持够了但起手不合格」的日志。 */
-        var reportedBadOnset = false
+        /** 是否已经打过这一段的拒绝日志。 */
+        var reportedReject = false
     }
 
     private val leftTrack = Track()
@@ -191,13 +190,14 @@ class WinkDetector(
 
     /** 诊断行用的紧凑状态。 */
     fun stateLine(): String =
-        "L=${leftHeldMs}ms R=${rightHeldMs}ms thr=${"%.2f".format(closedBelow)} " +
-            "hold=${holdMs}ms fired=$triggerCount last=$lastWinkLabel"
+        "L=${leftHeldMs}ms(duty=${"%.2f".format(leftTrack.duty)}) " +
+            "R=${rightHeldMs}ms(duty=${"%.2f".format(rightTrack.duty)}) " +
+            "thr=${"%.2f".format(closedBelow)} hold=${holdMs}ms fired=$triggerCount last=$lastWinkLabel"
 
     /**
      * 清掉进行中的单闭（遮挡 / 静止硬锁定 / 服务重绑 / 功能被关掉时调用）。
      *
-     * 累计次数不重置：界面上「已调音量 N 档」是这次运行的累计值。
+     * duty 也一起清：下一次开始重新统计"最近有多常被读成闭着"，避免把遮挡前的旧状态带过来。
      */
     @Synchronized
     fun reset() {
@@ -208,18 +208,17 @@ class WinkDetector(
     }
 
     private fun clearAll(t: Track) {
-        clearEpisode(t)
-        t.lastNotClosedAtMs = 0L
+        clearClosure(t)
+        t.lastFrameAtMs = 0L
+        t.duty = 0f
+        t.fired = false
     }
 
-    private fun clearEpisode(t: Track) {
+    private fun clearClosure(t: Track) {
         t.closedSinceMs = 0L
-        t.fired = false
+        t.dutyAtStart = 0f
         t.minReading = 1f
-        t.deepSeen = false
-        t.onsetOk = false
-        t.onsetMs = -1L
-        t.reportedBadOnset = false
+        t.reportedReject = false
     }
 
     /**
@@ -230,150 +229,135 @@ class WinkDetector(
      */
     @Synchronized
     fun onEyeProbabilities(left: Float?, right: Float?, nowMs: Long) {
-        // 少一只眼的读数，就无从知道"另一只眼是否闭着"，单闭判定的前提不成立。
-        // （实测：所有历史日志 3153 帧有脸画面里，**没有任何一帧**只缺一只眼的读数 ——
-        //   ML Kit 只要有脸就会同时给出两只眼的概率，所以"读不到另一只眼"不能当判据。）
+        // 少一只眼的读数，就无从知道"另一只眼是否闭着"，判定的前提不成立。
+        // （实测：所有历史日志 3153 帧有脸画面里，没有任何一帧只缺一只眼的读数。）
         if (left == null || right == null) {
             reset()
             return
         }
         val below = closedBelow.coerceIn(0.10f, 0.90f)
 
-        // v5.33：每只眼**各自**记录「最后一次没闭着」的时刻，与另一只眼的状态无关。
-        // v5.32 把这一步放在 handle() 里、且在"另一只眼闭着"的提前返回之后，于是
-        // 「左眼单闭 → 右眼单闭」这样交替时，右眼的时间戳一直是 0（从没更新过），
-        // onset 算成 Long.MAX → 一律判"合眼太慢"。日志里就是那几行
-        // `从最后一次没闭着到深闭用了 9223372036854775807ms`。
-        if (left >= below) leftTrack.lastNotClosedAtMs = nowMs
-        if (right >= below) rightTrack.lastNotClosedAtMs = nowMs
+        // 每只眼各自记账 —— 与另一只眼的状态无关。
+        // （v5.32 曾把这段放在"另一只眼闭着就作废"的提前返回之后，于是左右眼交替单闭时
+        //   右眼的状态从不更新，一行行都是 9223372036854775807ms。）
+        updateEye(leftTrack, left, below, nowMs)
+        updateEye(rightTrack, right, below, nowMs)
 
-        handle(WinkSide.LEFT, left, right, below, nowMs)
-        handle(WinkSide.RIGHT, right, left, below, nowMs)
+        evaluate(WinkSide.LEFT, leftTrack, left, right, below, nowMs)
+        evaluate(WinkSide.RIGHT, rightTrack, right, left, below, nowMs)
 
         leftHeldMs = if (leftTrack.closedSinceMs != 0L) nowMs - leftTrack.closedSinceMs else 0L
         rightHeldMs = if (rightTrack.closedSinceMs != 0L) nowMs - rightTrack.closedSinceMs else 0L
     }
 
-    private fun handle(
+    /** 单只眼的物理状态：duty、闭合段、闩锁。与另一只眼完全无关。 */
+    private fun updateEye(t: Track, prob: Float, below: Float, nowMs: Long) {
+        // duty：这只眼"最近有多常被读成闭着"（时间加权的指数滑动平均）。
+        val dt = if (t.lastFrameAtMs == 0L) 0f else (nowMs - t.lastFrameAtMs).coerceIn(0L, 500L).toFloat()
+        t.lastFrameAtMs = nowMs
+        if (dt > 0f) {
+            val closedNow = if (prob < below) 1f else 0f
+            val alpha = (dt / DUTY_WINDOW_MS).coerceIn(0f, 1f)
+            t.duty += (closedNow - t.duty) * alpha
+        }
+
+        if (prob >= below) {
+            // 睁开：这一段闭合结束。
+            if (t.closedSinceMs != 0L) {
+                val held = nowMs - t.closedSinceMs
+                if (!t.fired && held < holdMs && held >= LOG_MIN_MS) {
+                    Log.i(
+                        TAG,
+                        "wink ${sideLabel(t)} 只闭了 ${held}ms（< ${holdMs}ms）→ 不触发 " +
+                            "min=${"%.2f".format(t.minReading)} " +
+                            "duty=${"%.2f".format(t.dutyAtStart)} " +
+                            "dist=${if (nearTier == true) "near" else "mid/far"}",
+                    )
+                }
+                clearClosure(t)
+            }
+            // 重新睁大才解除闩锁（防止一只眼在阈值附近反复抖动时连续触发）。
+            if (prob > REOPEN_ABOVE) t.fired = false
+            return
+        }
+
+        // 闭着：开启 / 延续这一段。
+        if (t.closedSinceMs == 0L) {
+            t.closedSinceMs = nowMs
+            t.dutyAtStart = t.duty
+            t.minReading = prob
+            t.reportedReject = false
+        }
+        t.minReading = minOf(t.minReading, prob)
+
+        val held = nowMs - t.closedSinceMs
+        if (held > STUCK_MS) {
+            Log.i(TAG, "wink ${sideLabel(t)} 单眼读数卡住 ${held}ms → 清掉，等睁眼")
+            clearClosure(t)
+        }
+    }
+
+    /** 触发评估：闭着的那只眼 + 另一只眼的读数一起看。 */
+    private fun evaluate(
         side: WinkSide,
+        t: Track,
         prob: Float,
         other: Float,
         below: Float,
         nowMs: Long,
     ) {
-        val t = if (side == WinkSide.LEFT) leftTrack else rightTrack
-
-        // 两只眼都闭着 = 眨眼 / 眯眼，不是单闭：整段作废，等睁眼后重新开始。
-        // （所以「连眨 3 次翻页」永远不可能被这条通道当成单闭。）
-        if (other < below) {
-            clearEpisode(t)
-            return
-        }
-
-        // 本眼"没闭着"（"最后一次没闭着"的时刻已由 onEyeProbabilities 各自记好）。
-        if (prob >= below) {
-            // 重新睁大才算这一页翻过去（下一次单闭要重新起手）。
-            if (prob > REOPEN_ABOVE && t.closedSinceMs != 0L) {
-                val held = nowMs - t.closedSinceMs
-                // 只有"没保持够"时才在这里留痕；保持够了却没触发的情况上面已经写过原因，
-                // 再写一行会自相矛盾（"只闭了 1200ms（< 600ms）"就是这么来的）。
-                if (!t.fired && held < holdMs && held >= LOG_MIN_MS) {
-                    Log.i(
-                        TAG,
-                        "wink ${side.label} 只闭了 ${held}ms（< ${holdMs}ms）→ 不触发 " +
-                            "min=${"%.2f".format(t.minReading)} other=${"%.2f".format(other)} " +
-                            "thr=${"%.2f".format(below)} " +
-                            "dist=${if (nearTier == true) "near" else "mid/far"}",
-                    )
-                }
-                clearEpisode(t)
-            }
-            return
-        }
-
-        // ---- 闭着（< 闭眼阈值），且另一只眼没闭 ----
-        if (t.closedSinceMs == 0L) {
-            t.closedSinceMs = nowMs
-            t.fired = false
-            t.minReading = prob
-            t.deepSeen = false
-            t.onsetOk = false
-            t.onsetMs = -1L
-            t.reportedBadOnset = false
-        }
-        t.minReading = minOf(t.minReading, prob)
-
-        // v5.32：第一次读到「深闭」时结算"合眼用时" —— 这是唯一的"是不是有意动作"判据。
-        if (!t.deepSeen && prob < DEEP_CLOSED_BELOW) {
-            t.deepSeen = true
-            t.onsetMs = if (t.lastNotClosedAtMs == 0L) Long.MAX_VALUE else nowMs - t.lastNotClosedAtMs
-            t.onsetOk = t.onsetMs <= ONSET_MAX_MS
-        }
+        if (t.closedSinceMs == 0L || t.fired) return
+        // 另一只眼也闭着 = 眨眼 / 眯眼：这一刻不判定（等它睁开再继续看这只眼）。
+        if (other < below) return
 
         val held = nowMs - t.closedSinceMs
-        if (held > STUCK_MS) {
-            // 读数卡住（镜片反光 / 检测退化）或用户闭着眼休息：清掉，等睁眼重来。
-            clearEpisode(t)
+        if (held < holdMs) return
+
+        val label = if (side == WinkSide.LEFT) "左眼" else "右眼"
+        val separation = other - prob
+        val reason = when {
+            held > MAX_CLOSURE_MS ->
+                "闭了 ${held}ms 太久（>${MAX_CLOSURE_MS}ms）= 休息 / 眯眼"
+            separation < SEPARATION_MIN ->
+                "两只眼读数差不多（这只眼=${"%.2f".format(prob)} 另一只=${"%.2f".format(other)} " +
+                    "差=${"%.2f".format(separation)} 需要 ≥${"%.2f".format(SEPARATION_MIN)}）"
+            t.dutyAtStart > DUTY_MAX ->
+                "最近这只眼老被读成闭着（duty=${"%.2f".format(t.dutyAtStart)} " +
+                    "需要 ≤${"%.2f".format(DUTY_MAX)}）= 低头眯眼，不是单闭"
+            else -> null
+        }
+        if (reason != null) {
+            if (!t.reportedReject) {
+                t.reportedReject = true
+                Log.i(
+                    TAG,
+                    "wink $label 保持 ${held}ms 但不算单闭 → $reason " +
+                        "（min=${"%.2f".format(t.minReading)} other=${"%.2f".format(other)} " +
+                        "dist=${if (nearTier == true) "near" else "mid/far"}）",
+                )
+            }
             return
         }
 
-        if (!t.fired && held >= holdMs) {
-            val separation = other - prob
-            when {
-                !t.deepSeen || !t.onsetOk -> if (!t.reportedBadOnset) {
-                    // 用户报「单闭不灵」时，这一行直接给出卡在哪一条：合眼太慢（或者根本没闭深）。
-                    t.reportedBadOnset = true
-                    val onsetText = if (t.onsetMs < 0) {
-                        "还没闭到 <${DEEP_CLOSED_BELOW}"
-                    } else if (t.onsetMs == Long.MAX_VALUE) {
-                        "这只眼在本段之前从没被读到「没闭着」"
-                    } else {
-                        "${t.onsetMs}ms"
-                    }
-                    Log.i(
-                        TAG,
-                        "wink ${side.label} 保持 ${held}ms 但合眼太慢 → 不触发 " +
-                            "（从最后一次没闭着到深闭用了 $onsetText，需要 ≤${ONSET_MAX_MS}ms；" +
-                            "min=${"%.2f".format(t.minReading)} other=${"%.2f".format(other)} " +
-                            "dist=${if (nearTier == true) "near" else "mid/far"}）",
-                    )
-                }
-
-                // v5.33 核心判据：两只眼的读数必须明显不一样。
-                // 眨眼 / 半闭时两只眼会一起落在 0.5~0.7，差不到 0.30，这里就会被挡掉。
-                separation < SEPARATION_MIN -> if (!t.reportedBadOnset) {
-                    t.reportedBadOnset = true
-                    Log.i(
-                        TAG,
-                        "wink ${side.label} 保持 ${held}ms 但两只眼读数差不多 → 不算单闭 " +
-                            "（这只眼=${"%.2f".format(prob)} 另一只=${"%.2f".format(other)} " +
-                            "差=${"%.2f".format(separation)} 需要 ≥${"%.2f".format(SEPARATION_MIN)}；" +
-                            "min=${"%.2f".format(t.minReading)} " +
-                            "dist=${if (nearTier == true) "near" else "mid/far"}）",
-                    )
-                }
-
-                else -> {
-                    t.fired = true
-                    triggerCount++
-                    lastWinkLabel = "${side.label} ${held}ms"
-                    onWink(
-                        WinkEvent(
-                            side = side,
-                            heldMs = held,
-                            // 按眼别记录，避免"闭的那只/睁的那只"在日志里看错眼。
-                            eyeL = if (side == WinkSide.LEFT) prob else other,
-                            eyeR = if (side == WinkSide.LEFT) other else prob,
-                            minClosed = t.minReading,
-                            otherEye = other,
-                            closedBelow = below,
-                            nearTier = nearTier,
-                            onsetMs = t.onsetMs,
-                        ),
-                    )
-                }
-            }
-        }
-        // 落在回差带（闭眼阈值 ≤ prob ≤ [REOPEN_ABOVE]）：保持上一次状态，等一个明确的读数。
+        t.fired = true
+        triggerCount++
+        lastWinkLabel = "$label ${held}ms"
+        onWink(
+            WinkEvent(
+                side = side,
+                heldMs = held,
+                // 按眼别记录，避免"闭的那只/睁的那只"在日志里看错眼。
+                eyeL = if (side == WinkSide.LEFT) prob else other,
+                eyeR = if (side == WinkSide.LEFT) other else prob,
+                minClosed = t.minReading,
+                otherEye = other,
+                closedBelow = below,
+                nearTier = nearTier,
+                dutyAtStart = t.dutyAtStart,
+            ),
+        )
     }
+
+    /** 日志里区分左右眼的辅助（Track 本身不带眼别）。 */
+    private fun sideLabel(t: Track): String = if (t === leftTrack) "左眼" else "右眼"
 }

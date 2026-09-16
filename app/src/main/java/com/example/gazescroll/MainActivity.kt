@@ -81,7 +81,7 @@ class MainActivity : AppCompatActivity() {
         setupCooldownUi()
         setupHorizontalSwipeUi()
         setupMouthTapUi()
-        setupWinkVolumeUi()
+        setupTiltVolumeUi()
         setupAdaptiveSwipeUi()
         setupGlobalPagingUi()
         setupSensitivityUi()
@@ -266,17 +266,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // v5.30：单眼闭眼控音量 —— 把「已经闭了多久」直接显示出来。用户能看着数字
-            // 涨到 1000ms，也能立刻分辨到底是哪只眼被读成闭着（单闭不灵时第一个要看的）。
-            if (cfg.winkVolumeEnabled) {
-                append("单闭保持：左眼 ").append(s.winkHeldLeftMs).append("ms")
-                append("    右眼 ").append(s.winkHeldRightMs).append("ms")
-                append("    满 ").append(cfg.winkHoldMs).append("ms 调 ")
-                append(cfg.winkVolumeStep).append(" 档（左眼闭 = ")
-                append(if (cfg.winkLeftVolumeUp) "调高" else "调低")
-                append("，右眼闭 = ")
-                append(if (cfg.winkRightVolumeUp) "调高" else "调低")
-                append("）    已调音量 ").append(s.winkSteps).append(" 档\n")
+            // v5.35：歪头控音量 —— 把「当前歪了多少、已经保持多久」直接显示出来。
+            // 用户能看着数字涨到设定时长、也能核对哪边是"正在歪"，判定不灵时第一个要看这里。
+            if (cfg.tiltVolumeEnabled) {
+                val tilt = s.tiltDeg
+                append("歪头：当前 ")
+                append(tilt?.let { String.format(java.util.Locale.US, "%+.1f", it) } ?: "--")
+                append("°    已保持 ").append(s.tiltHeldMs).append("ms")
+                append("    需要 ").append(cfg.tiltThresholdDeg.toInt()).append("° 并保持 ")
+                append(cfg.tiltHoldMs).append("ms")
+                append("（左歪头 = ").append(if (cfg.tiltLeftVolumeUp) "调高" else "调低")
+                append("，右歪头 = ").append(if (cfg.tiltRightVolumeUp) "调高" else "调低")
+                append("）    已调音量 ").append(s.tiltVolumeSteps).append(" 档\n")
             }
 
             append("眨眼累计 ").append(s.blinkCount)
@@ -526,91 +527,115 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------- v5.30 单眼闭眼控音量 --
+    // ------------------------------------------- v5.35 歪头控音量 --
 
     /**
-     * 「单眼闭眼 1 秒 → 音量加 / 减」的总开关 + 左右眼方向开关。
+     * 「歪头 → 音量加 / 减」的总开关 + 左右方向开关 + 触发角度 + 保持时长 + 档位。
      *
-     * 方向完全交给用户（这是 v5.30 用户点名的「反方向的开关」）：左右眼各一个开关，
-     * 决定那只眼闭上是「调高」还是「调低」，两个开关互不影响。
+     * 这是 v5.35 用户点名的改动：**删掉「单眼闭眼控音量」**（v5.30~v5.34 四轮都做不稳），
+     * 改成歪头。用户原话：「左歪头上升，右歪头下降……也给用户自己选择左歪头降低还是增加，
+     * 还是右歪头降低还是增加，不过这个判断方式可以久一点，意思是仰头得到一定的角度，
+     * 才会触发」。
      *
-     * 判定阈值跟随眨眼灵敏度（同一对闭眼 / 睁眼阈值），所以这里不放灵敏度档位；
-     * 下面的「实时数值」会显示两只眼**各自已经保持的单闭时长**，闭到 1000ms 就调一档。
+     * 所以：方向两边各自可反转；**必须歪到一定角度（默认 18°）并保持住（默认 0.5 秒）**
+     * 才触发。下面的「实时数值」会实时显示当前倾斜角与已保持时长。
      */
-    private fun setupWinkVolumeUi() {
+    private fun setupTiltVolumeUi() {
         val cfg = GazeRuntime.config
-        binding.switchWinkVolume.isChecked = cfg.winkVolumeEnabled
-        binding.switchWinkLeftUp.isChecked = cfg.winkLeftVolumeUp
-        binding.switchWinkRightUp.isChecked = cfg.winkRightVolumeUp
+        binding.switchTiltVolume.isChecked = cfg.tiltVolumeEnabled
+        binding.switchTiltLeftUp.isChecked = cfg.tiltLeftVolumeUp
+        binding.switchTiltRightUp.isChecked = cfg.tiltRightVolumeUp
 
-        binding.switchWinkVolume.setOnCheckedChangeListener { _, checked ->
-            updateConfig { it.copy(winkVolumeEnabled = checked) }
-            renderWinkVolumeUi()
+        binding.switchTiltVolume.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(tiltVolumeEnabled = checked) }
+            renderTiltVolumeUi()
         }
-        binding.switchWinkLeftUp.setOnCheckedChangeListener { _, checked ->
-            updateConfig { it.copy(winkLeftVolumeUp = checked) }
-            renderWinkVolumeUi()
+        binding.switchTiltLeftUp.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(tiltLeftVolumeUp = checked) }
+            renderTiltVolumeUi()
         }
-        binding.switchWinkRightUp.setOnCheckedChangeListener { _, checked ->
-            updateConfig { it.copy(winkRightVolumeUp = checked) }
-            renderWinkVolumeUi()
+        binding.switchTiltRightUp.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(tiltRightVolumeUp = checked) }
+            renderTiltVolumeUi()
         }
 
-        // 单闭保持时长（v5.31：用户反馈 1 秒太长，改成四档可选、默认 0.6 秒）。
-        binding.rgWinkHold.check(
+        // 触发角度（用户要求"得到一定的角度才触发"）。
+        binding.rgTiltThreshold.check(
             when {
-                cfg.winkHoldMs <= 400L -> R.id.rbWinkHold400
-                cfg.winkHoldMs >= 1000L -> R.id.rbWinkHold1000
-                cfg.winkHoldMs >= 800L -> R.id.rbWinkHold800
-                else -> R.id.rbWinkHold600
+                cfg.tiltThresholdDeg <= 12f -> R.id.rbTiltThr12
+                cfg.tiltThresholdDeg >= 22f -> R.id.rbTiltThr22
+                cfg.tiltThresholdDeg >= 18f -> R.id.rbTiltThr18
+                else -> R.id.rbTiltThr15
             },
         )
-        binding.rgWinkHold.setOnCheckedChangeListener { _, checkedId ->
-            val hold = when (checkedId) {
-                R.id.rbWinkHold400 -> 400L
-                R.id.rbWinkHold800 -> 800L
-                R.id.rbWinkHold1000 -> 1000L
-                else -> 600L
+        binding.rgTiltThreshold.setOnCheckedChangeListener { _, checkedId ->
+            val deg = when (checkedId) {
+                R.id.rbTiltThr12 -> 12f
+                R.id.rbTiltThr22 -> 22f
+                R.id.rbTiltThr18 -> 18f
+                else -> 15f
             }
-            updateConfig { it.copy(winkHoldMs = hold) }
-            renderWinkVolumeUi()
+            updateConfig { it.copy(tiltThresholdDeg = deg) }
+            renderTiltVolumeUi()
         }
 
-        // 每次调整多少档（v5.31：用户要求"一次调整多少也让用户自己选"）。
-        binding.rgWinkStep.check(
-            when (cfg.winkVolumeStep) {
-                1 -> R.id.rbWinkStep1
-                3 -> R.id.rbWinkStep3
-                5 -> R.id.rbWinkStep5
-                else -> R.id.rbWinkStep2
+        // 保持时长。
+        binding.rgTiltHold.check(
+            when {
+                cfg.tiltHoldMs <= 300L -> R.id.rbTiltHold300
+                cfg.tiltHoldMs >= 1000L -> R.id.rbTiltHold1000
+                cfg.tiltHoldMs >= 800L -> R.id.rbTiltHold800
+                else -> R.id.rbTiltHold500
             },
         )
-        binding.rgWinkStep.setOnCheckedChangeListener { _, checkedId ->
+        binding.rgTiltHold.setOnCheckedChangeListener { _, checkedId ->
+            val hold = when (checkedId) {
+                R.id.rbTiltHold300 -> 300L
+                R.id.rbTiltHold800 -> 800L
+                R.id.rbTiltHold1000 -> 1000L
+                else -> 500L
+            }
+            updateConfig { it.copy(tiltHoldMs = hold) }
+            renderTiltVolumeUi()
+        }
+
+        // 每次调整多少档。
+        binding.rgTiltStep.check(
+            when (cfg.tiltVolumeStep) {
+                1 -> R.id.rbTiltStep1
+                3 -> R.id.rbTiltStep3
+                5 -> R.id.rbTiltStep5
+                else -> R.id.rbTiltStep2
+            },
+        )
+        binding.rgTiltStep.setOnCheckedChangeListener { _, checkedId ->
             val step = when (checkedId) {
-                R.id.rbWinkStep1 -> 1
-                R.id.rbWinkStep3 -> 3
-                R.id.rbWinkStep5 -> 5
+                R.id.rbTiltStep1 -> 1
+                R.id.rbTiltStep3 -> 3
+                R.id.rbTiltStep5 -> 5
                 else -> 2
             }
-            updateConfig { it.copy(winkVolumeStep = step) }
-            renderWinkVolumeUi()
+            updateConfig { it.copy(tiltVolumeStep = step) }
+            renderTiltVolumeUi()
         }
 
-        renderWinkVolumeUi()
+        renderTiltVolumeUi()
     }
 
-    /** 总开关关掉时，方向 / 时长 / 档位三组设置一起置灰；值仍保留，重新打开即恢复。 */
-    private fun renderWinkVolumeUi() {
-        val enabled = GazeRuntime.config.winkVolumeEnabled
+    /** 总开关关掉时，方向 / 角度 / 时长 / 档位几组设置一起置灰；值仍保留，重新打开即恢复。 */
+    private fun renderTiltVolumeUi() {
+        val enabled = GazeRuntime.config.tiltVolumeEnabled
         val views = mutableListOf<android.view.View>(
-            binding.switchWinkLeftUp,
-            binding.switchWinkRightUp,
-            binding.tvWinkHold,
-            binding.tvWinkStep,
+            binding.switchTiltLeftUp,
+            binding.switchTiltRightUp,
+            binding.tvTiltThreshold,
+            binding.tvTiltHold,
+            binding.tvTiltStep,
         )
         for (id in intArrayOf(
-            R.id.rbWinkHold400, R.id.rbWinkHold600, R.id.rbWinkHold800, R.id.rbWinkHold1000,
-            R.id.rbWinkStep1, R.id.rbWinkStep2, R.id.rbWinkStep3, R.id.rbWinkStep5,
+            R.id.rbTiltThr12, R.id.rbTiltThr15, R.id.rbTiltThr18, R.id.rbTiltThr22,
+            R.id.rbTiltHold300, R.id.rbTiltHold500, R.id.rbTiltHold800, R.id.rbTiltHold1000,
+            R.id.rbTiltStep1, R.id.rbTiltStep2, R.id.rbTiltStep3, R.id.rbTiltStep5,
         )) {
             binding.root.findViewById<android.view.View>(id)?.let { views.add(it) }
         }
@@ -618,7 +643,7 @@ class MainActivity : AppCompatActivity() {
             v.isEnabled = enabled
             v.setAlpha(if (enabled) 1f else 0.45f)
         }
-        // 方向 / 时长 / 档位一变，实时区那行文字也跟着变，所以立刻重画。
+        // 方向 / 角度 / 时长一变，实时区那行文字也跟着变，所以立刻重画。
         renderLive(GazeRuntime.snapshot)
     }
 

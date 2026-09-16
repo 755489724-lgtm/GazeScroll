@@ -649,135 +649,183 @@
             android:layout_marginBottom="14dp"
             android:background="#33FFFFFF" />
 
-        <!-- ================= v5.30 单眼闭眼控音量 ================= -->
+        <!-- ================= v5.35 歪头控音量（取代 v5.30 的单眼闭眼） ================= -->
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/settings_wink_title"
+            android:text="@string/settings_tilt_title"
             android:textColor="@color/accent"
             android:textSize="15sp"
             android:textStyle="bold" />
 
         <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchWinkVolume"
+            android:id="@+id/switchTiltVolume"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="@string/settings_wink_switch"
+            android:text="@string/settings_tilt_switch"
             android:textColor="@color/on_surface"
             android:textSize="14sp" />
 
         <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchWinkLeftUp"
+            android:id="@+id/switchTiltLeftUp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="@string/settings_wink_left_up"
+            android:text="@string/settings_tilt_left_up"
             android:textColor="@color/on_surface_dim"
             android:textSize="13sp" />
 
         <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchWinkRightUp"
+            android:id="@+id/switchTiltRightUp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="@string/settings_wink_right_up"
+            android:text="@string/settings_tilt_right_up"
             android:textColor="@color/on_surface_dim"
             android:textSize="13sp" />
 
         <TextView
-            android:id="@+id/tvWinkHold"
+            android:id="@+id/tvTiltThreshold"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            android:text="@string/settings_wink_hold"
+            android:text="@string/settings_tilt_threshold"
             android:textColor="@color/on_surface_dim"
             android:textSize="13sp" />
 
         <RadioGroup
-            android:id="@+id/rgWinkHold"
+            android:id="@+id/rgTiltThreshold"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
             <RadioButton
-                android:id="@+id/rbWinkHold400"
+                android:id="@+id/rbTiltThr12"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_hold_400"
+                android:text="@string/settings_tilt_thr_12"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbWinkHold600"
+                android:id="@+id/rbTiltThr15"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_hold_600"
+                android:text="@string/settings_tilt_thr_15"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbWinkHold800"
+                android:id="@+id/rbTiltThr18"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_hold_800"
+                android:text="@string/settings_tilt_thr_18"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbWinkHold1000"
+                android:id="@+id/rbTiltThr22"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_hold_1000"
+                android:text="@string/settings_tilt_thr_22"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
         </RadioGroup>
 
         <TextView
-            android:id="@+id/tvWinkStep"
+            android:id="@+id/tvTiltHold"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            android:text="@string/settings_wink_step"
+            android:text="@string/settings_tilt_hold"
             android:textColor="@color/on_surface_dim"
             android:textSize="13sp" />
 
         <RadioGroup
-            android:id="@+id/rgWinkStep"
+            android:id="@+id/rgTiltHold"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
             <RadioButton
-                android:id="@+id/rbWinkStep1"
+                android:id="@+id/rbTiltHold300"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_step_1"
+                android:text="@string/settings_tilt_hold_300"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbWinkStep2"
+                android:id="@+id/rbTiltHold500"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_step_2"
+                android:text="@string/settings_tilt_hold_500"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbWinkStep3"
+                android:id="@+id/rbTiltHold800"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_step_3"
+                android:text="@string/settings_tilt_hold_800"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
 
             <RadioButton
-                android:id="@+id/rbWinkStep5"
+                android:id="@+id/rbTiltHold1000"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_wink_step_5"
+                android:text="@string/settings_tilt_hold_1000"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <TextView
+            android:id="@+id/tvTiltStep"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/settings_tilt_step"
+            android:textColor="@color/on_surface_dim"
+            android:textSize="13sp" />
+
+        <RadioGroup
+            android:id="@+id/rgTiltStep"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbTiltStep1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_tilt_step_1"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbTiltStep2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_tilt_step_2"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbTiltStep3"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_tilt_step_3"
+                android:textColor="@color/on_surface"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbTiltStep5"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_tilt_step_5"
                 android:textColor="@color/on_surface"
                 android:textSize="14sp" />
         </RadioGroup>
@@ -787,9 +835,11 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_wink_hint"
+            android:text="@string/settings_tilt_hint"
             android:textColor="@color/on_surface_dim"
             android:textSize="12sp" />
+
+
 
         <TextView
             android:layout_width="match_parent"

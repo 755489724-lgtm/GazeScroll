@@ -247,33 +247,38 @@ private const val REF_LOG_INTERVAL_MS = 400L
     private var headPoseDetector: HeadPoseDetector? = null
 
     /**
-     * 单眼闭眼控音量（v5.30）。
+     * 歪头控音量（v5.35）。
      *
-     * 和眨眼吃同一帧的左右眼睁开度，但判据完全不同：眨眼是「两只眼都闭」（翻页），
-     * 单闭是「一只眼闭 + 另一只眼明确睁着，保持 ≥ 1 秒」（调音量）。两条通道互相排斥，
-     * 谁也不会把对方的事件吃成自己的。
+     * 用户点名的改动：**删掉「单眼闭眼控音量」**（v5.30~v5.34，四轮都做不稳），改成
+     * **左歪头 = 调高、右歪头 = 调低**（两方向都能各自反转），判据是"歪到一定角度 + 保持"。
+     * 见 [TiltDetector]。
      *
      * 它是**控制指令**（与「张嘴点击」同类）：不走 [globalGate]、不占用翻页冷却，
      * 也不需要无障碍 / Shizuku —— 音量由系统音频通道直接调。
      */
-    private var winkDetector: WinkDetector? = null
+    private var tiltDetector: TiltDetector? = null
 
-    /** 累计由单眼闭眼调过的音量档位数（v5.30），诊断行与设置页显示用。 */
+    /** 累计由歪头调过的音量档位数（v5.35），诊断行与设置页显示用。 */
     @Volatile
-    private var winkVolumeSteps = 0
+    private var tiltVolumeSteps = 0
 
     /**
-     * 最近一帧的原始俯仰角与下巴占比（v5.30）。
+     * 最近一帧的原始俯仰角 / 滚转角 / 下巴占比（v5.30 起）。
      *
-     * 单眼闭眼触发时要在 `I/Wink` 行里带上当时的姿势读数 —— 事后核对「这次到底是不是
-     * 低头眯眼造成的误触发」全靠它。触发回调发生在帧线程上，但音量要在注入线程上改，
-     * 所以必须在这里把值存下来。
+     * 歪头触发时要在 `I/Tilt` 行里带上当时的姿势读数 —— 事后核对「这次是不是真的歪头」
+     * 全靠它。触发回调发生在帧线程上，但音量要在注入线程上改，所以必须在这里把值存下来。
      */
     @Volatile
     private var lastFramePitchDeg: Float? = null
 
     @Volatile
+    private var lastFrameRollDeg: Float? = null
+
+    @Volatile
     private var lastFrameChinRatio: Float? = null
+
+    /** 上一帧是否处于"歪出中位带"状态（v5.35），用来在歪头结束时重学头部基准线。 */
+    private var tiltGateWasActive = false
 
     /** 手机自身运动监测（v5.13）：区分「点头」与「急停/急刹」。 */
     private var phoneMotion: PhoneMotionMonitor? = null
@@ -452,9 +457,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
         blinkDetector = BlinkDetector { reason -> fireSwipe("blink:$reason", SwipeDirection.UP) }
 
-        // v5.30：单眼闭眼（一只眼闭、另一只眼睁着，保持 1 秒）→ 音量加 / 减。
-        // 判据与阈值见 [WinkDetector]；方向（哪只眼加、哪只眼减）由用户在设置页选。
-        winkDetector = WinkDetector { event -> onWink(event) }
+        // v5.35：歪头（左右压耳朵，ML Kit 的 headEulerAngleZ）→ 音量加 / 减。
+        // 判据与阈值见 [TiltDetector]；方向（哪边加、哪边减）由用户在设置页选。
+        tiltDetector = TiltDetector { event -> onTiltVolume(event) }
 
         // v5.13：手机自身运动监测（加速度计）。用来区分「头在转」（点头）与
         // 「整个人和手机一起顿」（急停/急刹/被撞）—— 摄像头分不出来，加速度计能（见类注释）。
@@ -690,8 +695,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
     private fun resetDetectorStateForFreshStart() {
         headPoseDetector?.recalibrate()
         blinkDetector?.reset()
-        // v5.30：进行中的单闭也要一起清掉（换应用 / 重绑后不该带着半截单闭）。
-        winkDetector?.reset()
+        // v5.35：进行中的歪头也要一起清掉（换应用 / 重绑后不该带着半截歪头）。
+        tiltDetector?.reset()
         mouthDetector?.reset()
         globalGate.reset()
         occlusionUntilMs = 0L
@@ -979,8 +984,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
         val now = SystemClock.elapsedRealtime()
         lastFrameAtMs = now
         lastFrameFaceRatio = frame.faceRatio
-        // v5.30：单眼闭眼触发的日志里要带上当时的姿势读数（帧线程之外就用不到了）。
+        // v5.30/v5.35：触发日志里要带上当时的姿势读数（帧线程之外就用不到了）。
         lastFramePitchDeg = frame.headEulerAngleX
+        lastFrameRollDeg = frame.headEulerAngleZ
         lastFrameChinRatio = frame.chinRatio
         // v5.7：真的收到帧就把"持续无画面"的计时清零。这是硬重建升级判据的唯一出口，
         // 所以必须在这里做——放在重绑路径里会让它永远归零、失去意义。
@@ -1004,14 +1010,14 @@ private const val REF_LOG_INTERVAL_MS = 400L
             val suppressed = now < occlusionUntilMs
             if (suppressed) {
                 blinkDetector?.reset()
-                winkDetector?.reset()
+                tiltDetector?.reset()
                 mouthDetector?.onFrame(null, now)
             }
             // 近距离静止硬锁定（v5.3）：与遮挡抑制并列的第二道闸门。
             val hardLocked = updateStaticHardLock(frame, now)
             if (hardLocked) {
                 blinkDetector?.reset()
-                winkDetector?.reset()
+                tiltDetector?.reset()
             }
             val gate = suppressed || hardLocked
 
@@ -1046,32 +1052,34 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 }
             }
 
-            // ------------------------------------------------- v5.30：单眼闭眼控音量 --
+            // ------------------------------------------------- v5.35：歪头控音量 --
             //
-            // 与眨眼共用同一帧的左右眼读数，也共用用户挑的那对阈值（闭眼 closedBelow /
-            // 重新睁开 openAbove），但判据是「一只眼闭 + 另一只眼明确睁着，保持 ≥1 秒」，
-            // 与眨眼（两只都闭）天然互斥。
+            // 用 ML Kit 的 headEulerAngleZ（歪头 / 滚转）减去本人基准线得到相对倾斜：
+            // 歪到阈值角度并保持住才触发（判据见 [TiltDetector]）。
             //
-            // 仍然受 `gate`（遮挡 / 静止硬锁定）管辖：手挡在脸上、或近距离静止硬锁定时
-            // 不该调音量；闸门期间把进行中的单闭清掉，免得闸门开合前后拼出一次。
-            val wink = winkDetector
-            if (wink != null) {
-                if (!gate && cfg.winkVolumeEnabled) {
-                    wink.holdMs = cfg.winkHoldMs.coerceIn(300L, 2000L)
-                    // v5.32：只有**一个**阈值 —— 用户挑的眨眼灵敏度（原始值，不按距离放松）。
-                    // 「另一只眼没闭着」和「这只眼闭着」用的是同一条线，实测 30cm 俯视时
-                    // 睁着的那只眼常读到 0.55~0.70，用两条线（0.70/0.55）会把真单闭挡掉。
-                    wink.closedBelow = cfg.blinkClosedBelow
-                    wink.nearTier = if (headAxisAvailable) headPoseDetector?.nearDistance else null
-                    wink.onEyeProbabilities(
-                        frame.leftEyeOpenProbability,
-                        frame.rightEyeOpenProbability,
-                        now,
-                    )
+            // 仍然受 `gate`（遮挡 / 静止硬锁定）管辖：闸门期间把进行中的歪头清掉。
+            //
+            // 另外：**歪出中位带期间暂停翻页通道的判定**。歪头（滚转）会让俯仰读数串扰
+            // 几个度，而近距离俯视的点头阈值只有 2.5° —— v5.34 日志里 22:38:54.382 /
+            // 22:38:56.677 两次 `tiltUp triggered → swipe UP` 就发生在用户歪头的同时。
+            // 暂停的代价只是"歪着头的时候不翻页"，歪回中位后由 recalibrate 重新对齐基准线。
+            val tilt = tiltDetector
+            var tilting = false
+            if (tilt != null) {
+                if (!gate && cfg.tiltVolumeEnabled) {
+                    tilt.thresholdDeg = cfg.tiltThresholdDeg.coerceIn(8f, 40f)
+                    tilt.holdMs = cfg.tiltHoldMs.coerceIn(200L, 2000L)
+                    tilt.nearTier = if (headAxisAvailable) headPoseDetector?.nearDistance else null
+                    tilt.onRoll(frame.headEulerAngleZ, now)
+                    tilting = tilt.isBeyondNeutral()
                 } else {
-                    wink.reset()
+                    tilt.reset()
                 }
             }
+            // 歪头结束的那一刻让头部通道重学基准线：歪头期间它的输入被暂停了，
+            // 基准线可能已经落后（俯仰串扰），直接接着判容易在歪回中位的瞬间误翻一页。
+            if (tiltGateWasActive && !tilting) headPoseDetector?.recalibrate()
+            tiltGateWasActive = tilting
 
             val head = headPoseDetector
             if (head != null) {
@@ -1135,7 +1143,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
                     head.faceRatio = frame.faceRatio
                     // v5.6：绝对几何的姿态判据（下巴占比），用于近距离俯视时提升点头灵敏度。
                     head.chinRatio = frame.chinRatio
-                    if (!gate) {
+                    // v5.35：歪头期间不喂头部数据（tilting）—— 见上面歪头通道的说明。
+                    if (!gate && !tilting) {
                         head.onHeadPose(frame.headEulerAngleX, frame.headEulerAngleY, now)
                     }
                 } else if (headPoseActive) {
@@ -1189,11 +1198,11 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 mouthOpen = mouthDetector?.mouthOpen ?: false,
                 mouthOpenCount = mouthDetector?.openCount ?: 0,
                 mouthTapCount = mouthTapCount,
-                // v5.30：单闭的实时保持时长 —— 设置页上能看着数字涨，是自己核对
-                // 「到底哪只眼被读成闭着、判据有没有生效」最直接的办法。
-                winkSteps = winkVolumeSteps,
-                winkHeldLeftMs = winkDetector?.leftHeldMs ?: 0L,
-                winkHeldRightMs = winkDetector?.rightHeldMs ?: 0L,
+                // v5.35：歪头的实时倾斜角与已保持时长 —— 设置页上能看着数字涨，
+                // 是自己核对"到底歪了多少、判据有没有生效"最直接的办法。
+                tiltVolumeSteps = tiltVolumeSteps,
+                tiltDeg = tiltDetector?.tiltDeg,
+                tiltHeldMs = tiltDetector?.heldMs ?: 0L,
                 swipeProfile = AdaptiveSwipe.describe(
                     cfg.adaptiveSwipeEnabled,
                     AppStateManager.foregroundPackage,
@@ -1336,7 +1345,7 @@ private const val REF_LOG_INTERVAL_MS = 400L
         occlusionEvents++
         headPoseDetector?.recalibrate()
         blinkDetector?.reset()
-        winkDetector?.reset()
+        tiltDetector?.reset()
         // 张嘴检测也要重学：手挡脸时读出的嘴部数据完全不可信，v5.0 实测它会读出
         // 0.114 这种极小值并把基准永久带偏，于是「一直以为用户在张嘴」。
         mouthDetector?.reset()
@@ -1449,54 +1458,50 @@ private const val REF_LOG_INTERVAL_MS = 400L
         }
     }
 
-    // ------------------------------------------------ v5.30 单眼闭眼控音量 --
+    // ------------------------------------------------ v5.35 歪头控音量 --
 
     /**
-     * 单眼闭眼（一只眼闭、另一只眼明确睁着，保持 ≥1 秒）→ 调一档媒体音量。
+     * 歪头（左/右压耳朵到一定角度并保持住）→ 调一组媒体音量档位。
      *
-     * 用户要求：右眼闭 = 调高、左眼闭 = 调低，并且两个方向都要能由用户自己反过来
-     * （设置页的两个开关）。
+     * 用户要求：**左歪头 = 调高、右歪头 = 调低**，两边都要能由用户自己反过来
+     * （设置页的两个开关）；并且"仰头得到一定的角度才会触发"（阈值 + 保持时长都在设置页）。
      *
      * 为什么**不走** [globalGate]：这是控制指令，不是翻页动作（与「张嘴点击」同理）。
      * 若共用同一个闸门，调一次音量就会让翻页哑掉 2 秒；反过来，刚翻过一页也不该让
-     * 音量调节失效。防连发由 [WinkDetector] 自己负责 —— 一次单闭只调一档，必须
-     * **睁眼之后再闭**才可能有下一次（一直闭着眼不会把音量一路推到 0）。
+     * 音量调节失效。防连发由 [TiltDetector] 自己负责 —— 一次歪头只调一组，必须回到中位
+     * 才可能有下一次（一直歪着头不会把音量一路推到底）。
      *
      * 音量用 `AudioManager` 直接调媒体流（抖音走的就是 `STREAM_MUSIC`），不经过手势注入，
      * 所以即使 Shizuku / 无障碍都没就绪，这条通道照样可用。
      */
-    private fun onWink(event: WinkEvent) {
+    private fun onTiltVolume(event: TiltEvent) {
         val cfg = GazeRuntime.config
-        val up = if (event.side == WinkSide.LEFT) cfg.winkLeftVolumeUp else cfg.winkRightVolumeUp
+        val up = if (event.side == TiltSide.LEFT) cfg.tiltLeftVolumeUp else cfg.tiltRightVolumeUp
         // 触发发生在帧线程上：姿势读数必须当场抓下来，注入线程上已经没有这一帧了。
-        val pose = "pitch=${lastFramePitchDeg?.let { "%.1f".format(it) } ?: "-"}°" +
-            " pitchNow=${"%.1f".format(headPoseDetector?.lastSignedPitch ?: 0f)}°" +
-            " base=${headPoseDetector?.baselineDeg?.let { "%.1f".format(it) } ?: "-"}°" +
+        val pose = "roll=${lastFrameRollDeg?.let { "%+.1f".format(it) } ?: "-"}°" +
+            " pitch=${lastFramePitchDeg?.let { "%.1f".format(it) } ?: "-"}°" +
             " chin=${lastFrameChinRatio?.let { "%.3f".format(it) } ?: "-"}" +
             " faceRatio=${faceRatioText()}"
-        // v5.33/v5.34：把「两只眼的读数差」和「这只眼最近有多常被读成闭着」也打进日志 ——
-        // 它们就是本通道的两个判据，事后核对一次触发时看这两项 + held 就够了。
-        val closedEye = if (event.side == WinkSide.LEFT) event.eyeL else event.eyeR
-        val detail = "held=${event.heldMs}ms eyeL=${"%.2f".format(event.eyeL)}" +
-            " eyeR=${"%.2f".format(event.eyeR)} min=${"%.2f".format(event.minClosed)}" +
-            " other=${"%.2f".format(event.otherEye)} sep=${"%.2f".format(event.otherEye - closedEye)}" +
-            " duty=${"%.2f".format(event.dutyAtStart)}" +
-            " thr=${"%.2f".format(event.closedBelow)}" +
+        // 本通道的两个判据（歪了多少 / 保持多久）连同基准线一起进日志，事后一眼可核对。
+        val detail = "held=${event.heldMs}ms tilt=${"%+.1f".format(event.tiltDeg)}°" +
+            " peak=${"%.1f".format(event.peakDeg)}°" +
+            " thr=${"%.0f".format(event.thresholdDeg)}°" +
+            " base=${"%.1f".format(event.baselineDeg)}°" +
+            " neutralBefore=${event.neutralBeforeMs}ms" +
             " dist=${if (event.nearTier == true) "near" else "mid/far"}"
         // 一次调几档由用户选（1 档 = 按一次音量键）。
-        val steps = cfg.winkVolumeStep.coerceIn(1, 5)
+        val steps = cfg.tiltVolumeStep.coerceIn(1, 5)
         ensureSwipeExecutor().execute {
             val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             if (am == null) {
-                Log.i("Wink", "wink ${event.side.label} $detail -> 没有 AudioManager，未调音量 $pose")
+                Log.i("Tilt", "tilt ${event.side.label} $detail -> 没有 AudioManager，未调音量 $pose")
                 return@execute
             }
             val before = am.getStreamVolume(AudioManager.STREAM_MUSIC)
             val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             val dir = if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
-            // v5.32：多档要**一次跳到位**，不能一档一档连着调。
-            // 实测 22:19:36 那次默认 2 档，连调两次会让系统音量面板连着弹两次
-            // （用户的原话是"突然有一波调整音量"）。
+            // 多档要**一次跳到位**，不能一档一档连着调（连调会让系统音量面板连弹好几次，
+            // 用户的反馈是"突然有一波调整音量"）。
             //
             // 1 档：直接调一次（就是"按一次音量键"，只弹一次面板）。
             // 多档：先不带面板空跑一档、量出"一档 = 几个索引"（小米 13 上是 10），
@@ -1523,18 +1528,17 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 }
             }
             val after = am.getStreamVolume(AudioManager.STREAM_MUSIC)
-            winkVolumeSteps++
-            // 这一行是「单闭控音量」唯一的可核对真值：闭了多久、两只眼各读到多少、
-            // 合眼多快（onset）、当时的姿势，以及音量实际从几变到几
-            // （1档= 是系统的一档等于几个索引；applied=false 说明系统拒了这次调节）。
+            tiltVolumeSteps++
+            // 这一行是「歪头控音量」唯一的可核对真值：歪了多少、保持多久、当时的头姿，
+            // 以及音量实际从几变到几（1档= 是系统的一档等于几个索引）。
             Log.i(
-                "Wink",
-                "wink ${event.side.label} $detail -> volume ${if (up) "UP" else "DOWN"} " +
+                "Tilt",
+                "tilt ${event.side.label} $detail -> volume ${if (up) "UP" else "DOWN"} " +
                     "$steps 档 (1档=$oneStep) $before->$after/$max applied=$applied $pose",
             )
             GazeRuntime.publish {
                 it.copy(
-                    note = "单眼闭眼（${event.side.label} ${event.heldMs}ms）：音量" +
+                    note = "歪头（${event.side.label} ${"%.0f".format(event.peakDeg)}°）：音量" +
                         "${if (up) "调高" else "调低"} $before→$after",
                 )
             }
@@ -1564,6 +1568,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 " pitch=${frame.headEulerAngleX?.let { "%.1f".format(it) } ?: "-"}" +
                 " base=${headPoseDetector?.baselineDeg?.let { "%.1f".format(it) } ?: "-"}" +
                 " yaw=${frame.headEulerAngleY?.let { "%.1f".format(it) } ?: "-"}" +
+                // v5.35：原始滚转角（歪头）。这条轴以前完全没采集，现在它是歪头通道的输入。
+                " roll=${frame.headEulerAngleZ?.let { "%+.1f".format(it) } ?: "-"}" +
                 " yawBase=${headPoseDetector?.baselineYawDeg?.let { "%.1f".format(it) } ?: "-"}" +
                 " mouth=${frame.mouthOpenRatio?.let { "%.3f".format(it) } ?: "-"}" +
                 " mouthPx=${frame.mouthNoseGapPx?.let { "%.0f".format(it) } ?: "-"}" +
@@ -1643,14 +1649,13 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 " blinkBelow=${"%.2f".format(blinkDetector?.effectiveClosedBelow ?: 0f)}" +
                 " blinkFrames=${blinkDetector?.effectiveRequiredClosedFrames ?: 0}" +
                 " blinks=${blinkDetector?.blinkCount ?: 0}" +
-                // v5.30：单闭通道（控音量）。winkL/winkR 是两只眼**各自已经保持的单闭时长**，
-                // 满 1000ms 且另一只眼明确睁着就会调一档音量；winkSteps 是累计调了几档。
-                // 这一组字段就是「单闭不灵 / 老是误调」时第一个要看的地方。
-                " winkVol=${if (cfg.winkVolumeEnabled) "on" else "off"}" +
-                " winkDir=${if (cfg.winkLeftVolumeUp) "L=up" else "L=down"}/" +
-                "${if (cfg.winkRightVolumeUp) "R=up" else "R=down"}" +
-                " wink=${winkDetector?.stateLine() ?: "-"}" +
-                " winkSteps=$winkVolumeSteps" +
+                // v5.35：歪头通道（控音量）。tilt= 里是相对本人基准线的倾斜角、已保持多久、
+                // 峰值与累计触发次数；这一组字段就是「歪头不灵 / 老是误调」时第一个要看的地方。
+                " tiltVol=${if (cfg.tiltVolumeEnabled) "on" else "off"}" +
+                " tiltDir=${if (cfg.tiltLeftVolumeUp) "L=up" else "L=down"}/" +
+                "${if (cfg.tiltRightVolumeUp) "R=up" else "R=down"}" +
+                " ${tiltDetector?.stateLine() ?: "tilt=-"}" +
+                " tiltSteps=$tiltVolumeSteps" +
                 // v5.31：基准线重建期禁触发的状态（丢脸回来 / 重绑后约 1.1 秒内为 true）。
                 " baselineSettling=${headPoseDetector?.baselineSettling ?: false}" +
                 " triggers=${GazeRuntime.snapshot.triggers}" +
@@ -1731,7 +1736,7 @@ private const val REF_LOG_INTERVAL_MS = 400L
             "window changed to ${AppStateManager.foregroundPackage} -> detector reactivated (reason=$reason)",
         )
         blinkDetector?.reset()
-        winkDetector?.reset()
+        tiltDetector?.reset()
         // 切回目标应用时丢掉上一次的半截头部动作状态：否则在别的界面动了一下头、
         // 进来又动一下，会被当成同一次动作的延续。
         headPoseDetector?.let { head ->
@@ -2194,7 +2199,7 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
         analyzer?.resetSmoothing()
         blinkDetector?.reset()
-        winkDetector?.reset()
+        tiltDetector?.reset()
         headPoseDetector?.recalibrate()
         runCatching { cameraProvider?.unbindAll() }
         cameraBound = false
@@ -2242,7 +2247,7 @@ private const val REF_LOG_INTERVAL_MS = 400L
         cameraProvider = null
         analyzer?.resetSmoothing()
         blinkDetector?.reset()
-        winkDetector?.reset()
+        tiltDetector?.reset()
         headPoseDetector?.recalibrate()
         // 重建后不该还带着上一轮的冷却，否则按「重启服务」后头 1.5 秒是哑的。
         globalGate.reset()

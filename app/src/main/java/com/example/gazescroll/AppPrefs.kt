@@ -50,14 +50,14 @@ object AppPrefs {
     /** v4.5 的旧键，只用于升级时把用户的开关状态继承过来（缺省也是开）。 */
     private const val K_LEGACY_MOUTH_PAUSE = "mouthPauseEnabled"
 
-    // v5.30：单眼闭眼控音量（一只眼闭 1 秒 → 音量加/减）。
-    private const val K_WINK_VOLUME_ENABLED = "winkVolumeEnabled"
-    private const val K_WINK_LEFT_UP = "winkLeftVolumeUp"
-    private const val K_WINK_RIGHT_UP = "winkRightVolumeUp"
-
-    // v5.31：单闭保持时长与每次调整的档位数。
-    private const val K_WINK_HOLD_MS = "winkHoldMs"
-    private const val K_WINK_VOLUME_STEP = "winkVolumeStep"
+    // v5.35：歪头控音量（左/右歪头 → 音量加/减）。取代 v5.30~v5.34 的单眼闭眼通道，
+    // 旧的 wink* 键不再读写（留在 SharedPreferences 里无害）。
+    private const val K_TILT_VOLUME_ENABLED = "tiltVolumeEnabled"
+    private const val K_TILT_LEFT_UP = "tiltLeftVolumeUp"
+    private const val K_TILT_RIGHT_UP = "tiltRightVolumeUp"
+    private const val K_TILT_THRESHOLD = "tiltThresholdDeg"
+    private const val K_TILT_HOLD_MS = "tiltHoldMs"
+    private const val K_TILT_VOLUME_STEP = "tiltVolumeStep"
 
     /** v4.5：按前台应用自适应上下滑动幅度。 */
     private const val K_ADAPTIVE_SWIPE = "adaptiveSwipeEnabled"
@@ -145,14 +145,13 @@ object AppPrefs {
             mouthSensitivity = sp.getString(K_MOUTH_SENSITIVITY, null)
                 ?.let { name -> MouthSensitivity.entries.firstOrNull { it.name == name } }
                 ?: d.mouthSensitivity,
-            // v5.30：单眼闭眼控音量。默认开；方向默认「右眼闭 = 调高、左眼闭 = 调低」，
-            // 用户可以在设置页各自反向（两个开关互相独立）。
-            winkVolumeEnabled = sp.getBoolean(K_WINK_VOLUME_ENABLED, d.winkVolumeEnabled),
-            winkLeftVolumeUp = sp.getBoolean(K_WINK_LEFT_UP, d.winkLeftVolumeUp),
-            winkRightVolumeUp = sp.getBoolean(K_WINK_RIGHT_UP, d.winkRightVolumeUp),
-            // v5.31：保持时长默认 600ms、每次 2 档；用户的旧设置继续沿用。
-            winkHoldMs = sp.getLong(K_WINK_HOLD_MS, d.winkHoldMs),
-            winkVolumeStep = sp.getInt(K_WINK_VOLUME_STEP, d.winkVolumeStep),
+            // v5.35：歪头控音量。默认开；默认「左歪头 = 调高、右歪头 = 调低」，两边都能各自反向。
+            tiltVolumeEnabled = sp.getBoolean(K_TILT_VOLUME_ENABLED, d.tiltVolumeEnabled),
+            tiltLeftVolumeUp = sp.getBoolean(K_TILT_LEFT_UP, d.tiltLeftVolumeUp),
+            tiltRightVolumeUp = sp.getBoolean(K_TILT_RIGHT_UP, d.tiltRightVolumeUp),
+            tiltThresholdDeg = sp.getFloat(K_TILT_THRESHOLD, d.tiltThresholdDeg),
+            tiltHoldMs = sp.getLong(K_TILT_HOLD_MS, d.tiltHoldMs),
+            tiltVolumeStep = sp.getInt(K_TILT_VOLUME_STEP, d.tiltVolumeStep),
             adaptiveSwipeEnabled = sp.getBoolean(K_ADAPTIVE_SWIPE, d.adaptiveSwipeEnabled),
             listSwipeDistance = sp.getFloat(K_LIST_SWIPE_DISTANCE, d.listSwipeDistance),
             globalPagingEnabled = sp.getBoolean(K_GLOBAL_PAGING, d.globalPagingEnabled),
@@ -191,11 +190,12 @@ object AppPrefs {
             .putBoolean(K_H_SWIPE_INVERT, s.horizontalSwipeInvertYaw)
             .putBoolean(K_MOUTH_TAP_ENABLED, s.mouthTapEnabled)
             .putString(K_MOUTH_SENSITIVITY, s.mouthSensitivity.name)
-            .putBoolean(K_WINK_VOLUME_ENABLED, s.winkVolumeEnabled)
-            .putBoolean(K_WINK_LEFT_UP, s.winkLeftVolumeUp)
-            .putBoolean(K_WINK_RIGHT_UP, s.winkRightVolumeUp)
-            .putLong(K_WINK_HOLD_MS, s.winkHoldMs)
-            .putInt(K_WINK_VOLUME_STEP, s.winkVolumeStep)
+            .putBoolean(K_TILT_VOLUME_ENABLED, s.tiltVolumeEnabled)
+            .putBoolean(K_TILT_LEFT_UP, s.tiltLeftVolumeUp)
+            .putBoolean(K_TILT_RIGHT_UP, s.tiltRightVolumeUp)
+            .putFloat(K_TILT_THRESHOLD, s.tiltThresholdDeg)
+            .putLong(K_TILT_HOLD_MS, s.tiltHoldMs)
+            .putInt(K_TILT_VOLUME_STEP, s.tiltVolumeStep)
             .putBoolean(K_ADAPTIVE_SWIPE, s.adaptiveSwipeEnabled)
             .putFloat(K_LIST_SWIPE_DISTANCE, s.listSwipeDistance)
             .putBoolean(K_GLOBAL_PAGING, s.globalPagingEnabled)

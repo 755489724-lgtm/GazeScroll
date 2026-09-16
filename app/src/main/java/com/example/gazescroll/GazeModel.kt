@@ -147,52 +147,57 @@ data class GazeConfig(
     /** 张嘴判定灵敏度档位。 */
     val mouthSensitivity: MouthSensitivity = MouthSensitivity.MEDIUM,
 
-    // ------------------------------------------------- v5.30：单眼闭眼控音量 --
+    // ------------------------------------------------- v5.35：歪头控音量 --
 
     /**
-     * 单眼闭眼（一只眼闭、另一只眼明确睁着）保持 1 秒以上 → 把媒体音量调一档。
+     * 歪头（左右压耳朵，roll）→ 把媒体音量调一组档位。**默认开启**。
      *
-     * 默认开启（这是用户点名新增的功能）。它是一条**控制指令**，与「张嘴点击」同类：
-     * 不走 [GlobalTriggerGate]，既不占用翻页冷却、也不会被冷却挡住；也不需要无障碍服务
-     * 或 Shizuku —— 音量由系统音频通道直接调。
+     * 这是 v5.35 用户点名的改动：**删掉「单眼闭眼控音量」**（v5.30~v5.34 四轮都做不稳 ——
+     * ML Kit 的睁眼概率在这台设备上分不开"有意单闭"和"低头眯眼"，见 [TiltDetector] 注释），
+     * 改成**歪头**：
      *
-     * 判定细节见 [WinkDetector]：闭眼/睁眼阈值沿用用户挑的眨眼灵敏度，一只眼闭 +
-     * 另一只眼睁着保持满 1 秒才触发，且一次单闭只调一档（必须睁眼才能再来一次）。
+     *  - 左歪头 = 调高、右歪头 = 调低（默认，两方向都能各自反转）；
+     *  - 必须歪到一定角度（[tiltThresholdDeg]，默认 18°）并保持 [tiltHoldMs]（默认 0.5 秒）
+     *    才触发 —— 用户原话「仰头得到一定的角度，才会触发」；
+     *  - 一次歪头只调一组，必须回到中位才允许下一次。
+     *
+     * 它是一条**控制指令**，与「张嘴点击」同类：不走 [GlobalTriggerGate]，既不占用翻页冷却、
+     * 也不会被冷却挡住。歪头期间翻页判定会被暂停（避免歪头顺带翻页）。
      */
-    val winkVolumeEnabled: Boolean = true,
+    val tiltVolumeEnabled: Boolean = true,
 
     /**
-     * 左眼闭 → 调高音量；关闭则调低。
+     * 左歪头 → 调高音量；关闭则调低。
      *
-     * 方向交给用户自己拨（v5.30 用户要求）：左右眼各一个开关，互不影响。
-     * 默认「左眼闭 = 调低」。
+     * 用户要求两个方向都能自己拨（与 v5.30 的眨眼方向开关同一套做法）。
      */
-    val winkLeftVolumeUp: Boolean = false,
+    val tiltLeftVolumeUp: Boolean = true,
 
     /**
-     * 右眼闭 → 调高音量；关闭则调低。
+     * 右歪头 → 调高音量；关闭则调低。
      *
-     * 默认「右眼闭 = 调高」（用户原话：单闭右眼调高音量、单闭左眼降低音量）。
+     * 默认「右歪头 = 调低」（用户原话：左歪头上升、右歪头下降）。
      */
-    val winkRightVolumeUp: Boolean = true,
+    val tiltRightVolumeUp: Boolean = false,
 
     /**
-     * 单闭要保持多久才触发（毫秒）。选项 [WinkDetector.HOLD_OPTIONS]：400 / 600 / 800 / 1000。
-     *
-     * v5.30 固定 1000ms；v5.31 改可选、默认 600ms；v5.32 按实测（用户有意单闭大多
-     * 400~620ms）把默认收到 **400ms**（[WinkDetector.DEFAULT_HOLD_MS]）—— 挡误触靠
-     * 「合眼必须快（≤500ms）」这条判据，不靠拖长保持时间。
+     * 触发角度（度）：相对本人头姿基准线的倾斜必须超过它。
+     * 选项 [TiltDetector.THRESHOLD_OPTIONS]：12 / 15 / 18（默认）/ 22。
      */
-    val winkHoldMs: Long = WinkDetector.DEFAULT_HOLD_MS,
+    val tiltThresholdDeg: Float = 18f,
 
     /**
-     * 一次单闭调几档音量（1 档 = 按一次音量键，小米 13 上 = 音量索引 10）。
-     *
-     * 用户要求「一次调整多少也让用户自己选」，可选 1 / 2 / 3 / 5。
-     * v5.32 起默认 **1 档**（= 和按一次音量键完全一样，最不容易"吓一跳"）；
-     * 想要一大步就在设置里选 2/3/5。
+     * 超过阈值后要再保持多久（毫秒）才触发。
+     * 选项 [TiltDetector.HOLD_OPTIONS]：300 / 500（默认）/ 800 / 1000。
      */
-    val winkVolumeStep: Int = 1,
+    val tiltHoldMs: Long = 500L,
+
+    /**
+     * 一次歪头调几档音量（1 档 = 按一次音量键，小米 13 上 = 音量索引 10）。
+     *
+     * 可选 1（默认）/ 2 / 3 / 5。
+     */
+    val tiltVolumeStep: Int = 1,
 
     // ------------------------------------------------- v4.5：自适应滑动 --
 
@@ -300,9 +305,10 @@ data class GazeConfig(
                 AdaptiveSwipe.MAX_LIST_DISTANCE,
             ),
             globalCooldownMs = globalCooldownMs.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS),
-            // v5.31：单闭保持时长与每次音量档位。
-            winkHoldMs = winkHoldMs.coerceIn(300L, 2000L),
-            winkVolumeStep = winkVolumeStep.coerceIn(1, 5),
+            // v5.35：歪头控音量的角度 / 保持时长 / 档位。
+            tiltThresholdDeg = tiltThresholdDeg.coerceIn(8f, 40f),
+            tiltHoldMs = tiltHoldMs.coerceIn(200L, 2000L),
+            tiltVolumeStep = tiltVolumeStep.coerceIn(1, 5),
         )
     }
 

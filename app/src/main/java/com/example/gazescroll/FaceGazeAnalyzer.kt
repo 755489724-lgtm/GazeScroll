@@ -52,6 +52,17 @@ data class AnalyzedFrame(
      */
     val headEulerAngleY: Float?,
     /**
+     * ML Kit `headEulerAngleZ`（v5.35）：**歪头**（左右压耳朵）的滚转角，单位度。
+     *
+     * 这条轴以前完全没采集（v5.10~v5.34 的日志里一个字都没有），v5.35 起用于
+     * 「歪头 → 音量加/减」这条通道（见 [TiltDetector]）。
+     *
+     * 正负与物理方向的对应关系与相机镜像有关，所以**不要在这里假设**：
+     * [TiltDetector] 把它减去本人的基准线得到"相对倾斜"，方向反了由设置页的两个
+     * 开关各边单独反转。日志里同时打 raw roll 与相对倾斜，一次实测就能定下来。
+     */
+    val headEulerAngleZ: Float?,
+    /**
      * 张嘴比例（v4.5）：`MOUTH_BOTTOM` 到 `NOSE_BASE` 的距离 / 同帧人脸框高度。
      *
      * 用比例而不是像素，所以与离手机远近、机型分辨率都无关。null 表示这一帧缺少
@@ -294,6 +305,7 @@ class FaceGazeAnalyzer(
                 rightEyeOpenProbability = face?.rightEyeOpenProbability,
                 headEulerAngleX = face?.headEulerAngleX,
                 headEulerAngleY = face?.headEulerAngleY,
+                headEulerAngleZ = face?.headEulerAngleZ,
                 mouthOpenRatio = mouth,
                 mouthNoseGapPx = mouthNoseGap(face),
                 faceRatio = faceRatio,

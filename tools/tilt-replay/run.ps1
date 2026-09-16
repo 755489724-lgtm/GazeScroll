@@ -1,7 +1,7 @@
-# v5.31 offline replay verification for WinkDetector.
+# v5.35 offline replay verification for TiltDetector (歪头控音量).
 #
-# Compiles the REAL WinkDetector.kt (with a printing stub for android.util.Log) plus
-# WinkReplay.kt using the kotlin compiler already present in the local Gradle cache,
+# Compiles the REAL TiltDetector.kt (with a printing stub for android.util.Log) plus
+# TiltReplay.kt using the kotlin compiler already present in the local Gradle cache,
 # then runs it. No network needed. Output goes to result.txt (UTF-8).
 #
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1
@@ -20,11 +20,11 @@ $stdlib   = (Get-ChildItem "$cache\kotlin-stdlib" -Recurse -Filter 'kotlin-stdli
 $corout   = (Get-ChildItem "$cachex\kotlinx-coroutines-core-jvm" -Recurse -Filter 'kotlinx-coroutines-core-jvm-1.7.3.jar' | Select-Object -First 1).FullName
 $trove    = (Get-ChildItem "$env:USERPROFILE\.gradle\caches\modules-2\files-2.1\org.jetbrains.intellij.deps\trove4j" -Recurse -Filter 'trove4j-*.jar' | Select-Object -First 1).FullName
 $annot    = (Get-ChildItem "$env:USERPROFILE\.gradle\caches\modules-2\files-2.1\org.jetbrains\annotations\23.0.0" -Recurse -Filter 'annotations-*.jar' | Select-Object -First 1).FullName
+if (-not $compiler -or -not $stdlib) { throw 'kotlin compiler/stdlib not found in the Gradle cache' }
+if (-not $corout) { throw 'kotlinx-coroutines-core-jvm not found in the Gradle cache' }
 if (-not $trove) { throw 'trove4j not found in the Gradle cache' }
 if (-not $annot) { throw 'org.jetbrains annotations not found in the Gradle cache' }
 $compilerCp = "$compiler;$stdlib;$corout;$trove;$annot"
-if (-not $compiler -or -not $stdlib) { throw 'kotlin compiler/stdlib not found in the Gradle cache' }
-if (-not $corout) { throw 'kotlinx-coroutines-core-jvm not found in the Gradle cache' }
 
 $out   = Join-Path $root 'out'
 $stubc = Join-Path $root 'stub-classes'
@@ -38,12 +38,12 @@ New-Item -ItemType Directory -Force -Path $out, $stubc | Out-Null
 # 2) compile the real detector + the replay harness (stdlib must also be on the compiler classpath)
 & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" -cp $compilerCp org.jetbrains.kotlin.cli.jvm.K2JVMCompiler `
     -no-stdlib -nowarn -cp "$stdlib;$stubc" -d $out `
-    (Join-Path $proj 'app\src\main\java\com\example\gazescroll\WinkDetector.kt') `
-    (Join-Path $root 'WinkReplay.kt')
+    (Join-Path $proj 'app\src\main\java\com\example\gazescroll\TiltDetector.kt') `
+    (Join-Path $root 'TiltReplay.kt')
 
 # 3) run it; UTF-8 -> result.txt
 & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" "-Dsun.stdout.encoding=UTF-8" "-Dsun.stderr.encoding=UTF-8" `
-    -cp "$out;$stubc;$stdlib" com.example.gazescroll.WinkReplayKt 2>&1 |
+    -cp "$out;$stubc;$stdlib" com.example.gazescroll.TiltReplayKt 2>&1 |
     Out-File -FilePath $res -Encoding utf8
 
 Write-Output "exit=$LASTEXITCODE  -> $res"

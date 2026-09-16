@@ -1058,10 +1058,10 @@ private const val REF_LOG_INTERVAL_MS = 400L
             if (wink != null) {
                 if (!gate && cfg.winkVolumeEnabled) {
                     wink.holdMs = cfg.winkHoldMs.coerceIn(300L, 2000L)
-                    // 单闭是"完全闭上"的动作（读数掉到 0.1 以下），所以这里用**原始**
-                    // 灵敏度阈值、不按距离放松 —— 更严正是防误触要的方向。
+                    // v5.32：只有**一个**阈值 —— 用户挑的眨眼灵敏度（原始值，不按距离放松）。
+                    // 「另一只眼没闭着」和「这只眼闭着」用的是同一条线，实测 30cm 俯视时
+                    // 睁着的那只眼常读到 0.55~0.70，用两条线（0.70/0.55）会把真单闭挡掉。
                     wink.closedBelow = cfg.blinkClosedBelow
-                    wink.openAbove = cfg.blinkOpenAbove
                     wink.nearTier = if (headAxisAvailable) headPoseDetector?.nearDistance else null
                     wink.onEyeProbabilities(
                         frame.leftEyeOpenProbability,
@@ -1477,9 +1477,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
         val detail = "held=${event.heldMs}ms eyeL=${"%.2f".format(event.eyeL)}" +
             " eyeR=${"%.2f".format(event.eyeR)} min=${"%.2f".format(event.minClosed)}" +
             " other=${"%.2f".format(event.otherEye)} thr=${"%.2f".format(event.closedBelow)}" +
-            " openRun=${event.openRunMs}ms onset=${event.onsetMs}ms" +
+            " onset=${event.onsetMs}ms" +
             " dist=${if (event.nearTier == true) "near" else "mid/far"}"
-        // 一次调几档由用户选（1 档 = 按一次音量键）；逐档调用，用的就是系统自己的步长。
+        // 一次调几档由用户选（1 档 = 按一次音量键）。
         val steps = cfg.winkVolumeStep.coerceIn(1, 5)
         ensureSwipeExecutor().execute {
             val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -1489,27 +1489,44 @@ private const val REF_LOG_INTERVAL_MS = 400L
             }
             val before = am.getStreamVolume(AudioManager.STREAM_MUSIC)
             val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            var applied = true
-            repeat(steps) { i ->
-                // 只有最后一次带 FLAG_SHOW_UI，免得连弹好几次音量面板。
-                val flags = if (i == steps - 1) AudioManager.FLAG_SHOW_UI else 0
-                applied = applied && runCatching {
-                    am.adjustStreamVolume(
-                        AudioManager.STREAM_MUSIC,
-                        if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
-                        flags,
-                    )
+            val dir = if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+            // v5.32：多档要**一次跳到位**，不能一档一档连着调。
+            // 实测 22:19:36 那次默认 2 档，连调两次会让系统音量面板连着弹两次
+            // （用户的原话是"突然有一波调整音量"）。
+            //
+            // 1 档：直接调一次（就是"按一次音量键"，只弹一次面板）。
+            // 多档：先不带面板空跑一档、量出"一档 = 几个索引"（小米 13 上是 10），
+            //       再用 setStreamVolume 一步跳到 before ± 档数×步长，只弹一次面板。
+            val applied: Boolean
+            var oneStep = 0
+            if (steps <= 1) {
+                applied = runCatching {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, AudioManager.FLAG_SHOW_UI)
                 }.isSuccess
+                oneStep = kotlin.math.abs(am.getStreamVolume(AudioManager.STREAM_MUSIC) - before)
+            } else {
+                applied = runCatching {
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, 0)
+                }.isSuccess
+                oneStep = kotlin.math.abs(am.getStreamVolume(AudioManager.STREAM_MUSIC) - before)
+                if (oneStep > 0) {
+                    val target = (
+                        before + (if (up) 1 else -1) * oneStep * steps
+                        ).coerceIn(0, max)
+                    runCatching {
+                        am.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
+                    }
+                }
             }
             val after = am.getStreamVolume(AudioManager.STREAM_MUSIC)
             winkVolumeSteps++
             // 这一行是「单闭控音量」唯一的可核对真值：闭了多久、两只眼各读到多少、
-            // 起手睁了多久/合得多快、当时的姿势，以及音量实际从几变到几
-            // （applied=false 说明系统拒了这次调节）。
+            // 合眼多快（onset）、当时的姿势，以及音量实际从几变到几
+            // （1档= 是系统的一档等于几个索引；applied=false 说明系统拒了这次调节）。
             Log.i(
                 "Wink",
                 "wink ${event.side.label} $detail -> volume ${if (up) "UP" else "DOWN"} " +
-                    "$steps 档 $before->$after/$max applied=$applied $pose",
+                    "$steps 档 (1档=$oneStep) $before->$after/$max applied=$applied $pose",
             )
             GazeRuntime.publish {
                 it.copy(

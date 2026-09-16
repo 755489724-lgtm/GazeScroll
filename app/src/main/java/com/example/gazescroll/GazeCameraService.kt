@@ -83,6 +83,9 @@ class GazeCameraService : LifecycleService() {
         /** How often the GazeDiag pipeline snapshot is logged. */
         private const val DIAGNOSTIC_INTERVAL_MS = 3000L
 
+/** 参考点通道 shadow 日志的最小间隔（v5.22）。 */
+private const val REF_LOG_INTERVAL_MS = 400L
+
         /** How often the frame watchdog checks that the pipeline is alive. */
         private const val FRAME_WATCHDOG_INTERVAL_MS = 1000L
 
@@ -244,6 +247,21 @@ class GazeCameraService : LifecycleService() {
 
     /** 手机自身运动监测（v5.13）：区分「点头」与「急停/急刹」。 */
     private var phoneMotion: PhoneMotionMonitor? = null
+
+    /**
+     * 参考点位移通道（v5.22）：按用户提出的算法实现（见 [ReferencePointDetector]）。
+     *
+     * 本版**只观测、不接管触发**：每帧照常计算并把位移链路打进日志，
+     * 触发权仍在原有 pitch 通道手里。等实测确认了符号与阈值，下一版再切过来。
+     */
+    private var referencePointDetector: ReferencePointDetector? = null
+
+    /** 最近一帧的脸占比，仅用于诊断文本（v5.22）。 */
+    @Volatile
+    private var lastFrameFaceRatio: Float? = null
+
+    /** 参考点通道 shadow 日志的最小间隔（v5.22），避免每帧刷屏。 */
+    private var lastRefLogAtMs = 0L
 
     /**
      * 全局触发冷却闸门——点头和眨眼**共用**这一个计时器。
@@ -408,6 +426,9 @@ class GazeCameraService : LifecycleService() {
         // 「整个人和手机一起顿」（急停/急刹/被撞）—— 摄像头分不出来，加速度计能（见类注释）。
         // 传感器不可用时它失败开放，isMoving() 恒为 false，不会误伤任何手势。
         phoneMotion = PhoneMotionMonitor(this).also { it.start() }
+
+        // v5.22：参考点位移通道（用户提出的算法）。本版只观测，不接管触发。
+        referencePointDetector = ReferencePointDetector()
 
         // Nod down -> previous video, tilt up -> next video,
         // turn left/right -> horizontal swipe. 具体动作由 handleHeadEvent 派发。
@@ -921,6 +942,7 @@ class GazeCameraService : LifecycleService() {
     private fun onFrame(frame: AnalyzedFrame) {
         val now = SystemClock.elapsedRealtime()
         lastFrameAtMs = now
+        lastFrameFaceRatio = frame.faceRatio
         // v5.7：真的收到帧就把"持续无画面"的计时清零。这是硬重建升级判据的唯一出口，
         // 所以必须在这里做——放在重绑路径里会让它永远归零、失去意义。
         staleBeganAtMs = 0L
@@ -1008,6 +1030,25 @@ class GazeCameraService : LifecycleService() {
                     // 所以这里读到的是上一帧的判定 —— 差一帧无妨，因为实测那次误触
                     // 发生在浅闭之后约 107ms（1~2 帧），恢复期 120ms 覆盖得住。
                     head.eyeDip = blinkDetector?.eyeDip ?: false
+
+                    // ---- v5.22：参考点位移通道（只观测，不接管触发）----
+                    val ref = referencePointDetector
+                    if (ref != null) {
+                        ref.invert = cfg.headPoseInvertPitch
+                        ref.nearDownBoost = head.nearDistance && head.lookingDown
+                        val would = ref.onFrame(frame.noseNormY, frame.chinNormY, now)
+                        if (would != 0 && now - lastRefLogAtMs >= REF_LOG_INTERVAL_MS) {
+                            lastRefLogAtMs = now
+                            Log.i(
+                                "RefPoint",
+                                "would-trigger ${if (would < 0) "nodDown" else "tiltUp"} " +
+                                    "ref: ${ref.stateLine()} " +
+                                    "faceH=${frame.faceRatio?.let { "%.2f".format(it) } ?: "-"} " +
+                                    "nearDown=${ref.nearDownBoost} invert=${ref.invert} " +
+                                    "(pitchCh untouched)",
+                            )
+                        }
+                    }
                     // 距离自适应：脸越大说明凑得越近，静止门限随之抬高。
                     head.faceRatio = frame.faceRatio
                     // v5.6：绝对几何的姿态判据（下巴占比），用于近距离俯视时提升点头灵敏度。
@@ -1240,6 +1281,24 @@ class GazeCameraService : LifecycleService() {
      * 三种都过 [globalGate]，所以不可能出现上下和左右同时滑动。
      */
     private fun handleHeadEvent(event: HeadEvent) {
+        // v5.22：每次上下动作触发时，把**参考点位移通道**当时的读数一并打出来。
+        // 这是"参考点算法"能不能替代 pitch 的唯一判据 —— 真实点头/仰头在位移通道上长什么样，
+        // 直接从这一行读出来（用户要求的格式：noseDy / chinDy / 归一化 / 阈值）。
+        when (event) {
+            is HeadEvent.NodDown, is HeadEvent.TiltUp -> {
+                val ref = referencePointDetector
+                if (ref != null) {
+                    val kind = if (event is HeadEvent.NodDown) "nodDown" else "tiltUp"
+                    Log.i(
+                        "RefPoint",
+                        "$kind ref: ${ref.stateLine()} " +
+                            "(pitchCh=${"%.1f".format(event.degrees)}° faceH=" +
+                            "${faceRatioText()} nearDown=${ref.nearDownBoost} invert=${ref.invert})",
+                    )
+                }
+            }
+            else -> Unit
+        }
         when (event) {
             is HeadEvent.NodDown -> fireSwipe("nod:${event.reason}", SwipeDirection.DOWN)
             is HeadEvent.TiltUp -> fireSwipe("tilt:${event.reason}", SwipeDirection.UP)
@@ -1247,6 +1306,10 @@ class GazeCameraService : LifecycleService() {
             is HeadEvent.TurnRight -> fireSwipe("turnR:${event.reason}", SwipeDirection.RIGHT)
         }
     }
+
+    /** 诊断行里的 faceRatio 文本（v5.22）。 */
+    private fun faceRatioText(): String =
+        lastFrameFaceRatio?.let { "%.2f".format(it) } ?: "-"
 
     /**
      * 张嘴 → 在屏幕中央点一下。
@@ -1380,6 +1443,8 @@ class GazeCameraService : LifecycleService() {
                 " gyro=${"%.2f".format(phoneMotion?.recentRotationPeak(now) ?: 0f)}" +
                 " gyroReady=${phoneMotion?.gyroAvailable ?: false}" +
                 " eyeDip=${blinkDetector?.eyeDip ?: false}" +
+                // v5.22：参考点位移通道的实时链路（只观测，不接管触发）。
+                " ${referencePointDetector?.stateLine() ?: "ref=-"}" +
                 " posture=${headPoseDetector?.postureLabel ?: "-"}" +
                 // 打实际生效的增益，而不是常量，这样与 pitchTh 永远自洽。
                 " nodBoost=${"%.2f".format(headPoseDetector?.lastAppliedNodBoost ?: 1f)}" +

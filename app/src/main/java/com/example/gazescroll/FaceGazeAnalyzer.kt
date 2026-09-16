@@ -89,6 +89,21 @@ data class AnalyzedFrame(
      * null 表示这一帧缺关键点（没脸、或下巴/眼睛不可用）。
      */
     val chinRatio: Float?,
+    /**
+     * 鼻底在**脸框内**的归一化 Y（v5.22）：`(noseY − boxTop) / boxHeight`。
+     *
+     * 与 [chinRatio] 那种"两个关键点之间的距离比"不同，这是**单个关键点在脸框里的相对位置**。
+     * 用它做「参考点位移」：同一关键点在连续帧中的位移除以脸框高度，就得到与远近无关的
+     * 归一化位移（1.0 = 一个脸高）。用户提出的算法正是这个：
+     *
+     * > 「标准的仰头就是我的下巴会往上移动几厘米，点头就是鼻子会往下移动几厘米。
+     * > 做一个参考点，不能硬算。」
+     */
+    val noseNormY: Float?,
+    /** 下巴（下唇）在脸框内的归一化 Y（v5.22）。见 [noseNormY]。 */
+    val chinNormY: Float?,
+    /** 眼睛中心在脸框内的归一化 Y（v5.22），作为**不动的参照**用于交叉校验。 */
+    val eyeNormY: Float?,
     /** 这一帧为什么不可信；null 表示数据正常。 */
     val occlusionReason: OcclusionReason?,
     val faceDetected: Boolean,
@@ -272,6 +287,9 @@ class FaceGazeAnalyzer(
                 mouthNoseGapPx = mouthNoseGap(face),
                 faceRatio = faceRatio,
                 chinRatio = chinRatio(face),
+                noseNormY = landmarkNormY(face, FaceLandmark.NOSE_BASE),
+                chinNormY = landmarkNormY(face, FaceLandmark.MOUTH_BOTTOM),
+                eyeNormY = eyeCenterNormY(face),
                 occlusionReason = reason,
                 faceDetected = face != null,
                 standby = standby,
@@ -293,8 +311,39 @@ class FaceGazeAnalyzer(
      * （用户一直俯视时基准线早就移到俯视姿态上，相对偏移趋近 0），而这里是**绝对几何**，
      * 与基准线、与俯仰角都无关。
      */
-    private fun chinRatio(face: Face?): Float? {
+    /**
+     * 关键点在**脸框内**的归一化 Y（v5.22）：`(y − boxTop) / boxHeight`。
+     *
+     * 除以脸框高度是关键：同一个"几厘米"的位移，人离得近时像素更多、离得远时更少，
+     * 归一化之后两者可比 —— 这就是用户说的"距离归一化"。
+     */
+    private fun landmarkNormY(face: Face?, landmark: Int): Float? {
         if (face == null) return null
+        val box = face.boundingBox
+        val h = box.height().toFloat()
+        if (h <= 1f) return null
+        val y = face.getLandmark(landmark)?.position?.y ?: return null
+        return ((y - box.top) / h).coerceIn(-0.5f, 1.5f)
+    }
+
+    /** 眼睛中心的归一化 Y（v5.22），作为"不动参照"。 */
+    private fun eyeCenterNormY(face: Face?): Float? {
+        if (face == null) return null
+        val box = face.boundingBox
+        val h = box.height().toFloat()
+        if (h <= 1f) return null
+        val left = face.getLandmark(FaceLandmark.LEFT_EYE)?.position?.y
+        val right = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position?.y
+        val eyeY = when {
+            left != null && right != null -> (left + right) / 2f
+            left != null -> left
+            right != null -> right
+            else -> return null
+        }
+        return ((eyeY - box.top) / h).coerceIn(-0.5f, 1.5f)
+    }
+
+    private fun chinRatio(face: Face?): Float? {        if (face == null) return null
         val h = face.boundingBox.height().toFloat()
         if (h <= 1f) return null
         val chin = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position?.y ?: return null

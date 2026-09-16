@@ -319,6 +319,34 @@ class HeadPoseDetector(
          */
         private const val NEAR_LOOKDOWN_NOD_BOOST = 0.42f
 
+        // ------------------------- v5.25：仰头方向的近距离档 + 参考点确认 --
+
+        /**
+         * **近距离 + 俯视**时的**仰头**增益：`6.0° × 0.63 = ` **3.8°**（v5.25）。
+         *
+         * 用户复测 v5.24 的原话：「仰头比之前好点了，但是还是不够灵敏，我的角度还是需要大一点，
+         * 而且**仰头太不灵敏了，我仰头了，要等个差不多 0.4-0.5 秒才触发**」。
+         *
+         * 实机延迟统计（16 次仰头）：中位数 **202ms**，其中 3 次 ≥500ms —— 正好对上"等半秒"。
+         * 原因不是识别慢，而是**阈值太高**：仰头的起点在 2.4°（onset）附近慢慢抬，
+         * 要涨到 6.0° 才放行，于是从起点到触发要 200~760ms。降到 3.8° 直接把这个过程砍掉近一半。
+         *
+         * ⚠️ v5.7 曾因"近距离仰视被误触"把仰头增益**单向化**（只压低头方向）。
+         * 现在敢给仰头也开一档，是因为同时加了 [TILT_REF_CONFIRM] 的**参考点确认**：
+         * 实机数据里"鼻子相对眼睛的位移"在 16 次真实仰头中 14 次方向一致、**0 次相反**，
+         * 而身体动一下只会让整张脸平移、不改变这个相对量 —— 用它把被动仰视挡在外面。
+         */
+        private const val NEAR_LOOKUP_BOOST = 0.63f
+
+        /**
+         * 仰头方向的**参考点确认**（v5.25）：`relNoseDy`（鼻子相对眼睛的位移）必须 ≤ 负的这个值。
+         *
+         * 实机分布（16 次真实仰头）：|relN| 中位数 0.065、最小 0.003、绝大多数 ≥0.028。
+         * 取 0.015：14/16 的真实仰头能过，而"身体平移 / 姿势漂移"这一类（relN 接近 0）被挡下
+         * —— 正是用户说的「我身体一动就会误触」。
+         */
+        private const val TILT_REF_CONFIRM = 0.015f
+
         /**
          * 晃动判据（v5.16 改判据）：**方向反转次数**，只拦高频抖动。
          *
@@ -887,6 +915,16 @@ class HeadPoseDetector(
     @Volatile
     var eyeDip: Boolean = false
 
+    /**
+     * 「鼻子相对眼睛」的位移（v5.25），由服务从 [ReferencePointDetector] 每帧同步。
+     *
+     * 负值 = 鼻子在脸内部往上走 = 仰头方向。用来给仰头方向做确认（见 [TILT_REF_CONFIRM]）：
+     * 它是**平移无关**的，所以"身体动一下让整张脸平移"不会改变它，
+     * 只有头真的俯仰（透视缩短）才会变 —— 实机 16 次仰头里 14 次方向一致、0 次相反。
+     */
+    @Volatile
+    var refRelNoseDy: Float = 0f
+
     /** 闭眼不可信期的截止时刻（v5.14），由 [eyeUnreliable] 维护。 */
     private var eyeUnreliableUntilMs = 0L
 
@@ -1358,7 +1396,13 @@ class HeadPoseDetector(
         // 所以：只有**没有**吃到任何近距离档（即远距离、或近距离平视）时，
         // 才让 v5.4 那条俯视增益作用于低头方向；仰头方向永远不吃它。
         val gazeBoost = if (signedPitch < 0f && nearBoost == 1f) nodDownGazeBoost else 1f
-        return thresholdDeg * (gazeBoost * nearBoost)
+
+        // v5.25：**仰头**方向在「近距离 + 俯视」时也开一档（3.8°）。
+        // 用户复测 v5.24：「仰头太不灵敏了，我仰头了要等 0.4~0.5 秒才触发」——
+        // 实机 16 次仰头的中位延迟正好 202ms、3 次 ≥500ms，根因是阈值 6.0° 太高。
+        val upBoost = if (signedPitch > 0f && nearDistance && lookingDown) NEAR_LOOKUP_BOOST else 1f
+        lastAppliedNodBoost = nearBoost * upBoost
+        return thresholdDeg * (gazeBoost * nearBoost * upBoost)
     }
 
     /** 按距离缩放后的静止峰峰值门限。 */
@@ -1502,6 +1546,12 @@ class HeadPoseDetector(
             }
             if (pitchOnsetAtMs == 0L) pitchOnsetAtMs = nowMs
             if (magnitude < threshold) return@run "below-threshold"
+            // v5.25：**仰头方向的参考点确认** —— 见 [TILT_REF_CONFIRM]。
+            // 身体动一下只会让整张脸在画面里平移，不会改变"鼻子在脸内部的相对位置"，
+            // 所以要求 relNoseDy 确实朝仰头方向动过，才能放行仰头。
+            if (signed > 0f && nearDistance && refRelNoseDy > -TILT_REF_CONFIRM) {
+                return@run "tilt-ref-veto"
+            }
             // v5.14：闭眼（哪怕一帧浅闭）之后的姿态读数不可信 —— 见 EYE_UNRELIABLE_MS。
             if (eyeUnreliable(nowMs)) return@run "eyes-unreliable"
             // v5.12 晃动过滤：地铁/手抖是**来回抖**（走过的路远大于净位移），

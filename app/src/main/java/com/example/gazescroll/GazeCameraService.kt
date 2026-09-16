@@ -1036,6 +1036,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
                     if (ref != null) {
                         ref.invert = cfg.headPoseInvertPitch
                         ref.nearDownBoost = head.nearDistance && head.lookingDown
+                        // v5.25：把"鼻子相对眼睛"的位移给头部检测器，用于仰头方向的确认。
+                        head.refRelNoseDy = ref.relNoseDy
                         val would = ref.onFrame(
                             frame.noseNormY,
                             frame.chinNormY,

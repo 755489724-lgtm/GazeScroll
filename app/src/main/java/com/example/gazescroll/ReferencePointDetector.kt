@@ -111,6 +111,10 @@ class ReferencePointDetector {
         var dyB = 0f
             private set
 
+        /** v5.25：把两个关键点各自的位移暴露出去（仰头判据要用鼻子那一个）。 */
+        val detailA: Float get() = dyA
+        val detailB: Float get() = dyB
+
         /** 判定用的位移：两点同向取均值。 */
         var dy = 0f
             private set
@@ -257,6 +261,19 @@ class ReferencePointDetector {
 
     /** 轨道 B：平移无关（关键点相对眼睛）。 */
     val relDy: Float get() = trackRel.dy
+
+    /**
+     * **鼻子相对眼睛**的位移（v5.25）。
+     *
+     * 这是实机数据挑出来的仰头判据：16 次真实仰头里 **14 次方向一致、0 次相反**
+     * （绝对鼻子位移 11/2、绝对下巴 12/2、下巴相对眼睛 14/2 都有反例）。
+     * 用它给仰头做方向确认 —— 身体动一下会让整张脸平移（绝对位移变化），
+     * 但**不会改变"鼻子在脸内部的相对位置"**，所以这一条正好把"身体在动"挡在外面。
+     */
+    val relNoseDy: Float get() = trackRel.detailA
+
+    /** 下巴相对眼睛的位移（v5.25），诊断用。 */
+    val relChinDy: Float get() = trackRel.detailB
 
     @Synchronized
     fun reset() {

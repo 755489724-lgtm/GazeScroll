@@ -332,20 +332,12 @@ class HeadPoseDetector(
          * 要涨到 6.0° 才放行，于是从起点到触发要 200~760ms。降到 3.8° 直接把这个过程砍掉近一半。
          *
          * ⚠️ v5.7 曾因"近距离仰视被误触"把仰头增益**单向化**（只压低头方向）。
-         * 现在敢给仰头也开一档，是因为同时加了 [TILT_REF_CONFIRM] 的**参考点确认**：
+         * 现在敢给仰头也开一档，是因为同时加了**参考点确认**（v5.25 起；v5.27 改成看
+         * 证人自己确认的结论 `refRelVerdict`，见该字段的说明）：
          * 实机数据里"鼻子相对眼睛的位移"在 16 次真实仰头中 14 次方向一致、**0 次相反**，
          * 而身体动一下只会让整张脸平移、不改变这个相对量 —— 用它把被动仰视挡在外面。
          */
         private const val NEAR_LOOKUP_BOOST = 0.63f
-
-        /**
-         * 仰头方向的**参考点确认**（v5.25）：`relNoseDy`（鼻子相对眼睛的位移）必须 ≤ 负的这个值。
-         *
-         * 实机分布（16 次真实仰头）：|relN| 中位数 0.065、最小 0.003、绝大多数 ≥0.028。
-         * 取 0.015：14/16 的真实仰头能过，而"身体平移 / 姿势漂移"这一类（relN 接近 0）被挡下
-         * —— 正是用户说的「我身体一动就会误触」。
-         */
-        private const val TILT_REF_CONFIRM = 0.015f
 
         /**
          * 晃动判据（v5.16 改判据）：**方向反转次数**，只拦高频抖动。
@@ -517,6 +509,39 @@ class HeadPoseDetector(
          */
         private const val EYE_UNRELIABLE_MS = 50L
 
+        // ------------------- v5.27：强候选（动作已经做出来了）--
+
+        /**
+         * 「强候选」余量（v5.27）：越阈值这么多度，就算**动作已经做出来了**，
+         * 不再让软性门（闭眼不可信、保持时间、最低速度）有机会把它拖住。
+         *
+         * ## 实机依据（v5.26 日志，20:30:40.5~41.2，近距离俯视）
+         *
+         * 用户做了一次 3.5°→17.2° 的连续仰头（约 330ms，速度 0.04~0.08°/ms），
+         * 结果**一帧都没放行**：
+         *
+         * ```
+         * 40.665 tiltUp candidate rejected: pitch=10.9° reason=ref-veto-up
+         * 40.759 tiltUp candidate rejected: pitch=14.6° reason=eyes-unreliable
+         * 40.865 tiltUp candidate rejected: pitch=16.5° reason=eyes-unreliable
+         * 40.933 tiltUp candidate rejected: pitch=17.2° reason=eyes-unreliable
+         * 41.005 tiltUp candidate rejected: pitch=14.5° reason=eyes-unreliable
+         * 41.092 tiltUp candidate rejected: pitch=13.3° reason=ref-veto-up
+         * … 回摆末段 42.551 nodDown triggered（点成下滑）← 用户说的"延迟/判反/误触"
+         * ```
+         *
+         * 两个原因都跟"幅度已经很大了"无关：仰头时眼皮被挤成半闭 → `eyeDip` 连续为真；
+         * 证人位移在起手瞬间≈0 → 否决成立。这种时候再等软性门，等到的只有误判。
+         *
+         * ## 为什么 2.0° 是安全的
+         *
+         * 唯一的已知单帧跳变噪声是 3.5°（见 [EYE_UNRELIABLE_MS] 里那次眨眼误触）。
+         * 近距离俯视的阈值是点头 2.5° / 仰头 3.8°，加上 2.0° 余量分别是 4.5° / 5.8°，
+         * 都高于 3.5°；而且跳变确认（[JUMP_CONFIRM_MS]）、晃动判据、手机运动判据
+         * 三道门都还在强候选前面，一个都没去掉。
+         */
+        private const val STRONG_MARGIN_DEG = 2.0f
+
         // ------------------- v5.15：区分「渐进动作」与「单帧跳变」 --
 
         /**
@@ -554,13 +579,32 @@ class HeadPoseDetector(
         private const val CHIN_WINDOW_SAMPLES = 9
 
         /**
-         * 回中锁定的**最长**持续时间（v5.2）。
+         * 回中锁定的**最短**持续时间（v5.2 是"最长 400ms 兜底"，v5.27 改成"最短"）。
          *
-         * 没有这条兜底时，锁会永久卡住：人的自然姿势长期偏离基准线（实测偏差 6.5°），
-         * 永远进不了 ±2.4° 的中性区，于是反向动作被无限期屏蔽 —— 表现就是「仰头能用、
-         * 点头全失效」。回正动作本身只要几百毫秒，400ms 足够覆盖它。
+         * 这一条同时服务于两个目的：
+         *  1. 用户最初的需求就是「回中抑制期 300~500ms」—— 触发后短时间内不许反向动作；
+         *  2. 把 v5.2 那条**无条件解锁**的兜底换成"最短时间 + 真的停住了"。
+         *
+         * ## 为什么必须改（v5.26 实测 20:30:37.475 → 20:30:42.551）
+         *
+         * 旧逻辑 400ms 一到就解锁，**完全不看头在哪**：仰头触发后 400ms 头还在 15°~20° 高位
+         * 就已经解锁了；随后用户把头放回来（这是一次 18° 的下行回摆），
+         * 回摆末段穿过中性区时又被 `|pitch| < 中性区` 的 150ms 计时刷满，
+         * 于是在 42.551 被判成一次"点头" → 又翻了一页。用户的原话是
+         * 「仰头后还是有延迟翻页 + 还是有误触 + 判定不准」，这一次三样全占了。
+         *
+         * 现在解除必须同时满足「不在动」和下面任一条：
+         *  - 回到中性区并稳定 [RECENTER_SETTLE_MS]（原逻辑）；
+         *  - **或**头就停在自己当前的姿势上（`|signed − settledPitch| ≤ 中性区`）——
+         *    这条专门给"姿势偏置"用：基准线偏了 6.5° 时 `|signed|` 永远进不了中性区，
+         *    但 `settledPitch` 会跟着真实姿势走，所以差值很小，锁照样解得开，不会永久卡死。
+         *
+         * [RECENTER_HARD_CAP_MS] 是最后一道保险：停住再久也强制解锁。
          */
-        private const val RECENTER_MAX_LOCK_MS = 400L
+        private const val RECENTER_MIN_LOCK_MS = 400L
+
+        /** 回中锁定的硬上限（v5.27）：不再看任何条件，只要"停住了"且超过它就解锁。 */
+        private const val RECENTER_HARD_CAP_MS = 3000L
 
         /** 静止判定的观察窗口。 */
         private const val STATIC_WINDOW_MS = 500L
@@ -871,7 +915,7 @@ class HeadPoseDetector(
     /** 头部回到中性区的起始时刻，用于回中锁定的解除计时。 */
     private var recenterNeutralSinceMs = 0L
 
-    /** 回中锁定开始的时刻，用于 [RECENTER_MAX_LOCK_MS] 兜底。 */
+    /** 回中锁定开始的时刻（v5.27：用于最短抑制期与硬上限，见 [RECENTER_MIN_LOCK_MS]）。 */
     private var recenterLockedAtMs = 0L
 
     /** 姿势偏离持续到这一刻仍没变成动作，就认定是新姿势并校正基准线。 */
@@ -944,12 +988,30 @@ class HeadPoseDetector(
     /**
      * 「鼻子相对眼睛」的位移（v5.25），由服务从 [ReferencePointDetector] 每帧同步。
      *
-     * 负值 = 鼻子在脸内部往上走 = 仰头方向。用来给仰头方向做确认（见 [TILT_REF_CONFIRM]）：
+     * 负值 = 鼻子在脸内部往上走 = 仰头方向。诊断用途；**否决判据已改用 [refRelVerdict]**：
      * 它是**平移无关**的，所以"身体动一下让整张脸平移"不会改变它，
      * 只有头真的俯仰（透视缩短）才会变 —— 实机 16 次仰头里 14 次方向一致、0 次相反。
      */
     @Volatile
     var refRelNoseDy: Float = 0f
+
+    /**
+     * v5.27：`rel` 参考点轨道**自己确认过的**方向（+1 仰头 / -1 点头 / 0 无结论），
+     * 由服务每帧同步（读到的比本帧早一帧，正好相当于"上帧就已确认"）。
+     *
+     * 为什么不再直接看 [refRelNoseDy]：位移在动作**起手**那一刻必然≈0，
+     * 「要求位移已经朝仰头方向动过」就等于在每次起手时先否掉一帧 —— v5.26 实测
+     * `ref-veto-up` 2 分钟拦了 **89 次**，其中 20:30:40.665 那一帧与同毫秒的诊断行
+     * `rel dy=-0.054 opt=ok`（方向完全一致）自相矛盾；20:30:40.5~41.2 用户做了一次
+     * 3.5°→17.2° 的连续仰头，被 veto/eyes 连拦 1.3 秒**一次都没触发**，
+     * 结果回摆末段反而被当成点头下滑 —— 用户看到的正是"仰头后延迟翻页/判反"。
+     */
+    @Volatile
+    var refRelVerdict: Int = 0
+
+    /** v5.27：`rel` 轨道当前阈值，否决时要求位移明显越过它（而不是只看符号）。 */
+    @Volatile
+    var refRelThreshold: Float = 0.025f
 
     /** 闭眼不可信期的截止时刻（v5.14），由 [eyeUnreliable] 维护。 */
     private var eyeUnreliableUntilMs = 0L
@@ -1561,8 +1623,13 @@ class HeadPoseDetector(
         val lockDir = recenterLockDirection
         if (lockDir != 0) {
             val sameDirection = (signedPitch > 0 && lockDir > 0) || (signedPitch < 0 && lockDir < 0)
-            updateRecenterLock(signedPitch, threshold, sameDirection, nowMs)
+            // v5.27：把"还在动"传给锁定逻辑 —— 解除必须建立在真的停住了之上（见 [RECENTER_MIN_LOCK_MS]）。
+            updateRecenterLock(signedPitch, threshold, sameDirection, velocity >= speedGate, nowMs)
         }
+
+        // v5.27：强候选 = 幅度已经明显越过阈值，见 [STRONG_MARGIN_DEG]。
+        // 必须在下面的 run 之前算出来，好让软性门（闭眼/保持时间/最低速度）对它让路。
+        val strong = magnitude >= threshold + STRONG_MARGIN_DEG
 
         // 所有「不触发」的原因都收敛到这一个变量，便于日志里直接说明为什么没触发。
         val reject: String? = run {
@@ -1575,22 +1642,25 @@ class HeadPoseDetector(
             }
             if (pitchOnsetAtMs == 0L) pitchOnsetAtMs = nowMs
             if (magnitude < threshold) return@run "below-threshold"
-            // v5.25：**仰头方向的参考点确认** —— 见 [TILT_REF_CONFIRM]。
+            // v5.25：**仰头方向的参考点确认**（v5.27 改用证人自己的结论，见 [refRelVerdict]）。
             // 身体动一下只会让整张脸在画面里平移，不会改变"鼻子在脸内部的相对位置"，
-            // 所以要求 relNoseDy 确实朝仰头方向动过，才能放行仰头。
+            // 所以要求参考点通道给出**仰头方向的结论**，才能放行仰头。
             // v5.26：**对称地给低头方向也加上**。用户复测 v5.25 报「仰头有时候会判定下拉」——
-            // 逐个核对发现 17 次点头里有 4 次证人方向相反（relN 明显在往上），
-            // 那几次正是"仰头被判成下拉"。两个方向都要求"证人没有明确反对"。
-            if (nearDistance) {
-                if (signed > 0f && refRelNoseDy > -TILT_REF_CONFIRM) {
-                    return@run "ref-veto-up"
-                }
-                if (signed < 0f && refRelNoseDy < -TILT_REF_CONFIRM) {
-                    return@run "ref-veto-down"
-                }
+            // 逐个核对发现 17 次点头里有 4 次证人方向相反，那几次正是"仰头被判成下拉"。
+            // v5.27：判据从「看原始位移 refRelNoseDy」改成「看证人自己确认的结论 refRelVerdict」——
+            // 位移在起手瞬间必然≈0，旧判据等于每次起手先否掉一帧（实测 2 分钟误否 89 次，
+            // 其中整整一次连续仰头被否到完全没触发）。现在只有证人**确认了相反方向**
+            // 且位移明显越过它自己的阈值时才否决，起手帧与动作窗外的噪声都不再参与。
+            if (nearDistance && refRelVerdict != 0 && abs(refRelNoseDy) >= refRelThreshold) {
+                if (signed > 0f && refRelVerdict < 0) return@run "ref-veto-up"
+                if (signed < 0f && refRelVerdict > 0) return@run "ref-veto-down"
             }
             // v5.14：闭眼（哪怕一帧浅闭）之后的姿态读数不可信 —— 见 EYE_UNRELIABLE_MS。
-            if (eyeUnreliable(nowMs)) return@run "eyes-unreliable"
+            // v5.27：**只对边缘候选生效** —— 仰头本身会把眼皮挤成半闭（实测连续 4 帧 eyeDip），
+            // 幅度已经明确越过阈值的候选再被它拦住，用户看到的就是"仰头不翻页"。
+            // 注意这里仍然照常调用 eyeUnreliable()（它负责维护恢复期），只是不再据此否决强候选。
+            val eyeBlocked = eyeUnreliable(nowMs)
+            if (eyeBlocked && !strong) return@run "eyes-unreliable"
             // v5.12 晃动过滤：地铁/手抖是**来回抖**（走过的路远大于净位移），
             // 即使顶穿了阈值也不算动作。必须在压低阈值（2.5°）之后有它兜底。
             if (isShaking()) {
@@ -1624,11 +1694,19 @@ class HeadPoseDetector(
             val fast = velocity >= FAST_PITCH_VELOCITY
             // v5.13：近距离俯视的**轻点头通道** —— 见 LIGHT_NOD_FAST_VELOCITY 的实机数据。
             val light = !fast && lightNodAllowed && velocity >= LIGHT_NOD_FAST_VELOCITY
-            if (!fast && !light && nowMs - pitchReachedAtMs < requiredHoldMs()) return@run "hold-not-met"
+            // v5.27：强候选不再等保持时间/轻通道确认/最低速度 —— 这三道门都是为了
+            // "幅度刚好压在阈值上"的候选防噪声，而强候选的幅度已经明确越过阈值
+            // （见 [STRONG_MARGIN_DEG] 的实机依据）。实测这三道门各会拖掉一帧（63~116ms）。
+            // 前面还有晃动判据、手机运动判据、跳变确认三道门，一个都没去掉。
+            if (!fast && !light && !strong && nowMs - pitchReachedAtMs < requiredHoldMs()) {
+                return@run "hold-not-met"
+            }
             // 轻通道必须多撑过一帧（单帧跳变会在下一帧掉回 below-threshold，永远过不来）。
-            if (light && nowMs - pitchReachedAtMs < LIGHT_NOD_CONFIRM_MS) return@run "light-confirm"
+            if (light && !strong && nowMs - pitchReachedAtMs < LIGHT_NOD_CONFIRM_MS) {
+                return@run "light-confirm"
+            }
             // 最低速度门限：噪声有幅度但没有速度，所以再加一道与幅度无关的门。
-            if (!fast && !light && velocity < speedGate) return@run "speed-gate"
+            if (!fast && !light && !strong && velocity < speedGate) return@run "speed-gate"
             // v5.8 方向仲裁：偏航正在明显转动 → 这次让位给扭头。
             // 近距离俯视扭头会同时带出一个俯仰分量（实测 ±3~±10°），而俯仰阈值被单向
             // 增益压到 0.68 倍（4.1°/5.4°），不让位的话"想扭头"永远先变成上下滑。
@@ -1657,7 +1735,11 @@ class HeadPoseDetector(
                         "dist=${if (nearDistance) "near" else "far"} " +
                         "posture=${if (lookingDown) "down" else "flat"} " +
                         "shake=${"%.2f".format(shakeEfficiency)} rev=$shakeReversals " +
-                        "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} reason=$reject",
+                        "boost=${"%.2f".format(nearNodDownBoost(signedPitch))} " +
+                        // v5.27：强候选标记 + 证人自己的结论（判据是否用得上，一眼可核对）。
+                        "strong=${if (strong) 1 else 0} " +
+                        "refV=$refRelVerdict/${"%+.3f".format(refRelNoseDy)}" +
+                        " thr=${"%.3f".format(refRelThreshold)} reason=$reject",
                 )
             }
             // 只有「真的回到静止」才清掉进行中的动作；被锁或速度不足时保留计时段，
@@ -1680,8 +1762,8 @@ class HeadPoseDetector(
         previousFramePitchAtMs = nowMs
 
         // 回中锁定（v5.0）：记下这次的方向，反方向要等头部回到中性区才放行，
-        // 这样「仰头之后把头放回去」不会被当成一次点头。v5.2 加了 400ms 兜底，
-        // 避免姿势偏置导致它永久卡死。
+        // 这样「仰头之后把头放回去」不会被当成一次点头。
+        // v5.27：兜底不再是"400ms 无条件解锁" —— 改成"停住 + 已回稳/已回中性区"（见 RECENTER_MIN_LOCK_MS）。
         recenterLockDirection = if (signed < 0) -1 else 1
         recenterLocked = true
         recenterNeutralSinceMs = 0L
@@ -1696,7 +1778,9 @@ class HeadPoseDetector(
             " (boosted, dist=near posture=${if (lookingDown) "down" else "flat"} " +
                 "threshold=${"%.1f".format(threshold)} " +
                 // v5.17：轻通道打出"起点 → 终点"，方向与幅度一眼可核对。
-                "light=${if (useLight) "yes(${"%.1f".format(settledPitch)}→${"%.1f".format(signed)})" else "no"}°)"
+                "light=${if (useLight) "yes(${"%.1f".format(settledPitch)}→${"%.1f".format(signed)})" else "no"}°" +
+                // v5.27：这次是靠"强候选"（免等软性门）放行的吗？看日志就能核对手感来源。
+                " strong=${if (strong) "yes" else "no"})"
         } else {
             ""
         }
@@ -2075,34 +2159,71 @@ class HeadPoseDetector(
      * 结果就是：仰头触发一次之后，回中锁定**再也不会解除**，反向的点头被永久屏蔽。
      * 用户反馈「仰头好用了，但点头全失效了」正是这个原因。
      *
-     * 现在加两条独立的解除条件，满足任意一条就解锁：
-     *  1. 回到中性区并稳定 [RECENTER_SETTLE_MS]（原逻辑，正常情况走这条）；
-     *  2. **最长锁定 [RECENTER_MAX_LOCK_MS]**（兜底）。回正动作本身只要几百毫秒，
-     *     锁定超过这个时间就说明用户早就回正了、只是姿势偏置让条件 1 失效。
+     * ## v5.27：解除条件从"到点就放"改成"停住了才放"
      *
-     * 用户当初的原始需求也确实是「回中抑制期 300–500ms」，所以这个兜底同时是把行为
-     * 拉回设计意图。
+     * v5.2 的兜底是**无条件**的 400ms（`RECENTER_MAX_LOCK_MS`）：时间一到就解锁，
+     * 完全不看头在哪、也不看还在不在动。实机后果见 [RECENTER_MIN_LOCK_MS] 的说明 ——
+     * 仰头之后把头放回来的那一次下行回摆，末段被当成一次"点头"多翻一页。
+     *
+     * 现在解除必须**先满足"不在动"**（`moving == false`，由调用方用速度判据给出），再看：
+     *  1. 回到中性区并稳定 [RECENTER_SETTLE_MS]（原逻辑）；
+     *  2. **或**头就停在自己当前的姿势上（`|signed − settledPitch| ≤ 中性区`）——
+     *     这是"姿势偏置"的出口：基准线偏了 6.5° 时条件 1 永远不成立，
+     *     但 `settledPitch` 跟着真实姿势走，差值很小，锁照样解得开；
+     *  3. [RECENTER_HARD_CAP_MS] 硬上限：停住超过 3 秒一律解锁，保证不可能永久屏蔽。
+     *
+     * 两条主条件都要求锁已持续 [RECENTER_MIN_LOCK_MS]，也就是用户要的「回中抑制期」。
      */
     private fun updateRecenterLock(
         signedPitch: Float,
         threshold: Float,
         sameDirection: Boolean,
+        moving: Boolean,
         nowMs: Long,
     ) {
-        // 兜底：锁得太久就强制解除，绝不允许它变成永久屏蔽。
-        if (recenterLocked && nowMs - recenterLockedAtMs >= RECENTER_MAX_LOCK_MS) {
+        val neutral = threshold * RECENTER_NEUTRAL_FRACTION
+        val elapsed = nowMs - recenterLockedAtMs
+
+        // 还在动：锁一律不放（这正是 v5.27 要堵的口子 —— 回摆过程中解除锁定）。
+        if (moving) {
+            if (abs(signedPitch) > neutral) recenterNeutralSinceMs = 0L
+            recenterLocked = true
+            return
+        }
+
+        if (elapsed >= RECENTER_HARD_CAP_MS) {
             recenterLockDirection = 0
             recenterLocked = false
             recenterNeutralSinceMs = 0L
             Log.i(
                 TAG,
-                "recenter lock released by timeout (${RECENTER_MAX_LOCK_MS}ms) — " +
-                    "posture offset kept it out of the neutral zone",
+                "recenter lock released by hard cap (${RECENTER_HARD_CAP_MS}ms) — " +
+                    "head still, pitch=${"%.1f".format(signedPitch)} settled=${"%.1f".format(settledPitch)}",
             )
             return
         }
 
-        val neutral = threshold * RECENTER_NEUTRAL_FRACTION
+        if (elapsed < RECENTER_MIN_LOCK_MS) {
+            // 最短抑制期还没到：先维持锁。
+            if (abs(signedPitch) > neutral) recenterNeutralSinceMs = 0L
+            recenterLocked = true
+            return
+        }
+
+        // 姿势偏置出口：头停在自己当前的姿势上（与"运动起点参考值"一致）。
+        if (abs(signedPitch - settledPitch) <= neutral) {
+            recenterLockDirection = 0
+            recenterLocked = false
+            recenterNeutralSinceMs = 0L
+            Log.i(
+                TAG,
+                "recenter lock released, head settled at own posture " +
+                    "(pitch=${"%.1f".format(signedPitch)} settled=${"%.1f".format(settledPitch)} " +
+                    "neutral=±${"%.1f".format(neutral)} ${elapsed}ms)",
+            )
+            return
+        }
+
         if (abs(signedPitch) > neutral) {
             // 还没回到中性区（或者又跑出去了）：重新计时。
             recenterNeutralSinceMs = 0L
@@ -2120,7 +2241,7 @@ class HeadPoseDetector(
                 recenterLockDirection = 0
                 recenterLocked = false
                 recenterNeutralSinceMs = 0L
-                Log.i(TAG, "recenter lock released, back to neutral")
+                Log.i(TAG, "recenter lock released, back to neutral (${elapsed}ms)")
             }
         }
     }

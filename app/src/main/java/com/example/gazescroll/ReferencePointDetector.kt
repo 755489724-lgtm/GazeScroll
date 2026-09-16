@@ -128,6 +128,19 @@ class ReferencePointDetector {
         var reject = "-"
             private set
 
+        /**
+         * v5.27：**本轨道自己确认过的方向**（+1 = 仰头方向 / -1 = 点头方向 / 0 = 本帧没有结论）。
+         *
+         * 与 `dyA`（原始位移）的关键区别：位移在"刚起步"那一刻必然≈0，所以
+         * 拿原始位移去否决俯仰通道，等于在每次动作起手时都把它拦下来
+         * （v5.26 实测 2 分钟内 `ref-veto-up` 拦了 **89 次**，其中
+         * 20:30:40.665 那一帧同一毫秒的诊断行明明是 `rel dy=-0.054 opt=ok`，方向完全一致）。
+         * 只有 `update()` 走到 `opt=ok`（越阈值、非跳变、在动作窗内）才算"有结论"，
+         * 也才允许拿它去否决别人。
+         */
+        var verdict: Int = 0
+            private set
+
         fun reset() {
             ringCount = 0
             ringIndex = 0
@@ -142,6 +155,7 @@ class ReferencePointDetector {
             dy = 0f
             speed = 0f
             reject = "-"
+            verdict = 0
         }
 
         /** @return 0 / -1（点头方向）/ +1（仰头方向） */
@@ -174,6 +188,8 @@ class ReferencePointDetector {
             val direction = if (invert) -rawDirection else rawDirection
 
             val onset = thresholdNow * ONSET_FRACTION
+            // v5.27：本帧默认"没有结论"；只有下面的 ok 分支才会给出方向。
+            verdict = 0
             if (magnitude < onset) {
                 onsetAtMs = 0L
                 reachedAtMs = 0L
@@ -205,6 +221,7 @@ class ReferencePointDetector {
             }
             reject = "ok"
             wouldTriggerCount++
+            verdict = direction
             return direction
         }
 
@@ -274,6 +291,16 @@ class ReferencePointDetector {
 
     /** 下巴相对眼睛的位移（v5.25），诊断用。 */
     val relChinDy: Float get() = trackRel.detailB
+
+    /**
+     * v5.27：`rel` 轨道**自己确认的**方向（+1 仰头 / -1 点头 / 0 无结论）。
+     *
+     * 俯仰通道用这个（而不是 [relNoseDy] 原始位移）做方向证人：见 `Track.verdict` 的说明。
+     */
+    val relVerdict: Int get() = trackRel.verdict
+
+    /** v5.27：`rel` 轨道当前生效阈值（含近距离俯视放宽），否决时要求位移明显超过它。 */
+    val relThresholdNow: Float get() = trackRel.thresholdNow
 
     @Synchronized
     fun reset() {

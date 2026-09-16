@@ -1038,6 +1038,11 @@ private const val REF_LOG_INTERVAL_MS = 400L
                         ref.nearDownBoost = head.nearDistance && head.lookingDown
                         // v5.25：把"鼻子相对眼睛"的位移给头部检测器，用于仰头方向的确认。
                         head.refRelNoseDy = ref.relNoseDy
+                        // v5.27：方向证人改成"参考点通道自己确认的结论 + 它自己的阈值"。
+                        // 在 onFrame() 之前读 → 拿到的是上一帧的结论，正好满足
+                        // "必须是已经确认过的方向，而不是起手瞬间≈0 的位移"。
+                        head.refRelVerdict = ref.relVerdict
+                        head.refRelThreshold = ref.relThresholdNow
                         val would = ref.onFrame(
                             frame.noseNormY,
                             frame.chinNormY,

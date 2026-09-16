@@ -1079,10 +1079,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
             //
             // 仍然受 `gate`（遮挡 / 静止硬锁定）管辖：闸门期间把进行中的歪头清掉。
             //
-            // 另外：**歪出中位带期间暂停翻页通道的判定**。歪头（滚转）会让俯仰读数串扰
-            // 几个度，而近距离俯视的点头阈值只有 2.5° —— v5.34 日志里 22:38:54.382 /
-            // 22:38:56.677 两次 `tiltUp triggered → swipe UP` 就发生在用户歪头的同时。
-            // 暂停的代价只是"歪着头的时候不翻页"，歪回中位后由 recalibrate 重新对齐基准线。
+            // v5.38：暂停翻页的门槛回收成"真的歪出阈值"（见下），并把 v5.37 的三条判据删掉
+            // —— 它们让暂停占比涨到 35%、把可用时间吃掉大半（用户报"不如上一版灵敏"）。
             val tilt = tiltDetector
             var tilting = false
             if (tilt != null) {
@@ -1094,7 +1092,10 @@ private const val REF_LOG_INTERVAL_MS = 400L
                         if (lastActionAtMs == 0L) 0L else lastActionAtMs + ACTION_GAP_MS
                     tilt.nearTier = if (headAxisAvailable) headPoseDetector?.nearDistance else null
                     tilt.onRoll(frame.headEulerAngleZ, now)
-                    tilting = tilt.isBeyondNeutral()
+                    // v5.38：只有**真的歪出阈值**（|tilt| ≥ 阈值）时才暂停翻页判定。
+                    // v5.35~v5.37 用的是 0.4×阈值（5.2°），实测把暂停占比从 12% 拉到 35%，
+                    // 翻页通道三分之一时间拿不到数据 —— 用户报「近距离俯视仰头被弄死了」。
+                    tilting = tilt.isTilted()
                 } else {
                     tilt.reset()
                 }

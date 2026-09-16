@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.gazescroll"
         minSdk = 26
         targetSdk = 34
-        versionCode = 77
-        versionName = "5.27"
+        versionCode = 78
+        versionName = "5.28"
     }
 
     buildTypes {

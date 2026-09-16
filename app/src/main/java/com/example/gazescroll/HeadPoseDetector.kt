@@ -545,6 +545,83 @@ class HeadPoseDetector(
          */
         private const val STRONG_MARGIN_DEG = 2.0f
 
+        // ------------------- v5.28：扭头优先 / 位移判据 -------------------
+
+        /**
+         * 「头正在左右摆」的判据（v5.28）：**原始偏航**在 [YAW_SWING_WINDOW_MS] 内的摆幅。
+         *
+         * ## 为什么要另起一条判据，而不是修 v5.8 的仲裁
+         *
+         * v5.8/v5.11 的仲裁（[isYawMovingNow]）读的是**本帧**的有符号偏航偏移，而那个量
+         * 依赖 `baselineYawDeg`。v5.27 实机日志里抓到一个致命组合：
+         *
+         * ```
+         * 20:47:37.097 pitch 19.1° yaw -29.77°                     ← 用户正在往右扭头
+         * 20:47:37.115 tiltUp triggered: pitch=9.3° … ctx 0ms yaw=1.5  ← 俯仰侧只看到 1.5°
+         * 20:47:37.119 turnR candidate rejected: yaw=29.5° reason=eyes-unreliable
+         * 20:47:37.124 A11y: swipe UP                                ← 用户想要 RIGHT，得到 UP ✗
+         * ```
+         *
+         * 同一帧里扭头通道看到 **29.5°**（速度 0.051~0.118°/ms，明显在转头），
+         * 俯仰通道只看到 **1.5°**（基准线当时刚被重学/重置），于是"让位给扭头"没成立，
+         * 俯仰直接触发。用户的原话：「47分30秒左右，我左右扭，但是被判定成了上滑」。
+         *
+         * 所以判据换成**与基准线无关**的原始偏航摆幅：扭头时原始偏航实测摆 25~59°，
+         * 而点头/仰头时只有 1.7~10.4°（同一场 43 次仰头触发的逐帧上下文统计）。
+         * 取 12°：真扭头全部命中，真点头全部不命中。
+         */
+        private const val TURN_SWING_YIELD_DEG = 12f
+
+        /** 原始偏航摆幅的观察窗口。 */
+        private const val YAW_SWING_WINDOW_MS = 500L
+
+        /** 原始偏航摆幅的采样数（窗口内最多保留这么多帧，约 5 帧 @11fps）。 */
+        private const val YAW_SWING_SAMPLES = 8
+
+        /**
+         * 位移判据（v5.28）：**判定域**里从运动起点到当前必须真的走过这么多（× 当帧阈值）。
+         *
+         * 依据同样是 v5.27 日志：近距离档有若干次「头根本没动」却触发了 ——
+         *
+         * ```
+         * 20:47:22 nodDown triggered  ctx 0.7 → 0.1   （位移 0.6°，却报了 -5.5° 的位移量）
+         * 20:47:24 tiltUp  triggered  ctx 5.1 → 5.8   （位移 0.7°）
+         * 20:46:58 nodDown triggered  ctx 0.0 → -1.3  （位移 1.3°）
+         * ```
+         *
+         * 共同形状：头部姿势**本来就已经越过阈值**（相对滞后的基准线），此时一次轻微晃动
+         * 就让"越阈值"成立 —— 用户说的「晃动的时候产生的误触」正是这一类。
+         * 加上"必须从运动起点真正走过 0.5×阈值"之后，这类只剩噪声位移的候选被清掉，
+         * 而真实动作（起点在 0.4×阈值、终点在阈值之上，天然走过 0.6×阈值）不受影响。
+         */
+        private const val MIN_TRAVEL_FRACTION = 0.5f
+
+        /**
+         * 近距离档的「突然性」窗口（v5.28）：从 onset（0.4×阈值）涨到阈值最多容许这么久。
+         *
+         * 用户的原话：「点头和扭头的判定是**突然性**的，就是突然快速的点头，而不是慢慢的晃动，
+         * 所以加一个判定方式吧，**不是快速扭头点头的时候，就不触发**」。
+         *
+         * 近距离开头用 500ms（远处也一直是 500ms），实测近距离所有**真实**动作的
+         * 「onset → 触发」延迟都在 249ms 以内（本场 52 次触发统计：中位数约 100ms、
+         * 最长 249ms），所以 300ms 只砍得掉慢动作：头部从 1.5° 慢慢爬到 2.5~3.8°
+         * （速度 ≤0.006°/ms，就是"慢慢晃"），同时保留全部真实快速动作。
+         *
+         * ⚠️ 为什么不用"触发延迟"直接做判据：延迟里**包含门控造成的等待**
+         * （v5.27 远距离那两次 575/624ms 其实是很快的仰头，只是被闭眼门等了 2~3 帧），
+         * 拿它当"慢"的判据会误杀真实动作。这里只量**从起点到第一次越阈值**的用时。
+         */
+        private const val NEAR_SUDDEN_RISE_MS = 300L
+
+        /**
+         * 近距离档「突然扭头」的窗口（v5.28）：转速慢于这个节奏就不算扭头。
+         *
+         * 比俯仰宽松一点（400ms vs 300ms），因为扭头本身幅度大（用户 20~40°），
+         * onset（0.4×阈值=8°）到阈值之间要走的位移比俯仰多。实测本场 21 次真实扭头的
+         * 「onset → 触发」延迟是 65~217ms，所以 400ms 只砍慢动作。
+         */
+        private const val NEAR_SUDDEN_TURN_RISE_MS = 400L
+
         // ------------------- v5.15：区分「渐进动作」与「单帧跳变」 --
 
         /**
@@ -1023,6 +1100,32 @@ class HeadPoseDetector(
     private var previousFramePitch = 0f
     private var previousFramePitchAtMs = 0L
 
+    // ---- v5.28：扭头优先（与基准线无关的原始偏航摆幅）----
+
+    private val yawSwingRing = FloatArray(YAW_SWING_SAMPLES)
+    private val yawSwingAtMs = LongArray(YAW_SWING_SAMPLES)
+    private var yawSwingIndex = 0
+    private var yawSwingCount = 0
+
+    /** 当前窗口内的原始偏航摆幅（度），见 [TURN_SWING_YIELD_DEG]。 */
+    var yawSwingDeg: Float = 0f
+        private set
+
+    // ---- v5.28：位移判据（判定域）----
+
+    /**
+     * 上一帧「判定域」的取值（`signed`，可能是轻通道位移，也可能是相对基线量）。
+     *
+     * 必须以**判定域**记录：v5.17 那次「域混用」把原始俯仰和轻通道位移相减，
+     * 结果方向整体翻了一次。位移判据同样不能跨域比。
+     */
+    private var lastDecisionValue = 0f
+    private var lastDecisionWasLight = false
+
+    /** 本次动作的起点（判定域），在 onset 声明时取上一帧的值。 */
+    private var excursionStartValue = 0f
+    private var excursionStartValid = false
+
     // ---- 运动起点的稳定值（v5.17）：轻通道的参考点 ----
     private val settleRing = FloatArray(SETTLED_WINDOW_SAMPLES)
     private var settleIndex = 0
@@ -1218,6 +1321,9 @@ class HeadPoseDetector(
         pitchReachedAtMs = 0L
         pitchArmed = false
         lastLoggedPitch = 0f
+        // v5.28：位移判据的起点一并作废，避免下一次动作拿旧起点算位移。
+        excursionStartValid = false
+        excursionStartValue = 0f
     }
 
     private fun clearTurn() {
@@ -1601,6 +1707,8 @@ class HeadPoseDetector(
 
         // ---- v5.9：逐帧上下文（必须在任何提前返回**之前**维护，否则轨迹会缺帧）----
         pushContext(signedPitch, signedYawNow, nowMs)
+        // v5.28：原始偏航摆幅（扭头优先判据），同样必须在提前返回之前维护。
+        pushYawSwing(yawDeg, nowMs)
         // v5.12：晃动判定的缓冲同理，必须在提前返回之前维护。
         pushShakeSample(signedPitch)
         // v5.17：维护"运动起点"的稳定值（轻通道的参考点）。
@@ -1636,17 +1744,42 @@ class HeadPoseDetector(
         // 一直好用）一个字都不改。
         val strong = nearDistance && magnitude >= threshold + STRONG_MARGIN_DEG
 
+        // v5.28：位移判据要用的"上一帧判定域取值"。必须在 run 之前抓住，
+        // 因为 onset 声明时取的就是"上一点"（这样单帧大幅动作也算走过了位移）。
+        val previousDecisionValue = lastDecisionValue
+        val previousDecisionWasLight = lastDecisionWasLight
+        lastDecisionValue = signed
+        lastDecisionWasLight = useLight
+
         // 所有「不触发」的原因都收敛到这一个变量，便于日志里直接说明为什么没触发。
         val reject: String? = run {
             if (magnitude < threshold * ONSET_FRACTION) return@run "below-onset"
+            // v5.28：**头正在左右摆 → 俯仰一律让位** —— 见 [TURN_SWING_YIELD_DEG]。
+            // 放在最前面（onset 声明之前）是有意的：扭头期间俯仰通道连动作都不该开始记，
+            // 否则扭头一结束，那个"已经越阈值"的残留姿势会立刻补一次上下滑。
+            if (nearDistance && yawSwingDeg >= TURN_SWING_YIELD_DEG) {
+                return@run "yaw-swing-arbitration"
+            }
             if (recenterLockDirection != 0 && recenterLocked &&
                 !((signedPitch > 0 && recenterLockDirection > 0) ||
                     (signedPitch < 0 && recenterLockDirection < 0))
             ) {
                 return@run "recenter-lock"
             }
-            if (pitchOnsetAtMs == 0L) pitchOnsetAtMs = nowMs
+            if (pitchOnsetAtMs == 0L) {
+                pitchOnsetAtMs = nowMs
+                // v5.28：运动起点 = 上一帧的判定域取值（同域，见 [lastDecisionValue]）。
+                excursionStartValue = previousDecisionValue
+                excursionStartValid = useLight == previousDecisionWasLight
+            }
             if (magnitude < threshold) return@run "below-threshold"
+            // v5.28：**位移判据** —— 见 [MIN_TRAVEL_FRACTION]。
+            // 姿势本来就压在阈值上时，一点晃动就能"越阈值"，但它没有位移。
+            if (nearDistance && excursionStartValid &&
+                abs(signed - excursionStartValue) < threshold * MIN_TRAVEL_FRACTION
+            ) {
+                return@run "no-travel"
+            }
             // v5.25：**仰头方向的参考点确认**（v5.27 改用证人自己的结论，见 [refRelVerdict]）。
             // 身体动一下只会让整张脸在画面里平移，不会改变"鼻子在脸内部的相对位置"，
             // 所以要求参考点通道给出**仰头方向的结论**，才能放行仰头。
@@ -1678,8 +1811,10 @@ class HeadPoseDetector(
             if (pitchReachedAtMs == 0L) {
                 pitchReachedAtMs = nowMs
                 val riseMs = nowMs - pitchOnsetAtMs
-                pitchArmed = riseMs <= motionWindowMs
-                if (!pitchArmed) Log.i(TAG, "ignored slow lean: rise ${riseMs}ms > ${motionWindowMs}ms")
+                // v5.28：近距离档要求"突然"（见 [NEAR_SUDDEN_RISE_MS]），远距离仍用用户设置的动作窗口。
+                val window = if (nearDistance) minOf(motionWindowMs, NEAR_SUDDEN_RISE_MS) else motionWindowMs
+                pitchArmed = riseMs <= window
+                if (!pitchArmed) Log.i(TAG, "ignored slow lean: rise ${riseMs}ms > ${window}ms")
             }
             if (!pitchArmed) return@run "slow-rise"
             // v5.15：这次越阈值是「渐进动作」还是「单帧跳变」？见 JUMP_CONFIRM_MS。
@@ -1722,7 +1857,7 @@ class HeadPoseDetector(
             null
         }
 
-        pitchYieldedToYaw = reject == "yaw-dominant-arbitration"
+        pitchYieldedToYaw = reject == "yaw-dominant-arbitration" || reject == "yaw-swing-arbitration"
 
         updatePostureRecenter(pitchDeg, baselineDeg, abs(signedPitch), threshold, reject, nowMs)
 
@@ -1744,7 +1879,11 @@ class HeadPoseDetector(
                         // v5.27：强候选标记 + 证人自己的结论（判据是否用得上，一眼可核对）。
                         "strong=${if (strong) 1 else 0} " +
                         "refV=$refRelVerdict/${"%+.3f".format(refRelNoseDy)}" +
-                        " thr=${"%.3f".format(refRelThreshold)} reason=$reject",
+                        " thr=${"%.3f".format(refRelThreshold)} " +
+                        // v5.28：扭头摆幅 + 已走过的位移（两个新判据的输入，可直接核对）。
+                        "yawSwing=${"%.1f".format(yawSwingDeg)} " +
+                        "travel=${if (excursionStartValid) "%.2f".format(abs(signed - excursionStartValue)) else "-"}" +
+                        " reason=$reject",
                 )
             }
             // 只有「真的回到静止」才清掉进行中的动作；被锁或速度不足时保留计时段，
@@ -1778,6 +1917,10 @@ class HeadPoseDetector(
         val how = if (fast) "fast" else "held"
         // v5.9：每次触发都把前约 1.2 秒的原始读数打出来（见 CONTEXT_SAMPLES 的说明）。
         val ctxNote = " — " + contextDump()
+        // v5.28：两个新判据的输入 + 晃动指标（触发线也要留痕，否则"这次为什么算数"只能靠猜）。
+        val judgeNote = " travel=${if (excursionStartValid) "%.2f".format(abs(signed - excursionStartValue)) else "-"}" +
+            " yawSwing=${"%.1f".format(yawSwingDeg)}" +
+            " shake=${"%.2f".format(shakeEfficiency)} rev=$shakeReversals"
         val boosted = nearDistance
         val boostNote = if (boosted) {
             " (boosted, dist=near posture=${if (lookingDown) "down" else "flat"} " +
@@ -1793,7 +1936,8 @@ class HeadPoseDetector(
             Log.i(
                 TAG,
                 "nodDown triggered$boostNote pitch=${"%.1f".format(signed)}° " +
-                    "latency=${latencyMs}ms ($how, v=${"%.3f".format(velocity)}°/ms)$staticNote$ctxNote",
+                    "latency=${latencyMs}ms ($how, v=${"%.3f".format(velocity)}°/ms)$judgeNote" +
+                    "$staticNote$ctxNote",
             )
             onEvent(
                 HeadEvent.NodDown(
@@ -1810,7 +1954,7 @@ class HeadPoseDetector(
                     "speed=${"%.4f".format(velocity)}°/ms threshold=${"%.1f".format(threshold)}° " +
                     "dist=${if (nearDistance) "near" else "mid/far"} " +
                     "boost=${"%.2f".format(nearNodDownBoost(signed))} " +
-                    "latency=${latencyMs}ms ($how)$staticNote$ctxNote",
+                    "latency=${latencyMs}ms ($how)$judgeNote$staticNote$ctxNote",
             )
             onEvent(
                 HeadEvent.TiltUp(
@@ -2364,16 +2508,25 @@ class HeadPoseDetector(
             if (yawOnsetAtMs == 0L) yawOnsetAtMs = nowMs
             if (magnitude < turnThreshold) return@run "below-threshold"
             // v5.14：闭眼后的姿态不可信期（扭头同样受影响）。
-            if (eyeUnreliable(nowMs)) return@run "eyes-unreliable"
+            // v5.28：**强扭头豁免** —— 扭头本身会把眼皮挤成半闭。v5.27 实测 25 次扭头候选里
+            // 有 12 次被这条拒掉，包括 20:47:37 那次 yaw=29.5°（用户明确在往右扭头，
+            // 结果只等来一个 UP）。判据与俯仰侧一致：越阈值 + [STRONG_MARGIN_DEG]。
+            // 注意照常调用 eyeUnreliable()（它维护恢复期），只是不再据此否决强扭头。
+            val strongTurn = nearDistance && magnitude >= turnThreshold + STRONG_MARGIN_DEG
+            val eyeBlocked = eyeUnreliable(nowMs)
+            if (eyeBlocked && !strongTurn) return@run "eyes-unreliable"
             // v5.13：手机自己被顿了一下（急停/急刹）—— 扭头同样不成立。
             if (phoneMoving) return@run "phone-motion"
 
             if (yawReachedAtMs == 0L) {
                 yawReachedAtMs = nowMs
                 val riseMs = nowMs - yawOnsetAtMs
-                yawArmed = riseMs <= turnMotionWindowMs
+                // v5.28：近距离档同样要求"突然"（见 [NEAR_SUDDEN_TURN_RISE_MS]）。
+                val window =
+                    if (nearDistance) minOf(turnMotionWindowMs, NEAR_SUDDEN_TURN_RISE_MS) else turnMotionWindowMs
+                yawArmed = riseMs <= window
                 if (!yawArmed) {
-                    Log.i(TAG, "ignored slow turn: rise ${riseMs}ms > ${turnMotionWindowMs}ms")
+                    Log.i(TAG, "ignored slow turn: rise ${riseMs}ms > ${window}ms")
                 }
             }
             if (!yawArmed) return@run "slow-rise"
@@ -2428,7 +2581,8 @@ class HeadPoseDetector(
         Log.i(
             TAG,
             "$direction turn triggered yaw=${"%.1f".format(abs(signedYaw))}° latency=${latencyMs}ms " +
-                "(${if (fast) "fast" else "held"}) — " + contextDump(),
+                "(${if (fast) "fast" else "held"}) yawSwing=${"%.1f".format(yawSwingDeg)} " +
+                "pitchNow=${"%.1f".format(lastSignedPitch)} — " + contextDump(),
         )
         onEvent(
             if (sign < 0) {
@@ -2533,6 +2687,31 @@ class HeadPoseDetector(
     }
 
     /**
+     * 记录一帧**原始**偏航，用于 [yawSwingDeg]（v5.28）。
+     *
+     * 存的是原始读数（不含基准线），这样"基准线刚被重学/重置"也不会让摆幅凭空消失 ——
+     * v5.27 那次"扭头被判成上滑"的直接原因就是俯仰侧读到的有符号偏航只剩 1.5°。
+     */
+    private fun pushYawSwing(rawYaw: Float?, nowMs: Long) {
+        if (rawYaw == null) return
+        yawSwingRing[yawSwingIndex] = rawYaw
+        yawSwingAtMs[yawSwingIndex] = nowMs
+        yawSwingIndex = (yawSwingIndex + 1) % YAW_SWING_SAMPLES
+        if (yawSwingCount < YAW_SWING_SAMPLES) yawSwingCount++
+
+        var min = Float.MAX_VALUE
+        var max = -Float.MAX_VALUE
+        for (i in 0 until yawSwingCount) {
+            val idx = (yawSwingIndex - 1 - i + YAW_SWING_SAMPLES * 2) % YAW_SWING_SAMPLES
+            if (nowMs - yawSwingAtMs[idx] > YAW_SWING_WINDOW_MS) continue
+            val v = yawSwingRing[idx]
+            if (v < min) min = v
+            if (v > max) max = v
+        }
+        yawSwingDeg = if (min > max) 0f else max - min
+    }
+
+    /**
      * 记录一帧上下文（v5.9）。
      *
      * 同一帧内俯仰与偏航都会调用（俯仰先、偏航后），所以用时间戳做去重：
@@ -2560,8 +2739,7 @@ class HeadPoseDetector(
      * 每格三个数依次是 **有符号俯仰 / 有符号偏航 / 脸占比**，时间是相对触发帧的毫秒数。
      * 排成时间序，于是「单帧尖峰」是孤立的一个大值，而「平滑上升」是一串递增的值 ——
      * 这两种形状在日志里一眼可辨，不需要任何额外工具。
-     */
-    private fun contextDump(): String {
+     */    private fun contextDump(): String {
         if (ctxCount == 0) return "ctx: (empty)"
         val newestIdx = (ctxIndex - 1 + CONTEXT_SAMPLES) % CONTEXT_SAMPLES
         val newestAt = ctxAtMs[newestIdx]

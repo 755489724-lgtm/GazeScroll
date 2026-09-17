@@ -49,12 +49,22 @@ private class Rig {
     private var wall = 1_700_000_000_000L
 
     /** 喂一帧并前进 [stepMs]（实测帧间隔 63~116ms，默认 66ms ≈ 15fps）。 */
-    fun frame(face: Boolean, dark: Boolean = false, luma: Float? = null, stepMs: Long = 66L) {
+    fun frame(
+        face: Boolean,
+        dark: Boolean = false,
+        luma: Float? = null,
+        stepMs: Long = 66L,
+        texture: Float? = null,
+        proxNear: Boolean = false,
+        proxAvailable: Boolean = false,
+    ) {
         val effective = when {
             luma != null -> luma
             dark -> 8f
             else -> 95f
         }
+        // 默认纹理跟随亮度：暗画面 = 2（被盖住），亮画面 = 20（正常场景有边缘）。
+        val effectiveTexture = texture ?: if (effective < 32f) 2f else 20f
         recorder.onFrame(
             ProbeSample(
                 wallMs = wall,
@@ -63,6 +73,9 @@ private class Rig {
                 frameWidth = 480,
                 frameHeight = 640,
                 luma = effective,
+                texture = effectiveTexture,
+                proximityNear = proxNear,
+                proximityAvailable = proxAvailable,
                 boxLeft = if (face) 0.30f else -1f,
                 boxTop = if (face) 0.25f else -1f,
                 boxRight = if (face) 0.70f else -1f,
@@ -97,10 +110,19 @@ private class Rig {
     }
 
     /** 保持 [ms] 毫秒的同一状态。 */
-    fun hold(face: Boolean, ms: Long, dark: Boolean = false, luma: Float? = null, stepMs: Long = 66L) {
+    fun hold(
+        face: Boolean,
+        ms: Long,
+        dark: Boolean = false,
+        luma: Float? = null,
+        stepMs: Long = 66L,
+        texture: Float? = null,
+        proxNear: Boolean = false,
+        proxAvailable: Boolean = false,
+    ) {
         var remaining = ms
         while (remaining > 0) {
-            frame(face, dark, luma, stepMs)
+            frame(face, dark, luma, stepMs, texture, proxNear, proxAvailable)
             remaining -= stepMs
         }
     }
@@ -157,7 +179,7 @@ private fun testStartOnFaceReturn() {
     check("第 1 段", r.recorder.phase == 1, "phase=${r.recorder.phase}")
     check("文件名像 probe-*.csv", r.lastName.startsWith("probe-") && r.lastName.endsWith(".csv"), r.lastName)
     check("有表头", r.hasLine("idx,wall,elapsed"))
-    check("有 # 元信息", r.hasLine("cover = no face"))
+    check("有 # 元信息", r.hasLine("# cover rule"), "表头里没有盖住规则说明")
     check("列数一致", r.dataRowColumnIssue().isEmpty(), r.dataRowColumnIssue())
     val rows = r.recorder.rows
     check("帧数 ≈ 1000/66", rows in 14..16, "rows=$rows")
@@ -240,27 +262,66 @@ private fun testSecondSessionNeedsNewCover() {
 }
 
 private fun testLumaUnavailableFallsBackToFaceLoss() {
-    println("\n[9] 亮度读不到（luma=null）时退化成「只看人脸消失」")
+    println("\n[9] 「盖住」的三条信号（v5.40）：近距离传感器 / 纹理 / 亮度 各自独立成立")
     val r = Rig()
     check(
-        "没脸 + 亮度未知 → 算盖住",
-        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = null)),
+        "没脸 + 亮度未知 + 纹理未知 + 没有近距离传感器 → 退化成算盖住",
+        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = null, texture = null)),
     )
     check(
-        "有脸 + 亮度未知 → 不算盖住",
-        !r.recorder.isCovered(ProbeSample(0, true, false, 480, 640, luma = null)),
+        "有脸 → 永远不算盖住",
+        !r.recorder.isCovered(ProbeSample(0, true, false, 480, 640, luma = 5f, texture = 1f)),
     )
     check(
-        "没脸 + 画面亮 → 不算盖住（转头看别处）",
-        !r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 95f)),
+        "没脸 + 画面亮 + 有纹理（转头看别处）→ 不算盖住",
+        !r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 95f, texture = 20f)),
     )
     check(
-        "没脸 + 画面黑 → 算盖住",
-        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 5f)),
+        "没脸 + 亮度低 → 算盖住（v5.39 原判据）",
+        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 5f, texture = 20f)),
     )
     check(
-        "有脸 + 画面黑（脸在暗处）→ 不算盖住",
-        !r.recorder.isCovered(ProbeSample(0, true, false, 480, 640, luma = 5f)),
+        "没脸 + 自动曝光把画面提亮了、但纹理低 → 算盖住 ★v5.40 的核心修复",
+        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 88f, texture = 1.5f)),
+    )
+    check(
+        "没脸 + 画面又亮又有纹理，但近距离传感器 NEAR → 算盖住 ★硬信号",
+        r.recorder.isCovered(
+            ProbeSample(
+                0, false, false, 480, 640, luma = 88f, texture = 20f,
+                proximityNear = true, proximityAvailable = true,
+            ),
+        ),
+    )
+    check(
+        "近距离传感器可用但读数是 far、画面也正常 → 不算盖住",
+        !r.recorder.isCovered(
+            ProbeSample(
+                0, false, false, 480, 640, luma = 88f, texture = 20f,
+                proximityNear = false, proximityAvailable = true,
+            ),
+        ),
+    )
+}
+
+private fun testV539FailureCaseIsNowCovered() {
+    println("\n[13] 回放 v5.39 那次真实失败：盖住时人脸消失 50 秒、画面被自动曝光提亮")
+    val r = Rig()
+    // 自动曝光把被盖住的画面提到 88，纹理 1.5，近距离传感器 NEAR。
+    r.hold(true, 1500, proxAvailable = true)
+    check("先见到脸", r.recorder.state == ProbeState.IDLE)
+    r.hold(false, 4000, luma = 88f, texture = 1.5f, proxNear = true, proxAvailable = true)
+    check(
+        "现在能进入已就绪（v5.39 时这里一直是 idle）",
+        r.recorder.state == ProbeState.ARMED,
+        "state=${r.recorder.state}",
+    )
+    r.hold(true, 1000, texture = 20f, proxAvailable = true)
+    check("露脸即开始录制", r.recorder.state == ProbeState.RECORDING && r.filesOpened == 1)
+    check("打了 cover-probe 诊断行", r.hasLog("cover-probe"), )
+    check(
+        "cover-probe 行里有三个信号",
+        r.logs.any { it.contains("cover-probe") && it.contains("luma=") && it.contains("tex=") && it.contains("prox=") },
     )
 }
 
@@ -326,6 +387,7 @@ fun main() {
     testDisableMidRecording()
     testMaxSessionGuard()
     testStateLine()
+    testV539FailureCaseIsNowCovered()
     println("\n=== 结果：${if (failures == 0) "全部通过" else "$failures 项失败"} ===")
     if (failures != 0) throw IllegalStateException("$failures 项失败")
 }

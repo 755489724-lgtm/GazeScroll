@@ -172,11 +172,16 @@ data class AnalyzedFrame(
  * @param frameHeight 摆正后的画面高
  * @param luma 画面平均亮度 0..255。手掌/手指盖住前置摄像头时是个位数到十几，
  *   正常举着手机看屏幕时 ≥40 —— 「被盖住」这条判据靠它，详见 [GazeProbeRecorder]。
+ * @param texture 画面"纹理量"（v5.40）：抽样网格上**相邻采样点的平均亮度差**（0..255）。
+ *   它是"盖住"的第二条画面判据，而且是**抗自动曝光**的那一条 —— 见 [GazeProbeRecorder]
+ *   里 v5.40 的说明：手掌贴镜头时画面被 AEC 提亮，亮度不再可靠，但"离焦 → 没有边缘"
+ *   这件事不会因为提亮而改变。
  */
 data class ProbeFrame(
     val frameWidth: Int,
     val frameHeight: Int,
     val luma: Float?,
+    val texture: Float?,
     val boxLeft: Float,
     val boxTop: Float,
     val boxRight: Float,
@@ -304,19 +309,19 @@ class FaceGazeAnalyzer(
         val rotation = imageProxy.imageInfo.rotationDegrees
         // Upright frame height, per the note in the class doc.
         val uprightHeight = if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
-        // v5.39：摆正后的宽度（关键点 X 要按它归一化），以及画面平均亮度（判"摄像头被盖住"）。
-        // 亮度只在采集开关打开时才算，关掉时这一个分支都不进，逐帧开销与 v5.36 完全一致。
+        // v5.39：摆正后的宽度（关键点 X 要按它归一化），以及画面亮度/纹理（判"摄像头被盖住"）。
+        // 这两项只在采集开关打开时才算，关掉时这一个分支都不进，逐帧开销与 v5.36 完全一致。
         val probeWanted = GazeRuntime.config.probeEnabled
         val uprightWidth = if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
-        val luma = if (probeWanted) meanLuma(imageProxy) else null
+        val stats = if (probeWanted) lumaStats(imageProxy) else null
 
         val image = InputImage.fromMediaImage(mediaImage, rotation)
         detector.process(image)
             .addOnSuccessListener { faces ->
-                deliver(faces, uprightWidth.toFloat(), uprightHeight.toFloat(), luma, now)
+                deliver(faces, uprightWidth.toFloat(), uprightHeight.toFloat(), stats, now)
             }
             .addOnFailureListener {
-                deliver(emptyList(), uprightWidth.toFloat(), uprightHeight.toFloat(), luma, now)
+                deliver(emptyList(), uprightWidth.toFloat(), uprightHeight.toFloat(), stats, now)
             }
             .addOnCompleteListener {
                 // Must close on every path or the analysis pipeline stalls.
@@ -324,15 +329,24 @@ class FaceGazeAnalyzer(
             }
     }
 
+    /** 一帧的亮度/纹理统计（v5.39/v5.40），只在采集开关打开时计算。 */
+    private data class LumaStats(val mean: Float, val texture: Float)
+
     /**
-     * 画面平均亮度（v5.39）：只在「注视数据采集」打开时调用。
+     * 画面平均亮度 + 纹理量（v5.39 亮度 / v5.40 纹理）：只在「注视数据采集」打开时调用。
      *
-     * YUV 的 Y 平面就是亮度，按固定步长抽 ~32×32 个点求平均，成本可以忽略（每帧 1000 次
-     * 绝对读）。它解决的问题是：「人脸消失」这一条**分不开**"手掌盖住摄像头"和"人还在
-     * 画面里、只是把头转到别处"—— 采集脚本里本来就有"眼睛/头离开屏幕"的段落，只判人脸
-     * 会让整场采集被误当成结束。而被盖住时画面是黑的，一眼就分得开。
+     * YUV 的 Y 平面就是亮度，按固定步长抽 ~32×32 个点算两个量：
+     *
+     *  - **mean（亮度）**：分不开"手掌盖住"和"人还在、只是看别处"吗？原本以为能 ——
+     *    实机证明**不能**：前置摄像头的自动曝光会把被盖住的画面提亮（v5.39 第一次采集
+     *    整场没认出"盖住"，18:37:01 之后人脸连续消失 50 秒都没进入就绪）。
+     *  - **texture（纹理）**：网格上**相邻采样点的平均亮度差**。手掌贴在镜头前是完全离焦的，
+     *    画面没有边缘 —— 而 AEC 只会把它整体提亮，**变不出边缘来**。反过来，"人走开了、
+     *    画面里是房间"时到处都是边缘。这条才是抗自动曝光的那一条。
+     *
+     * 抽样只在 32×32 的网格上做，每帧约 1000 次绝对读，成本可以忽略。
      */
-    private fun meanLuma(proxy: ImageProxy): Float? {
+    private fun lumaStats(proxy: ImageProxy): LumaStats? {
         val plane = proxy.planes.getOrNull(0) ?: return null
         val buffer = plane.buffer
         val rowStride = plane.rowStride
@@ -344,28 +358,40 @@ class FaceGazeAnalyzer(
         val stepY = (h / 32).coerceAtLeast(1)
         var sum = 0L
         var count = 0
+        var diffSum = 0L
+        var diffCount = 0
         var y = 0
         while (y < h) {
             val rowBase = y * rowStride
             var x = 0
+            var previous = -1
             while (x < w) {
                 val index = rowBase + x * pixelStride
                 if (index < buffer.limit()) {
-                    sum += buffer.get(index).toInt() and 0xFF
+                    val value = buffer.get(index).toInt() and 0xFF
+                    sum += value
                     count++
+                    if (previous >= 0) {
+                        diffSum += kotlin.math.abs(value - previous)
+                        diffCount++
+                    }
+                    previous = value
                 }
                 x += stepX
             }
             y += stepY
         }
-        return if (count == 0) null else sum.toFloat() / count
+        if (count == 0) return null
+        val mean = sum.toFloat() / count
+        val texture = if (diffCount == 0) 0f else diffSum.toFloat() / diffCount
+        return LumaStats(mean, texture)
     }
 
     private fun deliver(
         faces: List<Face>,
         uprightWidth: Float,
         uprightHeight: Float,
-        luma: Float?,
+        stats: LumaStats?,
         nowMs: Long,
     ) {
         val face = pickLargestFace(faces)
@@ -421,7 +447,7 @@ class FaceGazeAnalyzer(
                 standby = standby,
                 // v5.39：采集开关打开时附带一帧原始几何量（关掉时是 null，一个字节都不多算）。
                 probe = if (GazeRuntime.config.probeEnabled) {
-                    buildProbeFrame(face, uprightWidth, uprightHeight, luma)
+                    buildProbeFrame(face, uprightWidth, uprightHeight, stats)
                 } else {
                     null
                 },
@@ -440,7 +466,7 @@ class FaceGazeAnalyzer(
         face: Face?,
         uprightWidth: Float,
         uprightHeight: Float,
-        luma: Float?,
+        stats: LumaStats?,
     ): ProbeFrame {
         val w = uprightWidth
         val h = uprightHeight
@@ -448,7 +474,8 @@ class FaceGazeAnalyzer(
             return ProbeFrame(
                 frameWidth = w.toInt(),
                 frameHeight = h.toInt(),
-                luma = luma,
+                luma = stats?.mean,
+                texture = stats?.texture,
                 boxLeft = -1f,
                 boxTop = -1f,
                 boxRight = -1f,
@@ -485,7 +512,8 @@ class FaceGazeAnalyzer(
         return ProbeFrame(
             frameWidth = w.toInt(),
             frameHeight = h.toInt(),
-            luma = luma,
+            luma = stats?.mean,
+            texture = stats?.texture,
             boxLeft = box.left / w,
             boxTop = box.top / h,
             boxRight = box.right / w,

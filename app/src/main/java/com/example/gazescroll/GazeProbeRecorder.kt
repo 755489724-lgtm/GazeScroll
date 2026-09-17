@@ -24,12 +24,26 @@ import java.util.Locale
  *  - **结束**：录制中盖住 **≥3 秒** → 结束本次采集，把汇总写进 CSV 并打一条日志。
  *  - 5 分钟保险：单次录制超过 [MAX_SESSION_MS] 自动结束。
  *
- * ## 为什么"盖住"要同时看亮度和人脸
+ * ## 为什么"盖住"要同时看亮度、纹理和近距离传感器（v5.39 → v5.40 的实机教训）
  *
  * 只判"人脸消失"会把**转头看别处**误判成盖住（采集里就有"眼睛离开屏幕"的段落，
- * 一旦被判成结束，整场数据就废了）。所以「盖住」= **没有人脸** 且 **画面平均亮度很暗**
- * （[COVER_LUMA_MAX]）。摄像头被手掌/手指盖住时画面是黑的，而"人还在画面里、只是看别处"
- * 时画面亮度正常 —— 两者一眼就分得开。亮度读不到时（极少数机型）退化成只判人脸消失。
+ * 一旦被判成结束，整场数据就废了）。
+ *
+ * v5.39 的判据是「没有人脸 且 画面平均亮度 < 32」，**实机第一次采集就整场失败**：
+ * 18:33:32 打开采集，随后 4 分钟一直是 `probe=idle`，而 18:37:01 之后人脸连续消失
+ * 50 秒都没进入"已就绪"。原因很直白 —— **前置摄像头的自动曝光会把被手掌盖住的画面提亮**，
+ * "盖住 = 画面黑"根本不成立。
+ *
+ * v5.40 改成**三条互相独立的信号并联**（任意一条成立就算盖住，全部读不到才退化成只看人脸）：
+ *
+ *  1. [ProximityMonitor] 的**近距离传感器**：手掌贴到手机顶部时直接翻成"近"。
+ *     与曝光、光照、画面内容都无关，是最硬的一条；
+ *  2. **纹理量** `texture`：抽样网格上相邻采样点的平均亮度差。手掌贴镜头是完全离焦的、
+ *     没有边缘 —— 自动曝光只能把它整体提亮，**变不出边缘**；
+ *  3. **亮度** `luma < [COVER_LUMA_MAX]`：AEC 没来得及补偿时仍然有效（保留原判据）。
+ *
+ * 三个值逐帧写进 CSV，并在人脸消失期间每秒打一行 `cover-probe`，所以阈值可以直接用
+ * 实测数据复核 —— 这也是这一次能一轮定位问题的原因。
  *
  * ## 它是纯逻辑
  *
@@ -67,8 +81,19 @@ data class ProbeSample(
     val standby: Boolean,
     val frameWidth: Int,
     val frameHeight: Int,
-    /** 画面平均亮度 0..255；null = 读不到（此时"盖住"只看人脸）。 */
+    /** 画面平均亮度 0..255；null = 读不到（此时"盖住"看纹理与近距离传感器）。 */
     val luma: Float? = null,
+    /**
+     * 画面纹理量（v5.40）：抽样网格上相邻采样点的平均亮度差（0..255）。
+     * 手掌贴镜头 = 完全离焦 = 没有边缘；"人走开了、画面里是房间" = 到处是边缘。
+     */
+    val texture: Float? = null,
+    /** 近距离传感器是否"近"（v5.40）：手掌贴住手机顶部时为 true。 */
+    val proximityNear: Boolean = false,
+    /** 近距离传感器是否可用（v5.40）；不可用时这一条不参与判据。 */
+    val proximityAvailable: Boolean = false,
+    /** 环境光（lux，v5.40）；-1 = 没有。只诊断，不参与判据。 */
+    val lux: Float? = null,
     val boxLeft: Float = -1f,
     val boxTop: Float = -1f,
     val boxRight: Float = -1f,
@@ -144,15 +169,28 @@ class GazeProbeRecorder(
         /**
          * 「画面被盖住」的亮度上限（0..255 的平均亮度）。
          *
-         * 手掌 / 手指盖住前置摄像头时实测是个位数到十几；正常室内举着手机看屏幕时
-         * 整幅画面（含背景）也在 40 以上。取 32 是留足余量，同时避开"人走开了、
-         * 画面里没脸但房间是亮的"这种情况。CSV 里逐帧记了 luma，实测后可以再调。
+         * v5.39 只有这一条（32），实机证明**不够**：前置摄像头自动曝光会把被盖住的画面
+         * 提亮到 32 以上，于是整场采集一次都没认出"盖住"。v5.40 起它降级为三条并联信号
+         * 里的一条（AEC 没来得及补偿时仍然有效），主判据交给近距离传感器与纹理量。
          */
         const val COVER_LUMA_MAX = 32f
 
+        /**
+         * 「画面被盖住」的纹理上限（v5.40）：抽样网格上相邻采样点的平均亮度差。
+         *
+         * 手掌/手指贴住镜头时画面完全离焦，相邻采样点几乎一样（个位数以下）；
+         * 正常画面（人脸、房间、哪怕是暗房间的噪点）都在它之上。
+         * CSV 里逐帧记了 `tex`、`cover-probe` 行每秒记一次，实测后可以再调。
+         */
+        const val COVER_TEXTURE_MAX = 4f
+
+        /** 人脸消失期间 `cover-probe` 诊断行的最小间隔。 */
+        const val COVER_LOG_INTERVAL_MS = 1000L
+
         /** CSV 的列顺序。改这里就必须同步改 [formatRow]，两边永远一起动。 */
         val COLUMNS = listOf(
-            "idx", "wall", "elapsed", "phase", "face", "cover", "luma", "standby", "fw", "fh",
+            "idx", "wall", "elapsed", "phase", "face", "cover", "luma", "tex", "prox", "lux",
+            "standby", "fw", "fh",
             "boxL", "boxT", "boxR", "boxB", "faceRatio",
             "eX", "eY", "eZ",
             "eyeLx", "eyeLy", "eyeRx", "eyeRy", "noseX", "noseY", "mouthX", "mouthY",
@@ -164,6 +202,13 @@ class GazeProbeRecorder(
         /** 浮点缺省写成 -1（CSV 里不留空，省得离线解析还要处理空字段）。 */
         private fun f(v: Float?, digits: Int = 4): String =
             if (v == null || v.isNaN()) "-1" else String.format(Locale.US, "%.${digits}f", v)
+
+        /** 近距离传感器读数的文字形式，诊断行用。 */
+        private fun proximityLabel(sample: ProbeSample): String = when {
+            !sample.proximityAvailable -> "-"
+            sample.proximityNear -> "NEAR"
+            else -> "far"
+        }
     }
 
     /** 当前状态。 */
@@ -200,6 +245,12 @@ class GazeProbeRecorder(
     /** 连续"被盖住"的起始时刻；0 = 当前没被盖住。 */
     private var coverStartMs = 0L
 
+    /** 人脸连续消失的起始时刻（v5.40，诊断行用；与人脸/盖住的判定无关）。 */
+    private var noFaceSinceMs = 0L
+
+    /** 上一次 `cover-probe` 诊断行的时刻（v5.40）。 */
+    private var lastCoverLogAtMs = 0L
+
     private var sessionStartMs = 0L
     private var sessionStartWallMs = 0L
     private var faceRows = 0
@@ -214,8 +265,16 @@ class GazeProbeRecorder(
 
     fun isCovered(sample: ProbeSample): Boolean {
         if (sample.faceDetected) return false
-        val luma = sample.luma ?: return true
-        return luma < COVER_LUMA_MAX
+        // ① 近距离传感器（最硬的一条，与画面无关）。
+        if (sample.proximityAvailable && sample.proximityNear) return true
+        // ② 纹理量：手掌贴镜头 = 完全离焦 = 没有边缘，自动曝光变不出边缘来。
+        val texture = sample.texture
+        if (texture != null && texture < COVER_TEXTURE_MAX) return true
+        // ③ 亮度（v5.39 的原判据，AEC 没来得及补偿时仍然有效）。
+        val luma = sample.luma
+        if (luma != null && luma < COVER_LUMA_MAX) return true
+        // 三条全都读不到（老机型没有近距离传感器、画面也读不出来）→ 退化成只看人脸消失。
+        return !sample.proximityAvailable && texture == null && luma == null
     }
 
     /** 开关被关掉（或服务停止）时调用：把进行中的一次录制收尾。 */
@@ -225,6 +284,8 @@ class GazeProbeRecorder(
         state = ProbeState.OFF
         sawFace = false
         coverStartMs = 0L
+        noFaceSinceMs = 0L
+        lastCoverLogAtMs = 0L
         log("probe OFF${if (lastSummary.isEmpty()) "" else " — $lastSummary"}")
     }
 
@@ -245,6 +306,23 @@ class GazeProbeRecorder(
         }
 
         val covered = isCovered(sample)
+
+        // v5.40：人脸消失期间每秒打一行三个"盖住"信号的真实读数 ——
+        // v5.39 整场没认出"盖住"时，就是因为当时只记亮度、而亮度被自动曝光带走了。
+        if (sample.faceDetected) {
+            noFaceSinceMs = 0L
+        } else {
+            if (noFaceSinceMs == 0L) noFaceSinceMs = nowMs
+            if (nowMs - lastCoverLogAtMs >= COVER_LOG_INTERVAL_MS) {
+                lastCoverLogAtMs = nowMs
+                log(
+                    "cover-probe faceLostFor=${nowMs - noFaceSinceMs}ms" +
+                        " luma=${f(sample.luma, 1)} tex=${f(sample.texture, 1)}" +
+                        " prox=${proximityLabel(sample)} lux=${f(sample.lux, 0)}" +
+                        " covered=${if (covered) 1 else 0} state=${state.label}",
+                )
+            }
+        }
         when (state) {
             ProbeState.OFF -> Unit
 
@@ -258,7 +336,11 @@ class GazeProbeRecorder(
                     val held = nowMs - coverStartMs
                     if (held >= START_COVER_MS) {
                         state = ProbeState.ARMED
-                        log("ARMED: camera covered ${held}ms (luma=${f(sample.luma, 1)}) — 露出脸就开始录制")
+                        log(
+                            "ARMED: camera covered ${held}ms (luma=${f(sample.luma, 1)}" +
+                                " tex=${f(sample.texture, 1)} prox=${proximityLabel(sample)})" +
+                                " — 露出脸就开始录制",
+                        )
                     }
                 }
             }
@@ -279,6 +361,8 @@ class GazeProbeRecorder(
         // 第一帧就会拿它去算"刚结束了一段遮挡"，于是段号一开录就变成 2
         // （v5.39 离线回放抓出来的 bug）。
         coverStartMs = 0L
+        // 新一次录制里，第一次"盖住"要能立刻打日志（不要被上一次的限流挡住）。
+        lastCoverLogAtMs = 0L
         fileName = "probe-" + nameFormat.format(Date(sample.wallMs)) + ".csv"
         phase = 1
         rows = 0
@@ -294,7 +378,8 @@ class GazeProbeRecorder(
         if (appTag.isNotEmpty()) write("# app=$appTag")
         write("# session=${sessionIndex} start=${stampFormat.format(Date(sample.wallMs))}")
         write(
-            "# cover = no face AND luma < ${f(COVER_LUMA_MAX, 1)} ; " +
+            "# cover rule (v5.40): no face AND (proximity NEAR OR texture < ${f(COVER_TEXTURE_MAX, 1)}" +
+                " OR luma < ${f(COVER_LUMA_MAX, 1)}) ; " +
                 "start >= ${START_COVER_MS}ms, phase cover ${MIN_PHASE_COVER_MS}..${STOP_COVER_MS}ms, " +
                 "stop >= ${STOP_COVER_MS}ms",
         )
@@ -385,6 +470,13 @@ class GazeProbeRecorder(
         if (sample.faceDetected) "1" else "0",
         if (covered) "1" else "0",
         f(sample.luma, 1),
+        f(sample.texture, 2),
+        if (sample.proximityAvailable) {
+            if (sample.proximityNear) "1" else "0"
+        } else {
+            "-1"
+        },
+        f(sample.lux, 1),
         if (sample.standby) "1" else "0",
         sample.frameWidth.toString(),
         sample.frameHeight.toString(),

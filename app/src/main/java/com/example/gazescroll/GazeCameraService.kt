@@ -309,6 +309,21 @@ private const val REF_LOG_INTERVAL_MS = 400L
     private var probeRowsSinceFlush = 0
 
     /**
+     * 近距离传感器 + 环境光（v5.40）。
+     *
+     * v5.39 的"盖住"只看画面亮度，实机第一次采集整场没认出来 —— 前置摄像头的自动曝光
+     * 会把被盖住的画面提亮。近距离传感器是与画面完全无关的硬信号，只在采集开关打开时注册。
+     */
+    private var proximity: ProximityMonitor? = null
+
+    /** 最近一帧的画面亮度 / 纹理（v5.40），诊断行里打出来，用于核对"盖住"的判据。 */
+    @Volatile
+    private var lastFrameLuma: Float? = null
+
+    @Volatile
+    private var lastFrameTexture: Float? = null
+
+    /**
      * 上一次任何动作（翻页 / 调音量 / 张嘴点击）的时刻（v5.36）。
      *
      * 歪头通道用它算 [ACTION_GAP_MS]：动作的**起手**必须晚于这个时刻 + 2 秒，
@@ -502,6 +517,10 @@ private const val REF_LOG_INTERVAL_MS = 400L
             appTag = "GazeScroll v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
         )
 
+        // v5.40：近距离传感器（+ 环境光）。默认不注册，采集开关打开时才注册 ——
+        // 关掉测试功能时它一点开销都没有。传感器不存在时 available=false，上层自动退回画面判据。
+        proximity = ProximityMonitor(this)
+
         blinkDetector = BlinkDetector { reason -> fireSwipe("blink:$reason", SwipeDirection.UP) }
 
         // v5.35：歪头（左右压耳朵，ML Kit 的 headEulerAngleZ）→ 音量加 / 减。
@@ -566,6 +585,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
         runCatching { probeRecorder?.disable(SystemClock.elapsedRealtime()) }
         probeRecorder = null
         runCatching { closeProbeFile() }
+        runCatching { proximity?.stop() }
+        proximity = null
         AppStateManager.removeListener(appStateListener)
         AppStateManager.stopPolling()
         runCatching { unregisterReceiver(screenReceiver) }
@@ -1047,6 +1068,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
         // v5.39：注视数据采集（测试功能）。放在所有判定之前 —— 它只记录，不参与判定。
         // 关掉时连采样对象都不构造（与 v5.36 的逐帧开销完全一致）。
+        proximity?.setEnabled(cfg.probeEnabled)
+        lastFrameLuma = frame.probe?.luma
+        lastFrameTexture = frame.probe?.texture
         probeRecorder?.let { probe ->
             if (cfg.probeEnabled) {
                 probe.onFrame(buildProbeSample(frame, System.currentTimeMillis()), now)
@@ -1303,6 +1327,10 @@ private const val REF_LOG_INTERVAL_MS = 400L
             frameWidth = p?.frameWidth ?: 0,
             frameHeight = p?.frameHeight ?: 0,
             luma = p?.luma,
+            texture = p?.texture,
+            proximityNear = proximity?.near ?: false,
+            proximityAvailable = proximity?.available ?: false,
+            lux = proximity?.lux?.takeIf { it >= 0f },
             boxLeft = p?.boxLeft ?: -1f,
             boxTop = p?.boxTop ?: -1f,
             boxRight = p?.boxRight ?: -1f,
@@ -1834,6 +1862,11 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 " tiltSteps=$tiltVolumeSteps" +
                 // v5.39：注视数据采集状态（测试功能；off = 没开，完全不参与判定）。
                 " ${probeRecorder?.stateLine() ?: "probe=off"}" +
+                // v5.40：三个"盖住"信号的真实读数 —— 判据合不合适直接看这几个数。
+                " luma=${lastFrameLuma?.let { "%.1f".format(it) } ?: "-"}" +
+                " tex=${lastFrameTexture?.let { "%.1f".format(it) } ?: "-"}" +
+                " ${proximity?.stateLine() ?: "prox=-"}" +
+                " lux=${proximity?.lux?.takeIf { it >= 0f }?.let { "%.0f".format(it) } ?: "-"}" +
                 // v5.36：全局动作间隔还剩多久（0 = 现在可以做新动作）。
                 " gapRemain=${if (lastActionAtMs == 0L) 0L else (lastActionAtMs + ACTION_GAP_MS - now).coerceAtLeast(0L)}ms" +
                 // v5.31：基准线重建期禁触发的状态（丢脸回来 / 重绑后约 1.1 秒内为 true）。

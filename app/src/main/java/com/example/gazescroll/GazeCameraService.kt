@@ -138,6 +138,38 @@ private const val REF_LOG_INTERVAL_MS = 400L
          */
         private const val FACELOST_OCCLUSION_MAX_MS = 1200L
 
+        /**
+         * 人脸至少要消失这么久，才算「被挡住」（v5.45：原来只要 ≥1ms 就算）。
+         *
+         * ## 为什么加这个下限（2026-09-17 19:29 那 30 秒的实机取证）
+         *
+         * 用户反馈「仰头了好多次都没用」。日志里那 30 秒是**一场遮挡风暴**：
+         *
+         * ```
+         * 19:29:33.386 occlusion detected (reason=face lost, faceLostFor=93ms)  -> suppress 1000ms (#56)
+         * 19:29:34.423 ... faceLostFor=127ms -> 1000ms   (#57)
+         * 19:29:36.019 ... 123ms -> 1000ms               (#58)
+         * 19:29:41.620 ... 123ms -> 1000ms               (#62)
+         * （19:28:30 之后共 30 次，抑制总时长几十秒）
+         * ```
+         *
+         * **大角度仰头时脸被透视压扁，ML Kit 会间歇性地漏检 1~2 帧（92~214ms）**，
+         * 而每次漏检都被这套「手挡脸」逻辑当成遮挡 → 抑制 500~1000ms（重复触发还会翻倍）
+         * **并且顺手 `recalibrate()`**（基准线重学，再停 ~1.1 秒）。
+         * 期间 `headPoseDetector` **完全不喂数据**，于是用户 30 秒里一次候选都没产生
+         * （`tiltUp candidate rejected = 0`、`triggered = 0`）—— 这就是"仰头没用"。
+         *
+         * 而同一时刻画面**根本没被挡**：`luma=80.6 tex=11.6 prox=far lux=30 covered=0`。
+         *
+         * 300ms 这个数的依据：那 30 次的丢失全是 **92~214ms**；真正用手盖住镜头是以秒计的
+         * （用户自己盖摄像头时是 1~8 秒），v4.9 要防的「手掌/拳头整个盖住脸」也一样。
+         * 所以 300ms 只砍掉"检测抖动"，不碰真正的遮挡。
+         */
+        private const val FACELOST_OCCLUSION_MIN_MS = 300L
+
+        /** 打"检测抖动被忽略"那行的最小间隔（v5.45），避免刷屏。 */
+        private const val FLICKER_LOG_INTERVAL_MS = 2000L
+
         /** Give up after this many consecutive unproductive rebinds. */
         private const val MAX_RESTART_ATTEMPTS = 3
 
@@ -407,6 +439,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
     /** 上一次遮挡判定的时刻，用来识别「反复遮挡」并延长抑制。 */
     private var lastOcclusionAtMs = 0L
+
+    /** 上一次打"检测抖动被忽略"那行的时刻（v5.45），避免刷屏。 */
+    private var lastFlickerLogAtMs = 0L
 
     /** Tracks the enable switch so the detector is only reset on a real transition. */
     private var headPoseActive = false
@@ -1553,6 +1588,19 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
         val lostFor = if (faceLostAtMs != 0L) now - faceLostAtMs else 0L
         faceLostAtMs = 0L
+        // v5.45：丢得太短（1~2 帧的检测抖动）不算遮挡 —— 见 [FACELOST_OCCLUSION_MIN_MS]。
+        // 大角度仰头就是靠这一条救回来的：以前一次 93ms 的漏检会换来 1 秒的头部通道熄火。
+        if (lostFor in 1 until FACELOST_OCCLUSION_MIN_MS) {
+            if (now - lastFlickerLogAtMs >= FLICKER_LOG_INTERVAL_MS) {
+                lastFlickerLogAtMs = now
+                Log.i(
+                    "GazeDiag",
+                    "face flicker ignored: faceLostFor=${lostFor}ms < ${FACELOST_OCCLUSION_MIN_MS}ms" +
+                        " — 不当遮挡、不抑制（v5.45）",
+                )
+            }
+            return
+        }
         val brieflyLost = lostFor in 1..FACELOST_OCCLUSION_MAX_MS
         val reason = when {
             brieflyLost -> OcclusionReason.FACE_LOST

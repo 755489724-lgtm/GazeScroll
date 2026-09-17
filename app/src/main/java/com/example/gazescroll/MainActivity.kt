@@ -106,6 +106,9 @@ class MainActivity : AppCompatActivity() {
         binding.btnRestartService.setOnClickListener { restartDetectionService() }
         binding.btnOpenSettings.setOnClickListener { openSettingsPanel() }
         binding.btnCloseSettings.setOnClickListener { closeSettingsPanel() }
+        // v5.61：给别人手机用时的分步引导 —— 点按钮直接跳系统无障碍页，首页那条提示打开设置页。
+        binding.btnOpenA11ySettings.setOnClickListener { openAccessibilitySettings() }
+        binding.homeSetupBanner.setOnClickListener { openSettingsPanel() }
         // 「首页任意位置向左滑一下」呼出设置（DrawerLayout 自带的边缘手势只认最右边那条边）。
         binding.homeRoot.onSwipeLeft = { openSettingsPanel() }
         binding.tvVersion.text = getString(R.string.about_version, BuildConfig.VERSION_NAME)
@@ -1438,11 +1441,9 @@ class MainActivity : AppCompatActivity() {
         }
         // Shizuku 那一行复用原来的「没有就打开 / 有就申请」流程。
         binding.rowPermShizuku.setOnClickListener { onHintClicked() }
-        binding.rowPermA11y.setOnClickListener {
-            SwipeInjector.bootstrap(this)
-            render()
-            toast(getString(R.string.bootstrap_tried, SwipeInjector.activeBackend(this)))
-        }
+        // v5.61：无障碍那一行**直接跳系统无障碍页** —— 以前是"静默尝试自己开"，
+        // 在没有 adb 授权（别人的手机）上等于什么都没发生，用户完全不知道该去哪。
+        binding.rowPermA11y.setOnClickListener { openAccessibilitySettings() }
         binding.rowPermUsage.setOnClickListener {
             runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
         }
@@ -1471,6 +1472,55 @@ class MainActivity : AppCompatActivity() {
             return
         }
         super.onBackPressed()
+    }
+
+    // ------------------------------------------ v5.61 给别人手机用的分步引导 --
+
+    /**
+     * 「装上就能用」的那一步：无障碍还没开起来时，把怎么开讲清楚。
+     *
+     * 为什么需要它：APK 是侧载安装的，Android 13 起系统默认锁住它的无障碍开关
+     * （「受限制的设置：出于安全考虑，此设置目前不可用」）。**adb 并不是必须的** ——
+     * 用户手动解锁一次、把无障碍打开，这条腿就通了；难的是那个开关藏得深：
+     * 小米/红米把它放在「手机管家 → 应用管理 → 应用信息 → 允许受限制的设置」里，
+     * 别的品牌一般在「设置 → 应用 → 右上角 ⋮」。所以这里按品牌给路径，并且把
+     * 「允许受限制的设置」这个关键词直接写出来（用户也能拿它去搜）。
+     */
+    private fun renderSetupGuide() {
+        // 只有"一条腿都没有"时才打扰用户；无障碍或 Shizuku 任一条通了这个块就消失。
+        val show = !SwipeInjector.isReady(this)
+        binding.setupGuide.visibility = if (show) View.VISIBLE else View.GONE
+        binding.homeSetupBanner.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) return
+
+        binding.tvSetupGuideSteps.text = android.text.Html.fromHtml(
+            when {
+                // Android 13 以下没有"受限制的设置"这一关，少一步。
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU -> getString(R.string.guide_old_android)
+                isXiaomiBrand() -> getString(R.string.guide_xiaomi)
+                else -> getString(R.string.guide_other)
+            },
+            android.text.Html.FROM_HTML_MODE_LEGACY,
+        )
+        binding.tvSetupGuideNote.text = android.text.Html.fromHtml(
+            getString(R.string.guide_note),
+            android.text.Html.FROM_HTML_MODE_LEGACY,
+        )
+    }
+
+    /** 小米/红米/POCO 都把「允许受限制的设置」藏在手机管家里，文案要给对路径。 */
+    private fun isXiaomiBrand(): Boolean {
+        val maker = Build.MANUFACTURER.orEmpty()
+        return maker.contains("xiaomi", ignoreCase = true) ||
+            maker.contains("redmi", ignoreCase = true) ||
+            maker.contains("poco", ignoreCase = true)
+    }
+
+    private fun openAccessibilitySettings() {
+        val opened = runCatching {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }.isSuccess
+        if (!opened) toast(getString(R.string.guide_button))
     }
 
     // ------------------------------------------------ v5.47 首页状态与摘要 --
@@ -1609,6 +1659,8 @@ class MainActivity : AppCompatActivity() {
         renderStatusPill()
         renderPermissionRows()
         renderCardSummaries()
+        // v5.61：后端还不可用时给出来自别的手机也能照做的分步引导。
+        renderSetupGuide()
     }
 
     private fun permissionsReady(): Boolean = hasCameraPermission() && hasNotificationPermission()

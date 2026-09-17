@@ -98,6 +98,26 @@
                     android:textSize="14sp" />
             </LinearLayout>
 
+            <!-- v5.61：后端还不可用时，首页也提示一句（点它打开设置页看三步引导） -->
+            <TextView
+                android:id="@+id/homeSetupBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="14dp"
+                android:layout_marginEnd="14dp"
+                android:layout_marginBottom="8dp"
+                android:background="@drawable/card_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingStart="14dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp"
+                android:text="@string/home_setup_banner"
+                android:textColor="@color/accent"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
             <!-- 功能卡片列表 -->
             <ScrollView
                 android:id="@+id/homeScroll"
@@ -1934,6 +1954,61 @@
                 android:paddingTop="14dp"
                 android:paddingEnd="18dp"
                 android:paddingBottom="24dp">
+
+                <!-- ===== v5.61：后端还不可用时的分步引导（后端一通就自动隐藏） ===== -->
+
+                <LinearLayout
+                    android:id="@+id/setupGuide"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp"
+                    android:background="@drawable/card_bg"
+                    android:orientation="vertical"
+                    android:padding="14dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/guide_title"
+                        android:textColor="@color/accent"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvSetupGuideSteps"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:lineSpacingMultiplier="1.45"
+                        android:textColor="@color/on_surface"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/btnOpenA11ySettings"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="?android:attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingTop="10dp"
+                        android:paddingBottom="10dp"
+                        android:text="@string/guide_button"
+                        android:textColor="@color/accent"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvSetupGuideNote"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:lineSpacingMultiplier="1.4"
+                        android:text="@string/guide_note"
+                        android:textColor="@color/on_surface_dim"
+                        android:textSize="12sp" />
+                </LinearLayout>
 
                 <!-- ===== 权限与状态 ===== -->
 

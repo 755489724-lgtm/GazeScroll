@@ -107,7 +107,84 @@
 > （实测 `winCfg=500/900ms` —— 与 v5.51 的写死值一致，证明默认档行为一字未变）。
 > 版本号从 5.51 直接跳到 **5.60**：5.52~5.59 留给同仓库的另一条线（检测/日志），避免撞车。
 
+> **v5.61（2026-09-17）装上就能用：给别人手机用的分步引导**（用户：「我现在把这个 App 给其他的手机用，
+> 该怎么使用？因为之前给其他的手机用，要开无障碍的授权，但是小米不给」）：① 点「无障碍备用通道」那一行
+> **直接跳系统无障碍页**（以前是静默尝试自己开 —— 在没有 adb 授权的手机上等于什么都没发生）；
+> ② 无障碍没通、Shizuku 也没有时，**设置页顶部显示三步引导**，**按品牌给路径**
+> （小米/红米 = **手机管家 → 应用管理 → 应用信息 → 允许受限制的设置**；其他 = 设置 → 应用 → ⋮），
+> Android 12 及以下自动少一步；③ 首页顶部同时给一条提示条（点它打开设置页）；
+> ④ README 改成**手动开无障碍优先、adb 降级为可选加速**。
+> **后端一通，引导与提示条自动消失。** 装机实测：撤掉 adb 授权 + 关掉无障碍之后，
+> 提示条与三步引导如期出现、两行权限跳转都跳到正确的系统页面，随后完整恢复。
+
 ---
+
+## [5.61] - 2026-09-17
+
+用户原话：「我现在把这个 APP，给其他的手机用，该怎么使用？因为之前给其他的手机用，
+要开无障碍的授权，但是小米不给」——先查清了事实（见 §取证），再按他批准的这四条改。
+
+### 取证：adb 到底用在哪，小米"不给"的到底是什么
+
+```
+enabled_accessibility_services = com.example.gazescroll/…GazeAccessibilityService
+accessibility_enabled          = 1
+installerPackageName           = null          ← 纯侧载
+WRITE_SECURE_SETTINGS          = granted=true  ← adb 给的
+Shizuku                        = 未安装
+```
+
+- **注入走的是 App 自己的无障碍服务**（`dispatchGesture`），跟 adb 没关系。
+- **adb 只干一件事**：授予 `WRITE_SECURE_SETTINGS`，让 App 能**自己**把无障碍开关拨开、掉线后自己修。
+  → 所以**手动开一次无障碍，效果完全一样，adb 不是必须的**。
+- **"小米不给"的真相**：Android 13 起侧载 APK 会被标记「受限制的设置」，无障碍开关是灰的。
+  小米把这个解锁入口**放在手机管家**里（不在「设置 → 应用管理」里）：
+  **手机管家 → 应用管理 → 万能翻页 → 应用信息 → 允许受限制的设置**。
+  依据：[李跳跳同款问题的实测解法](https://m.toutiao.com/w/1829655928658251/)、
+  [小米澎湃OS 受限制的设置解决办法](https://www.mumudroid.com/topic_detail/0221.html)、
+  [Google 官方：了解受限制的设置](https://support.google.com/android/answer/12623953?hl=zh-Hans)、
+  [GKD 官方指引（含 HyperOS 授权截图）](https://gkd.li/guide/)、
+  [ESET KB8366（Android 13 侧载应用的无障碍限制）](https://support.eset.com/hu/kb8366-accessibility-restriction-on-android-13-for-apps-installed-from-apk-file)。
+
+### 改了四处（都是用户点名的）
+
+1. **无障碍那一行：静默 bootstrap → 直接跳系统无障碍页**（`Settings.ACTION_ACCESSIBILITY_SETTINGS`）。
+   原来那一行在没 adb 授权的手机上只会弹一句"已尝试自动启用，当前：不可用"，用户完全不知道下一步。
+2. **三步引导**（设置页顶部，`setupGuide` 卡片）：只在"无障碍没通 **且** Shizuku 也没有"时出现，
+   后端一通自动隐藏。文案按品牌分三套：
+   - 小米/红米/POCO（读 `Build.MANUFACTURER`）→ 手机管家那条路径；
+   - 其他品牌 → 设置 → 应用 → 右上角 ⋮ → 允许受限制的设置；
+   - Android 13 以下 → 少一步（没有"受限制的设置"这一关）。
+   关键词「允许受限制的设置」直接写在文案里；把"为什么"和"开了还不灵怎么办（关掉再打开一次重绑）"也写了。
+3. **首页顶部提示条**（`homeSetupBanner`）：新用户装完停在首页，不点它就不会知道要去设置里看引导。
+4. **README「安装与使用」重写**：手动开无障碍优先，adb 那节降级成"可选加速"，
+   并补了 Shizuku 那条（它也能在手机上自己启动，代价是每次重启要重配）。
+
+### 验证证据（装机实测，截图在 `backup\GazeScroll-v5.61\data\`）
+
+**故意把手机造成"别人的手机"**：`pm revoke WRITE_SECURE_SETTINGS` + 删掉无障碍服务条目 →
+（原状态先存进 `backup\GazeScroll-v5.61\restore-a11y-state.txt`，验完全部还原）
+
+| 验证项 | 结果 |
+| --- | --- |
+| 首页提示条 | ✅ 出现（`v561-01-home-banner.png`） |
+| 设置页三步引导 | ✅ 出现，且是**小米路径**（手机管家 → 应用管理 → 应用信息 → 允许受限制的设置） |
+| 引导里的粗体/换行 | ⚠️ 第一版写成了 markdown `**`，TextView 原样显示星号 → 改成 `&lt;b&gt;` + `Html.fromHtml`（`v561-02-setup-guide.png`） |
+| 点「无障碍备用通道」 | ✅ `mCurrentFocus = com.android.settings/…MiuiAccessibilitySettingsActivity` |
+| 点「使用情况访问」 | ✅ `mCurrentFocus = com.android.settings/…Settings$UsageAccessSettingsActivity` |
+| 恢复后 | ✅ 无障碍「已连接」、引导与提示条**自动消失**（`v561-04-restored.png`）、`WRITE_SECURE_SETTINGS=granted=true` |
+
+**顺带发现（不是这一版加的）**：`GazeCameraService` 里**早就**有一条专门的检测与日志
+`periodic: accessibility service NOT enabled in settings — cannot rebind (the ADB authorisation is gone)`
+—— 也就是说"没有 adb 授权"这个状态 App 一直知道，只是以前没告诉用户；这一版把它变成了界面上的三步引导。
+
+### 已知的一个小遗留（没做，等用户点名）
+
+状态胶囊在后端不可用时仍显示「运行中」（检测器确实在跑，但手势注入不了），
+新用户可能以为已经生效 —— 建议以后让它显示「待启用」之类的第三种状态。
+
+---
+
 
 ## [5.60] - 2026-09-17
 

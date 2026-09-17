@@ -60,8 +60,9 @@
 ```text
 接手一个已经在做的 Android 项目：免手刷抖音的 GazeScroll。
 工作区：D:\ruanjian\deepseek harness\GazeScroll
-请先完整读 GazeScroll\HANDOVER.md（自包含交班文档：硬约束、当前 v5.46 的全部状态、
-环境与命令、功能与判据全表、本轮 v5.39~v5.46 的经过与证据、坑与教训、下一步建议）。
+请先完整读 GazeScroll\HANDOVER.md（自包含交班文档：**最上面一段是 v5.47~v5.50 的界面改造补充，
+先读它**；然后是硬约束、v5.46 状态、环境与命令、功能与判据全表、v5.39~v5.46 的经过与证据、
+坑与教训、下一步建议）。
 读完先给我一句话总结，然后等我派活。本轮不要改任何代码。
 
 要点提醒：
@@ -105,16 +106,21 @@
 
 ## 2. 当前状态（事实清单，全部核对过）
 
+> ⚠️ **本节描述的是 v5.46 那一刻的状态**（检测/判据这条线，本文档 §3~§9 都以它为准）。
+> **界面与版本号后来被另一个会话推进到了 v5.50**（v5.47 界面重排 / v5.48+v5.50 卡片拖动排序，
+> 纯 UI、未动检测逻辑）—— 见**本文件最上面那段「📌 v5.47 ~ v5.50 补充说明」**，
+> 以及 `CHANGELOG.md` 的 `[5.50]`/`[5.48]`/`[5.47]` 三节。**版本号以那段为准。**
+
 | 项目 | 值 |
 | --- | --- |
-| 手机上安装的版本 | **v5.46**（`versionCode=96` / `versionName=5.46`） |
-| 工作区代码 | **v5.46**；HEAD 见 `git log --oneline -1` |
-| git 标签 | `v5.36-anchor`（**用户认可的锚点**）、`v5.36`~`v5.46` 各版、`v5.29-stable` / `v5.8-stable` / `v5.3-stable` |
-| 备份 | `backup\GazeScroll-v5.36`（锚点，含源码+APK+ROLLBACK）、`GazeScroll-v5.39`~`-v5.46`（每版都有） |
-| APK 归档 | `apk\gazescroll-5.46-debug.apk`（5.3~5.46 全部在） |
-| 本轮验证日志 | `apk\v539~v546-verify.log`（每版一场；`v546-verify.log` 是最新的真实使用数据） |
+| 手机上安装的版本 | **v5.50**（`versionCode=100`；v5.46 是 `versionCode=96`，两者检测行为一致） |
+| 工作区代码 | **v5.50**（检测这条线仍是 v5.46 的内容）；HEAD 见 `git log --oneline -1` |
+| git 标签 | `v5.36-anchor`（**用户认可的锚点**）、`v5.36`~`v5.50` 各版、`v5.29-stable` / `v5.8-stable` / `v5.3-stable` |
+| 备份 | `backup\GazeScroll-v5.36`（锚点，含源码+APK+ROLLBACK）、`GazeScroll-v5.39`~`-v5.46`、`-v5.47` / `-v5.48` / `-v5.50`（UI 那几版） |
+| APK 归档 | `apk\gazescroll-5.50-debug.apk`（最新）；5.3~5.50 全部在 `apk\` |
+| 本轮验证日志 | `apk\v539~v546-verify.log`（每版一场；`v546-verify.log` 是最长的一场真实使用数据，2.4 小时） |
 | 一键装回锚点 | `GazeScroll\tools\install-v536.ps1` |
-| 各版一键装回 | `tools\install-v539.ps1` / `-v540.ps1` |
+| 各版一键装回 | `tools\install-v539.ps1` / `-v540.ps1`（UI 那几版见各自 `ROLLBACK.txt`） |
 
 **用户当前的设置**（以设置页为准，日志里观测值）：灵敏度 6.0°、`blinkTriggerCount=2`、
 `globalCooldownMs=2000`、静止锁定开/1.5、`listSwipeDistance=0.26`、`mouthSensitivity=MEDIUM`、

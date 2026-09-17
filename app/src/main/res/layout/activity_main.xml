@@ -212,44 +212,175 @@
                                 android:textColor="@color/on_surface_dim"
                                 android:textSize="13sp" />
 
+                            <!-- v5.60：四个参数交给用户自己调（滑块 + 旁边一个「默认」） -->
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/param_pitch_down"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="13sp" />
+
+                                <TextView
+                                    android:id="@+id/tvPitchDownValue"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:textColor="@color/accent"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    android:id="@+id/btnPitchDownReset"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="6dp"
+                                    android:background="?android:attr/selectableItemBackground"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:paddingStart="10dp"
+                                    android:paddingTop="6dp"
+                                    android:paddingEnd="10dp"
+                                    android:paddingBottom="6dp"
+                                    android:text="@string/param_reset"
+                                    android:textColor="@color/accent"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <SeekBar
+                                android:id="@+id/seekPitchDown"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="34" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/param_pitch_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/param_pitch_up"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="13sp" />
+
+                                <TextView
+                                    android:id="@+id/tvPitchUpValue"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:textColor="@color/accent"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    android:id="@+id/btnPitchUpReset"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="6dp"
+                                    android:background="?android:attr/selectableItemBackground"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:paddingStart="10dp"
+                                    android:paddingTop="6dp"
+                                    android:paddingEnd="10dp"
+                                    android:paddingBottom="6dp"
+                                    android:text="@string/param_reset"
+                                    android:textColor="@color/accent"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <SeekBar
+                                android:id="@+id/seekPitchUp"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="34" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/param_pitch_up_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/param_speed"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="13sp" />
+
+                                <TextView
+                                    android:id="@+id/tvSpeedValue"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:textColor="@color/accent"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    android:id="@+id/btnSpeedReset"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="6dp"
+                                    android:background="?android:attr/selectableItemBackground"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:paddingStart="10dp"
+                                    android:paddingTop="6dp"
+                                    android:paddingEnd="10dp"
+                                    android:paddingBottom="6dp"
+                                    android:text="@string/param_reset"
+                                    android:textColor="@color/accent"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <SeekBar
+                                android:id="@+id/seekSpeed"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="27" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/param_speed_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
                             <TextView
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="8dp"
-                                android:text="@string/settings_head_sensitivity"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/param_tune_tip"
                                 android:textColor="@color/on_surface_dim"
-                                android:textSize="13sp" />
-
-                            <RadioGroup
-                                android:id="@+id/rgHeadSensitivity"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:orientation="vertical">
-
-                                <RadioButton
-                                    android:id="@+id/rbHeadHigh"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_head_high"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-
-                                <RadioButton
-                                    android:id="@+id/rbHeadMedium"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_head_medium"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-
-                                <RadioButton
-                                    android:id="@+id/rbHeadLow"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_head_low"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-                            </RadioGroup>
+                                android:textSize="12sp" />
 
                             <TextView
                                 android:id="@+id/tvLiveHead"
@@ -349,45 +480,60 @@
                                 android:layout_marginBottom="2dp"
                                 android:background="@color/divider" />
 
+                            <!-- v5.60：扭头角度改成滑块 + 恢复默认 -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:id="@+id/tvHorizThreshold"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/param_yaw"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="13sp" />
+
+                                <TextView
+                                    android:id="@+id/tvYawValue"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:textColor="@color/accent"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    android:id="@+id/btnYawReset"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="6dp"
+                                    android:background="?android:attr/selectableItemBackground"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:paddingStart="10dp"
+                                    android:paddingTop="6dp"
+                                    android:paddingEnd="10dp"
+                                    android:paddingBottom="6dp"
+                                    android:text="@string/param_reset"
+                                    android:textColor="@color/accent"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <SeekBar
+                                android:id="@+id/seekYaw"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="32" />
+
                             <TextView
-                                android:id="@+id/tvHorizThreshold"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="8dp"
-                                android:text="@string/settings_horiz_threshold"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/param_yaw_hint"
                                 android:textColor="@color/on_surface_dim"
-                                android:textSize="13sp" />
-
-                            <RadioGroup
-                                android:id="@+id/rgHorizSensitivity"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:orientation="vertical">
-
-                                <RadioButton
-                                    android:id="@+id/rbHorizHigh"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_horiz_high"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-
-                                <RadioButton
-                                    android:id="@+id/rbHorizMedium"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_horiz_medium"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-
-                                <RadioButton
-                                    android:id="@+id/rbHorizLow"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_horiz_low"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-                            </RadioGroup>
+                                android:textSize="12sp" />
 
                             <androidx.appcompat.widget.SwitchCompat
                                 android:id="@+id/switchHorizInvert"
@@ -520,53 +666,60 @@
                                 android:textColor="@color/on_surface_dim"
                                 android:textSize="13sp" />
 
+                            <!-- v5.60：歪头角度改成滑块 + 恢复默认 -->
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:id="@+id/tvTiltThreshold"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/param_tilt"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="13sp" />
+
+                                <TextView
+                                    android:id="@+id/tvTiltValue"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:textColor="@color/accent"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    android:id="@+id/btnTiltReset"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="6dp"
+                                    android:background="?android:attr/selectableItemBackground"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:paddingStart="10dp"
+                                    android:paddingTop="6dp"
+                                    android:paddingEnd="10dp"
+                                    android:paddingBottom="6dp"
+                                    android:text="@string/param_reset"
+                                    android:textColor="@color/accent"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <SeekBar
+                                android:id="@+id/seekTilt"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:max="44" />
+
                             <TextView
-                                android:id="@+id/tvTiltThreshold"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="8dp"
-                                android:text="@string/settings_tilt_threshold"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/param_tilt_hint"
                                 android:textColor="@color/on_surface_dim"
-                                android:textSize="13sp" />
-
-                            <RadioGroup
-                                android:id="@+id/rgTiltThreshold"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:orientation="vertical">
-
-                                <RadioButton
-                                    android:id="@+id/rbTiltThr10"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_tilt_thr_10"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-
-                                <RadioButton
-                                    android:id="@+id/rbTiltThr13"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_tilt_thr_13"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-
-                                <RadioButton
-                                    android:id="@+id/rbTiltThr16"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_tilt_thr_16"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-
-                                <RadioButton
-                                    android:id="@+id/rbTiltThr20"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/settings_tilt_thr_20"
-                                    android:textColor="@color/on_surface"
-                                    android:textSize="14sp" />
-                            </RadioGroup>
+                                android:textSize="12sp" />
 
                             <TextView
                                 android:id="@+id/tvTiltHold"

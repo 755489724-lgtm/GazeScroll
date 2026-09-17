@@ -100,6 +100,7 @@ class MainActivity : AppCompatActivity() {
         setupThemeUi()
         setupFeatureCards()
         setupSettingsPanel()
+        setupParamSliders()
 
         binding.tvHint.setOnClickListener { onHintClicked() }
         binding.btnRestartService.setOnClickListener { restartDetectionService() }
@@ -213,22 +214,8 @@ class MainActivity : AppCompatActivity() {
             renderLive(GazeRuntime.snapshot)
         }
 
-        binding.rgHeadSensitivity.check(
-            when {
-                cfg.headPoseAngleThreshold <= 7f -> R.id.rbHeadHigh
-                cfg.headPoseAngleThreshold >= 10f -> R.id.rbHeadLow
-                else -> R.id.rbHeadMedium
-            }
-        )
-        binding.rgHeadSensitivity.setOnCheckedChangeListener { _, checkedId ->
-            val deg = when (checkedId) {
-                R.id.rbHeadHigh -> 6f
-                R.id.rbHeadLow -> 12f
-                else -> 8f
-            }
-            updateConfig { it.copy(headPoseAngleThreshold = deg) }
-            renderLive(GazeRuntime.snapshot)
-        }
+        // v5.60：点头/仰头角度原来是这里的 3 档单选，现在改成卡片里的两个滑块
+        // （见 setupParamSliders）—— 且仰头有了自己独立的一个值。
     }
 
     /**
@@ -523,14 +510,6 @@ class MainActivity : AppCompatActivity() {
         binding.switchHorizontalSwipe.isChecked = cfg.horizontalSwipeEnabled
         binding.switchHorizInvert.isChecked = cfg.horizontalSwipeInvertYaw
 
-        binding.rgHorizSensitivity.check(
-            when {
-                cfg.horizontalSwipeAngleThreshold <= 17f -> R.id.rbHorizHigh
-                cfg.horizontalSwipeAngleThreshold >= 24f -> R.id.rbHorizLow
-                else -> R.id.rbHorizMedium
-            }
-        )
-
         binding.switchHorizontalSwipe.setOnCheckedChangeListener { _, checked ->
             updateConfig { it.copy(horizontalSwipeEnabled = checked) }
             renderHorizontalSwipeUi()
@@ -538,14 +517,7 @@ class MainActivity : AppCompatActivity() {
         binding.switchHorizInvert.setOnCheckedChangeListener { _, checked ->
             updateConfig { it.copy(horizontalSwipeInvertYaw = checked) }
         }
-        binding.rgHorizSensitivity.setOnCheckedChangeListener { _, checkedId ->
-            val deg = when (checkedId) {
-                R.id.rbHorizHigh -> 14f
-                R.id.rbHorizLow -> 28f
-                else -> 20f
-            }
-            updateConfig { it.copy(horizontalSwipeAngleThreshold = deg) }
-        }
+        // v5.60：扭头灵敏度的 3 档单选改成滑块（见 setupParamSliders）。
 
         renderHorizontalSwipeUi()
     }
@@ -553,16 +525,16 @@ class MainActivity : AppCompatActivity() {
     /** 关闭时把灵敏度相关控件置灰，避免看起来能调却不起作用。 */
     private fun renderHorizontalSwipeUi() {
         val enabled = GazeRuntime.config.horizontalSwipeEnabled
-        binding.tvHorizThreshold.isEnabled = enabled
         binding.switchHorizInvert.isEnabled = enabled
-        for (id in intArrayOf(R.id.rbHorizHigh, R.id.rbHorizMedium, R.id.rbHorizLow)) {
-            binding.root.findViewById<android.view.View>(id)?.isEnabled = enabled
-        }
-        listOf<android.view.View>(binding.tvHorizThreshold, binding.switchHorizInvert).forEach {
-            it.setAlpha(if (enabled) 1f else 0.45f)
-        }
-        for (id in intArrayOf(R.id.rbHorizHigh, R.id.rbHorizMedium, R.id.rbHorizLow)) {
-            binding.root.findViewById<android.view.View>(id)?.setAlpha(if (enabled) 1f else 0.45f)
+        for (v in listOf<android.view.View>(
+            binding.tvHorizThreshold,
+            binding.switchHorizInvert,
+            binding.tvYawValue,
+            binding.btnYawReset,
+            binding.seekYaw,
+        )) {
+            v.isEnabled = enabled
+            v.setAlpha(if (enabled) 1f else 0.45f)
         }
     }
 
@@ -648,24 +620,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 触发角度（用户要求"得到一定的角度才触发"；v5.36 按"再灵敏一点"整体下调一档）。
-        binding.rgTiltThreshold.check(
-            when {
-                cfg.tiltThresholdDeg <= 10f -> R.id.rbTiltThr10
-                cfg.tiltThresholdDeg >= 20f -> R.id.rbTiltThr20
-                cfg.tiltThresholdDeg >= 16f -> R.id.rbTiltThr16
-                else -> R.id.rbTiltThr13
-            },
-        )
-        binding.rgTiltThreshold.setOnCheckedChangeListener { _, checkedId ->
-            val deg = when (checkedId) {
-                R.id.rbTiltThr10 -> 10f
-                R.id.rbTiltThr20 -> 20f
-                R.id.rbTiltThr16 -> 16f
-                else -> 13f
-            }
-            updateConfig { it.copy(tiltThresholdDeg = deg) }
-            renderTiltVolumeUi()
-        }
+        // v5.60：原来的 4 档单选改成滑块（见 setupParamSliders），这里只剩保持时长与档位。
 
         // 保持时长（v5.36 同样调灵一档，默认 0.3 秒）。
         binding.rgTiltHold.check(
@@ -717,11 +672,13 @@ class MainActivity : AppCompatActivity() {
             binding.switchTiltLeftUp,
             binding.switchTiltRightUp,
             binding.tvTiltThreshold,
+            binding.tvTiltValue,
+            binding.btnTiltReset,
+            binding.seekTilt,
             binding.tvTiltHold,
             binding.tvTiltStep,
         )
         for (id in intArrayOf(
-            R.id.rbTiltThr10, R.id.rbTiltThr13, R.id.rbTiltThr16, R.id.rbTiltThr20,
             R.id.rbTiltHold200, R.id.rbTiltHold300, R.id.rbTiltHold500, R.id.rbTiltHold800,
             R.id.rbTiltStep1, R.id.rbTiltStep2, R.id.rbTiltStep3, R.id.rbTiltStep5,
         )) {
@@ -1065,6 +1022,121 @@ class MainActivity : AppCompatActivity() {
             else -> toast(getString(R.string.shizuku_already_granted))
         }
     }
+
+    // -------------------------------------------- v5.60 可调参数（滑块 + 默认） --
+
+    /**
+     * 一个「标签 + 当前值 + 「默认」按钮 + 滑块」的参数行。
+     *
+     * 用户要求：把触发速度、仰头角度、扭头角度、歪头角度**全部交给用户自己调**，
+     * 旁边加「恢复默认」防止调坏 —— 所以每个参数都带自己的默认值（= v5.51 交付时他那套）。
+     */
+    private data class ParamSpec(
+        val seekId: Int,
+        val valueId: Int,
+        val resetId: Int,
+        val min: Float,
+        val max: Float,
+        val step: Float,
+        val defaultValue: Float,
+        val unit: String,
+        val decimals: Int,
+        val read: () -> Float,
+        val write: (Float) -> Unit,
+    )
+
+    private fun setupParamSliders() {
+        val specs = listOf(
+            ParamSpec(
+                R.id.seekPitchDown, R.id.tvPitchDownValue, R.id.btnPitchDownReset,
+                GazeConfig.MIN_PITCH_DEG, GazeConfig.MAX_PITCH_DEG, GazeConfig.STEP_PITCH_DEG,
+                GazeConfig.RESET_PITCH_DOWN_DEG, "°", 1,
+                read = { GazeRuntime.config.headPoseAngleThreshold },
+                write = { v -> updateConfig { it.copy(headPoseAngleThreshold = v) } },
+            ),
+            ParamSpec(
+                R.id.seekPitchUp, R.id.tvPitchUpValue, R.id.btnPitchUpReset,
+                GazeConfig.MIN_PITCH_DEG, GazeConfig.MAX_PITCH_DEG, GazeConfig.STEP_PITCH_DEG,
+                GazeConfig.RESET_PITCH_UP_DEG, "°", 1,
+                read = { GazeRuntime.config.headPoseUpThresholdDeg },
+                write = { v -> updateConfig { it.copy(headPoseUpThresholdDeg = v) } },
+            ),
+            ParamSpec(
+                R.id.seekSpeed, R.id.tvSpeedValue, R.id.btnSpeedReset,
+                GazeConfig.MIN_MOTION_WINDOW_MS.toFloat(), GazeConfig.MAX_MOTION_WINDOW_MS.toFloat(),
+                GazeConfig.STEP_MOTION_WINDOW_MS.toFloat(),
+                GazeConfig.RESET_MOTION_WINDOW_MS.toFloat(), "ms", 0,
+                read = { GazeRuntime.config.headPoseMotionWindowMs.toFloat() },
+                write = { v -> updateConfig { it.copy(headPoseMotionWindowMs = v.toLong()) } },
+            ),
+            ParamSpec(
+                R.id.seekYaw, R.id.tvYawValue, R.id.btnYawReset,
+                GazeConfig.MIN_YAW_DEG, GazeConfig.MAX_YAW_DEG, GazeConfig.STEP_YAW_DEG,
+                GazeConfig.RESET_YAW_DEG, "°", 1,
+                read = { GazeRuntime.config.horizontalSwipeAngleThreshold },
+                write = { v -> updateConfig { it.copy(horizontalSwipeAngleThreshold = v) } },
+            ),
+            ParamSpec(
+                R.id.seekTilt, R.id.tvTiltValue, R.id.btnTiltReset,
+                GazeConfig.MIN_TILT_DEG, GazeConfig.MAX_TILT_DEG, GazeConfig.STEP_TILT_DEG,
+                GazeConfig.RESET_TILT_DEG, "°", 1,
+                read = { GazeRuntime.config.tiltThresholdDeg },
+                write = { v -> updateConfig { it.copy(tiltThresholdDeg = v) } },
+            ),
+        )
+        for (spec in specs) bindParam(spec)
+    }
+
+    private fun bindParam(spec: ParamSpec) {
+        val seek = binding.root.findViewById<android.widget.SeekBar>(spec.seekId) ?: return
+        val value = binding.root.findViewById<android.widget.TextView>(spec.valueId) ?: return
+        seek.max = Math.round((spec.max - spec.min) / spec.step)
+        seek.progress = stepFor(spec, spec.read())
+        value.text = formatParam(spec, spec.read())
+
+        seek.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(
+                seekBar: android.widget.SeekBar?,
+                progress: Int,
+                fromUser: Boolean,
+            ) {
+                if (fromUser) spec.write(valueFor(spec, progress))
+                value.text = formatParam(spec, valueFor(spec, progress))
+                // 实时读数里也印着这些阈值，跟着一起刷。
+                renderLive(GazeRuntime.snapshot)
+            }
+
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                val progress = seekBar?.progress ?: 0
+                spec.write(valueFor(spec, progress))
+                value.text = formatParam(spec, valueFor(spec, progress))
+                render()
+            }
+        })
+
+        binding.root.findViewById<View>(spec.resetId)?.setOnClickListener {
+            spec.write(spec.defaultValue)
+            seek.progress = stepFor(spec, spec.defaultValue)
+            value.text = formatParam(spec, spec.defaultValue)
+            render()
+            renderLive(GazeRuntime.snapshot)
+            toast(getString(R.string.param_reset_done, formatParam(spec, spec.defaultValue)))
+        }
+    }
+
+    private fun valueFor(spec: ParamSpec, step: Int): Float = spec.min + step * spec.step
+
+    private fun stepFor(spec: ParamSpec, value: Float): Int =
+        Math.round((value.coerceIn(spec.min, spec.max) - spec.min) / spec.step)
+
+    private fun formatParam(spec: ParamSpec, value: Float): String =
+        if (spec.decimals == 0) {
+            "${value.toInt()}${spec.unit}"
+        } else {
+            String.format(java.util.Locale.US, "%.1f%s", value, spec.unit)
+        }
 
     // ----------------------------------------------------------------- service --
 

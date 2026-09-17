@@ -1262,7 +1262,13 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 if (headAxisNeeded) {
                     headPoseActive = true
                     head.thresholdDeg = cfg.headPoseAngleThreshold
+                    // v5.60：仰头可以有自己的角度（用户点名要拆开）。
+                    head.thresholdUpDeg = cfg.headPoseUpThresholdDeg
                     head.motionWindowMs = cfg.headPoseMotionWindowMs
+                    // v5.60：「触发速度」滑块同时管两条轴，但保持 v5.51 的 900/500 比例，
+                    // 所以默认档位下扭头窗口与旧版一字不差。
+                    head.turnMotionWindowMs =
+                        HeadPoseDetector.turnWindowMsFor(cfg.headPoseMotionWindowMs)
                     head.holdMs = cfg.headPoseHoldMs
                     head.turnEnabled = cfg.horizontalSwipeEnabled
                     head.turnThresholdDeg = cfg.horizontalSwipeAngleThreshold
@@ -2015,6 +2021,12 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 //       近距离下 nodTh < upTh 就说明单向增益生效（点头更灵、仰头照旧）。
                 " pitchTh=${"%.1f".format(headPoseDetector?.pitchThresholdDeg ?: 0f)}°" +
                 " pitchThUp=${"%.1f".format(headPoseDetector?.pitchThresholdUpDeg ?: 0f)}°" +
+                // v5.60：用户自己调的四个参数（点头/仰头角度、触发速度、扭头、歪头）——
+                // 从这一行就能直接核对"滑块有没有生效"，不用猜。
+                " thCfg=${"%.1f".format(cfg.headPoseAngleThreshold)}/${"%.1f".format(cfg.headPoseUpThresholdDeg)}°" +
+                " winCfg=${cfg.headPoseMotionWindowMs}/${headPoseDetector?.turnMotionWindowMs ?: 0L}ms" +
+                " yawThCfg=${"%.1f".format(cfg.horizontalSwipeAngleThreshold)}°" +
+                " tiltThCfg=${"%.1f".format(cfg.tiltThresholdDeg)}°" +
                 " yawTh=${"%.1f".format(headPoseDetector?.yawThresholdDeg ?: 0f)}°" +
                 // v5.8：yaw 与 pitch 的实时读数一起打出来，扭头是"没到阈值"还是"带出了俯仰"
                 // 一眼可见；pitchYielded 表示俯仰因为扭头信号更强而让位。

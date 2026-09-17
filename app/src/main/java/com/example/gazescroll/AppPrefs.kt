@@ -25,6 +25,9 @@ object AppPrefs {
     // Head-pose keys.
     private const val K_HEAD_ENABLED = "headPoseEnabled"
     private const val K_HEAD_THRESHOLD = "headPoseAngleThreshold"
+
+    /** v5.60：仰头方向的独立角度阈值（点头仍用 [K_HEAD_THRESHOLD]）。 */
+    private const val K_HEAD_THRESHOLD_UP = "headPoseUpThresholdDeg"
     private const val K_HEAD_HOLD = "headPoseHoldMs"
     private const val K_HEAD_MOTION = "headPoseMotionWindowMs"
     private const val K_HEAD_INVERT = "headPoseInvertPitch"
@@ -135,6 +138,13 @@ object AppPrefs {
             // the new, much lighter 8° (the 4.0 sensitivity change).
             headPoseAngleThreshold = sp.getFloat(K_HEAD_THRESHOLD, d.headPoseAngleThreshold)
                 .let { if (it == 15f) d.headPoseAngleThreshold else it },
+            // v5.60：仰头方向的独立阈值。**老配置里没有这个键 → 直接跟着点头那个值走**，
+            // 所以升级上来行为一个字不变（拆开只是"从此可以分开调"）。
+            headPoseUpThresholdDeg = sp.getFloat(
+                K_HEAD_THRESHOLD_UP,
+                sp.getFloat(K_HEAD_THRESHOLD, d.headPoseAngleThreshold)
+                    .let { if (it == 15f) d.headPoseAngleThreshold else it },
+            ),
             // Same for the hold time: 300 ms was the old default, 4.0 uses 200 ms,
             // and v4.8 lowers it to 150 ms so the peak no longer has to be held longer
             // than the action itself takes. Anyone still on either old value is moved
@@ -197,6 +207,7 @@ object AppPrefs {
             .putBoolean(K_GAZE_MODE, s.gazeModeEnabled)
             .putBoolean(K_HEAD_ENABLED, s.headPoseEnabled)
             .putFloat(K_HEAD_THRESHOLD, s.headPoseAngleThreshold)
+            .putFloat(K_HEAD_THRESHOLD_UP, s.headPoseUpThresholdDeg)
             .putLong(K_HEAD_HOLD, s.headPoseHoldMs)
             .putLong(K_HEAD_MOTION, s.headPoseMotionWindowMs)
             .putBoolean(K_HEAD_INVERT, s.headPoseInvertPitch)

@@ -228,6 +228,22 @@
     <string name="card_order_reset_done">已恢复默认顺序</string>
     <string name="card_order_saved">顺序已保存</string>
 
+    <!-- ================= v5.60：四个参数交给用户自己调 ================= -->
+
+    <string name="param_pitch_down">点头角度（低头多少算一次）</string>
+    <string name="param_pitch_up">仰头角度（抬头多少算一次）</string>
+    <string name="param_speed">触发速度（头部动作要多快完成）</string>
+    <string name="param_yaw">扭头角度（扭头多少算一次）</string>
+    <string name="param_tilt">歪头角度（歪多少算一次）</string>
+    <string name="param_reset">默认</string>
+    <string name="param_reset_done">已恢复默认：%1$s</string>
+    <string name="param_pitch_hint">数值越大越不容易误触（要低得更明显才算）。近距离（30cm 左右）会按比例自动更灵敏一点，这是原来的行为，不用管。</string>
+    <string name="param_pitch_up_hint">「抬头看别处」被误判成翻页时，把这个调大 —— 它只影响仰头，不影响点头。默认值如果容易误触，就自己往上调。</string>
+    <string name="param_speed_hint">数值越小 = 只认更快的动作（更不容易误触）；越大 = 慢一点的动作也算。这一条同时管点头/仰头和左右扭头。</string>
+    <string name="param_yaw_hint">数值越大越不容易误触（要扭得更明显才算）。</string>
+    <string name="param_tilt_hint">数值越大越不容易误触（要歪得更明显才算）；保持时间在下面单独调。</string>
+    <string name="param_tune_tip">调坏了点右边的「默认」就能回到你原来那套值。</string>
+
     <string name="shizuku_missing">未检测到 Shizuku，已改用无障碍服务方式翻页</string>
     <string name="shizuku_opened">已打开 Shizuku，请在其中启动服务后回来申请权限</string>
     <string name="shizuku_launch_failed">无法打开 Shizuku</string>

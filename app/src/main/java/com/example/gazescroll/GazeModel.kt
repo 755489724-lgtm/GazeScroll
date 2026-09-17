@@ -111,6 +111,16 @@ data class GazeConfig(
     val headPoseEnabled: Boolean = false,
     /** Degrees away from the sliding baseline that counts as a nod / tilt. */
     val headPoseAngleThreshold: Float = 8f,
+
+    /**
+     * v5.60：**仰头**方向的独立角度阈值（点头用 [headPoseAngleThreshold]）。
+     *
+     * 用户点名要拆开：「抬头看别处被当成翻页」这个误触只在仰头方向，而点头方向的
+     * 轻点头又要灵敏 —— 一个值管两个方向时无解。默认取 [headPoseAngleThreshold]，
+     * 所以老配置（没有这个键）读出来仍是"两个方向同一个值"，行为一个字不变。
+     */
+    val headPoseUpThresholdDeg: Float = headPoseAngleThreshold,
+
     /** The baseline→peak rise must happen inside this window to count as a nod. */
     val headPoseMotionWindowMs: Long = 500L,
     /** …and the peak must then be held this long before it fires. */
@@ -331,6 +341,7 @@ data class GazeConfig(
             blinkOpenAbove = blinkOpenAbove.coerceIn(0.20f, 0.99f),
             blinkClosedFrames = blinkClosedFrames.coerceIn(1, 6),
             headPoseAngleThreshold = headPoseAngleThreshold.coerceIn(3f, 45f),
+            headPoseUpThresholdDeg = headPoseUpThresholdDeg.coerceIn(3f, 45f),
             headPoseMotionWindowMs = headPoseMotionWindowMs.coerceIn(150L, 2000L),
             headPoseHoldMs = headPoseHoldMs.coerceIn(60L, 1500L),
             horizontalSwipeAngleThreshold = horizontalSwipeAngleThreshold.coerceIn(8f, 45f),
@@ -353,6 +364,41 @@ data class GazeConfig(
 
         /** 全局冷却可调节上限：5 秒。 */
         const val MAX_GLOBAL_COOLDOWN_MS = 5000L
+
+        // ============ v5.60：交给用户自己调的四个参数（滑块范围与步长） ============
+
+        /** 触发速度：头部动作要在这段时间内完成才算「突然」。越小越不容易误触。 */
+        const val MIN_MOTION_WINDOW_MS = 150L
+        const val MAX_MOTION_WINDOW_MS = 1500L
+        const val STEP_MOTION_WINDOW_MS = 50L
+
+        /** 点头 / 仰头角度。 */
+        const val MIN_PITCH_DEG = 3f
+        const val MAX_PITCH_DEG = 20f
+        const val STEP_PITCH_DEG = 0.5f
+
+        /** 扭头角度。 */
+        const val MIN_YAW_DEG = 8f
+        const val MAX_YAW_DEG = 40f
+        const val STEP_YAW_DEG = 1f
+
+        /** 歪头（调音量）角度。 */
+        const val MIN_TILT_DEG = 8f
+        const val MAX_TILT_DEG = 30f
+        const val STEP_TILT_DEG = 0.5f
+
+        /**
+         * 「恢复默认」回到的值 —— **就是 v5.51 交付那天用户实际在用的那一套**
+         * （用户原话：「把目前的，当成初始的默认模式」「防止用户调整坏了」）。
+         *
+         * 注意它和上面 GazeModel 的构造函数默认值（点头/仰头 8°、扭头 20°、歪头 13°）
+         * **不是一回事**：那是"全新安装"的出厂值，这里是他亲手调好并认可的那一套。
+         */
+        const val RESET_PITCH_DOWN_DEG = 6f
+        const val RESET_PITCH_UP_DEG = 6f
+        const val RESET_YAW_DEG = 28f
+        const val RESET_TILT_DEG = 13f
+        const val RESET_MOTION_WINDOW_MS = 500L
 
         /**
          * 滑块步长：250 ms。0.5s~5s 正好切成 18 档，既够细也不会像 1ms 步进

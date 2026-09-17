@@ -119,6 +119,37 @@ private class Feeder(private val faceRatioValue: Float) {
 
     fun tiltUps(): Int = events.count { it is HeadEvent.TiltUp }
     fun nods(): Int = events.count { it is HeadEvent.NodDown }
+    fun turns(): Int = events.count { it is HeadEvent.TurnLeft || it is HeadEvent.TurnRight }
+
+    /** v5.60：只动偏航轴（俯仰固定 0），用来隔离「扭头窗口」。 */
+    fun frameYaw(yaw: Float, stepMs: Long = 90L) {
+        detector.faceRatio = faceRatioValue
+        detector.onHeadPose(0f, yaw, now)
+        now += stepMs
+    }
+
+    /** v5.60：扭头（向右），形状同仰头：慢起手 + 一帧快越阈值 + 保持。 */
+    fun turnRight(riseMs: Long, threshold: Float, stepMs: Long = 90L) {
+        val onset = 0.4f * threshold + 0.1f
+        val justBelow = threshold - 0.5f
+        frameYaw(onset, stepMs)
+        val slowMs = (riseMs - stepMs).coerceAtLeast(stepMs)
+        val steps = (slowMs / stepMs).toInt().coerceAtLeast(1)
+        for (i in 1..steps) {
+            val t = i.toFloat() / steps
+            frameYaw(onset + (justBelow - onset) * t, stepMs)
+        }
+        frameYaw(threshold + 3f, stepMs)
+        holdYaw(threshold + 3f, 400L, stepMs)
+    }
+
+    fun holdYaw(yaw: Float, ms: Long, stepMs: Long = 90L) {
+        var remaining = ms
+        while (remaining > 0) {
+            frameYaw(yaw, stepMs)
+            remaining -= stepMs
+        }
+    }
 }
 
 private const val NEAR_RATIO = 0.55f
@@ -182,6 +213,100 @@ fun main() {
     testNearLookUpRises()
     testFarDistanceUnchanged()
     testNearNodUnchanged()
+    testSplitPitchThreshold()
+    testMotionWindowAffectsTurn()
     println("\n=== 结果：${if (failures == 0) "全部通过" else "$failures 项失败"} ===")
     if (failures != 0) throw IllegalStateException("$failures 项失败")
+}
+
+/**
+ * v5.60 新增：**仰头阈值与点头阈值拆开**之后的行为。
+ *
+ * 近档 + 低头时仰头的实际阈值 = 仰头设定值 × 0.63（[HeadPoseDetector] 的 NEAR_LOOKUP_BOOST），
+ * 点头 = 点头设定值 × 0.42。所以：
+ *   · 仰头跟着点头走（只设 thresholdDeg，thresholdUpDeg 保持 0）→ 4° 的仰头就触发；
+ *   · 仰头单独设成 12°（阈值 7.56°）→ 同样的 4° 仰头被挡，而 9° 的仰头仍能触发；
+ *   · 点头那条通道**完全不受仰头设定影响**（仍是 2.5° 档）。
+ */
+private fun testSplitPitchThreshold() {
+    println("\n[4] v5.60 仰头独立阈值（点头 6° 不变，只把仰头调大）")
+
+    val follow = Feeder(NEAR_RATIO)
+    follow.settle(8f)
+    follow.lookUp(300L, baseDeg = 8f, threshold = 4.0f)
+    check(
+        "仰头跟随点头(6° → 实际 3.8°)：4° 仰头 → 触发",
+        follow.tiltUps() == 1,
+        "实际 ${follow.tiltUps()} 次",
+    )
+
+    val split = Feeder(NEAR_RATIO)
+    split.detector.thresholdUpDeg = 12f
+    split.settle(8f)
+    split.lookUp(300L, baseDeg = 8f, threshold = 4.0f)
+    check(
+        "仰头独立设成 12°（实际 7.6°）：同样的 4° 仰头 → 被挡",
+        split.tiltUps() == 0,
+        "实际 ${split.tiltUps()} 次",
+    )
+
+    val big = Feeder(NEAR_RATIO)
+    big.detector.thresholdUpDeg = 12f
+    big.settle(8f)
+    big.lookUp(300L, baseDeg = 8f, threshold = 9.0f)
+    check(
+        "仰头 12° 时 9° 仰头 → 仍能触发（不是把通道关掉）",
+        big.tiltUps() == 1,
+        "实际 ${big.tiltUps()} 次",
+    )
+
+    val nod = Feeder(NEAR_RATIO)
+    nod.detector.thresholdUpDeg = 12f
+    nod.settle(8f)
+    nod.nodDown(200L, baseDeg = 8f, threshold = 2.5f)
+    check(
+        "仰头改成 12° 后，点头仍是 2.5° 档 → 触发",
+        nod.nods() == 1,
+        "实际 ${nod.nods()} 次",
+    )
+}
+
+/**
+ * v5.60 新增：**「触发速度」滑块同时管两条轴**，但默认档必须与 v5.51 一字不差。
+ *
+ * v5.51 的实际值是：俯仰远档 500ms（用户可设）、扭头远档 900ms（写死）；
+ * 所以滑块设成 v 时扭头 = v × 1.8 —— 默认 500 → 900，与旧版完全一致；
+ * 收到 150 时扭头跟着变成 270ms，慢扭头就该被挡。
+ */
+private fun testMotionWindowAffectsTurn() {
+    println("\n[5] v5.60 触发速度对扭头同样生效（默认档与 v5.51 一致）")
+
+    check("比例核对：500ms → 900ms（与 v5.51 的写死值一致）", HeadPoseDetector.turnWindowMsFor(500L) == 900L)
+    check("比例核对：150ms → 270ms", HeadPoseDetector.turnWindowMsFor(150L) == 270L)
+    check("比例核对：1500ms → 2700ms", HeadPoseDetector.turnWindowMsFor(1500L) == 2700L)
+
+    val def = Feeder(FAR_RATIO)
+    def.detector.turnEnabled = true
+    def.detector.turnThresholdDeg = 28f
+    def.detector.turnMotionWindowMs = HeadPoseDetector.turnWindowMsFor(def.detector.motionWindowMs)
+    def.settle(2f)
+    def.turnRight(500L, threshold = 28f)
+    check(
+        "默认 500/900ms：远档 500ms 起手的扭头 → 触发",
+        def.turns() == 1,
+        "实际 ${def.turns()} 次",
+    )
+
+    val tight = Feeder(FAR_RATIO)
+    tight.detector.turnEnabled = true
+    tight.detector.turnThresholdDeg = 28f
+    tight.detector.motionWindowMs = 150L
+    tight.detector.turnMotionWindowMs = HeadPoseDetector.turnWindowMsFor(150L)
+    tight.settle(2f)
+    tight.turnRight(500L, threshold = 28f)
+    check(
+        "收紧到 150/270ms：同样的扭头 → 被挡",
+        tight.turns() == 0,
+        "实际 ${tight.turns()} 次",
+    )
 }

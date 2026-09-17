@@ -648,6 +648,20 @@ class HeadPoseDetector(
          */
         private const val NEAR_SUDDEN_TURN_RISE_MS = 400L
 
+        /**
+         * v5.60：扭头窗口与俯仰窗口的**比例**。
+         *
+         * 用户要一个「触发速度」滑块同时管两条轴，但这两条轴的窗口在 v5.51 里本来就不一样：
+         * 俯仰远距离 500ms（用户可设）、扭头远距离写死 900ms；近距离分别是 450 / 400ms。
+         * 直接让滑块同时写两个值会在默认档就把扭头从 900 改成 500 —— **那是行为改变**。
+         * 所以保留比例：滑块设成 v 时，扭头窗口 = v × 1.8，默认 v=500 → 900ms，
+         * 与 v5.51 一字不差；用户把滑块调到 150，扭头窗口跟着收到 270ms。
+         */
+        const val TURN_WINDOW_RATIO = 1.8f
+
+        /** 由「触发速度」滑块值换算出扭头用的窗口（见 [TURN_WINDOW_RATIO]）。 */
+        fun turnWindowMsFor(pitchWindowMs: Long): Long = (pitchWindowMs * TURN_WINDOW_RATIO).toLong()
+
         // ------------------- v5.15：区分「渐进动作」与「单帧跳变」 --
 
         /**
@@ -766,6 +780,16 @@ class HeadPoseDetector(
     /** Degrees from the baseline that count as a nod / tilt. User setting. */
     @Volatile
     var thresholdDeg: Float = 8f
+
+    /**
+     * v5.60：**仰头**方向的独立阈值（点头用 [thresholdDeg]）。
+     *
+     * `<= 0` 表示"跟着 [thresholdDeg] 走" —— 这样两个好处：
+     * ① 老的调用方（离线回放工具 `tools/headpose-replay` 只设 `thresholdDeg`）行为不变；
+     * ② 正式服务每帧都会把两个值都设上（见 GazeCameraService）。
+     */
+    @Volatile
+    var thresholdUpDeg: Float = 0f
 
     /** The baseline→peak rise must finish inside this window. */
     @Volatile
@@ -1660,7 +1684,11 @@ class HeadPoseDetector(
         // 实机 16 次仰头的中位延迟正好 202ms、3 次 ≥500ms，根因是阈值 6.0° 太高。
         val upBoost = if (signedPitch > 0f && nearDistance && lookingDown) NEAR_LOOKUP_BOOST else 1f
         lastAppliedNodBoost = nearBoost * upBoost
-        return thresholdDeg * (gazeBoost * nearBoost * upBoost)
+        // v5.60：仰头方向可以有自己的阈值（用户点名要拆开 —— 「抬头看别处被当成翻页」
+        // 只在仰头方向，而点头方向的轻点头又要灵敏，一个值管两个方向时无解）。
+        // `thresholdUpDeg <= 0` 时退回共用阈值，老调用方行为不变。
+        val base = if (signedPitch > 0f && thresholdUpDeg > 0f) thresholdUpDeg else thresholdDeg
+        return base * (gazeBoost * nearBoost * upBoost)
     }
 
     /** 按距离缩放后的静止峰峰值门限。 */

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 功能卡右上角的「三角」：收起时朝下，展开时在代码里转 180°。 -->
+<!--
+  v5.51：功能卡右上角的「三角」放大了。
+  原来 24dp 的方框里路径只占 12×6，实际看着又小又难点；现在路径铺到 14×9，
+  外面的 ImageView 也给到 32dp（见 activity_main.xml），一眼就能看出「这里能展开」。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -7,8 +11,8 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#00000000"
-        android:pathData="M6,9.5 L12,15.5 L18,9.5"
-        android:strokeWidth="2"
+        android:pathData="M5,8 L12,15.5 L19,8"
+        android:strokeWidth="2.2"
         android:strokeColor="#FF000000"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />

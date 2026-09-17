@@ -2,7 +2,7 @@
 
 > 用**前置摄像头**检测眨眼和点头/仰头，自动触发上滑翻页 —— 刷视频不用手。
 
-[![Release](https://img.shields.io/badge/release-v5.50-blue)](../../releases/tag/v5.50)
+[![Release](https://img.shields.io/badge/release-v5.51-blue)](../../releases/tag/v5.51)
 [![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-green)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
 
@@ -654,13 +654,14 @@ adb shell am start -n com.example.gazescroll/.MainActivity
 
 ## 版本历史
 
-完整变更见 [CHANGELOG.md](CHANGELOG.md)。当前 **v5.50**（用户认可的锚点仍是 **v5.36**：
+完整变更见 [CHANGELOG.md](CHANGELOG.md)。当前 **v5.51**（用户认可的锚点仍是 **v5.36**：
 v5.39~v5.42 = 采集测试功能，v5.43 = 注视门（默认观察），v5.44 = 近距离仰头窗口，
 v5.45 = 遮挡误判，v5.46 = 遮挡不再清头部基准线，
-**v5.47~v5.50 = 界面重排（纯 UI，检测逻辑一行未动）**）。
+**v5.47~v5.51 = 界面重排（纯 UI，检测逻辑一行未动）**）。
 
 | 版本 | 主要内容 |
 | --- | --- |
+| **v5.51** | **二级菜单的三角放大**（用户：「倒三角有点小了，设计大一点点」）：矢量路径 12×6 → 14×9、描边 2 → 2.2，`ImageView` 24dp → **34dp**。纯 UI，零行为改动（整行标题本来就可点，这版只是让它看起来更该点） |
 | **v5.50** | **把 v5.48 的拖动排序修好**（装机实测抓出两处只有真机才会暴露的缺陷）：① **外层 `ScrollView` 抢走纵向手势** —— 长按抬起卡片后手指一动就变成滚页面，子 View 只收到 `ACTION_CANCEL` → 长按开始时 `requestDisallowInterceptTouchEvent(true)`；② **拖动中 `removeView()+addView()` 会当场取消触摸** —— 顺序刚换完位，`ACTION_CANCEL` 已经先跑进收尾函数（那时"已改序"标记还是 false），于是**永远存不下去**，剩下的事件还落回 ScrollView 又滚一下 → **拖动期间一个视图都不重排**（被拖的跟手指走、让位的用 `translationY` 做预览），松手后才做唯一的一次换位并落盘。验证：同一条"前 800ms 只走 22px"的慢手势，修前 `cardOrder` 永远不落盘、修后落盘且重启后顺序仍在（`backup\GazeScroll-v5.50\data\`）。检测逻辑一行未动 |
 | **v5.48** | **首页卡片可以自由拖动排序**（用户 v5.47 清单里的最后一项）：**长按卡片标题行**把卡片抬起来（放大 + 阴影 + 震动），上下拖经过别张卡的中线就换位，松手即保存（「顺序已保存」）；点标题仍然是展开 / 收起，两者不冲突。顺序按**资源名**存进 `ui_prefs.xml`，设置页新增「首页卡片 → 恢复默认顺序」。名字对不上（将来增删卡片）就自动退回默认顺序。检测逻辑一行未动。⚠️ **拖动排序在真机上直到 v5.50 才真正可用**（两处只有装机才暴露的手势缺陷，见上） |
 | **v5.47** | **界面重排（用户点名的「装修」，纯 UI）**：① 「一页到底的设置清单」→ **首页功能卡片 + 右侧设置页**：10 张卡片一级只留「标题 + 一句话 + 开关」，长解释与档位全部收进**三角**（二级详情），每张卡展开后显示**自己那条通道的实时读数**；② 设置页**往左滑呼出**（`DrawerLayout` + `layout_gravity=end`，另加自定义 `SwipeToOpenLayout` 让页面任意位置左滑都能呼出，因为自带的边缘手势只认最右边那条边），依次是**权限与状态 → 外观 → 测试与诊断 → 关于**，原来堆在页底的测试项（注视数据采集 / 实时数值 / 重启服务）全部收进去；③ 主题三档 **白色（默认）/ 黑夜 / 跟随系统**，纯色背景、系统字体（删掉全部 `fontFamily="monospace"`）；④ 打开 App **停在首页**，不再自动退到后台（用户明确选择）。**检测逻辑一行没动**：阈值、判据、方向仲裁、服务、无障碍注入全部原样，`git diff` 只出现在 `res/`、`MainActivity.kt`（纯界面部分）与新增的 `UiPrefs.kt` / `SwipeToOpenLayout.kt`。主题存在**独立文件 `ui_prefs.xml`**，与用户的 `gaze_scroll_prefs.xml` 完全隔离 —— v5.46 之前那次「手改 prefs 把用户设置清空」的事故（HANDOVER §7.1）在结构上不可能再发生 |

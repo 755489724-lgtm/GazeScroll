@@ -180,8 +180,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevHeadPose"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -325,8 +325,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevTurn"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -480,8 +480,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevTilt"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -753,8 +753,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevBlink"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -937,8 +937,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevMouth"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -1090,8 +1090,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevGate"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -1237,8 +1237,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevGuard"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -1377,8 +1377,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevSwipe"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -1541,8 +1541,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevTargets"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"
@@ -1657,8 +1657,8 @@
 
                             <ImageView
                                 android:id="@+id/ivChevGlobal"
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
                                 android:layout_marginStart="4dp"
                                 android:background="?android:attr/selectableItemBackgroundBorderless"
                                 android:contentDescription="@string/card_expand"

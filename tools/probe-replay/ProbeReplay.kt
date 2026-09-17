@@ -130,8 +130,7 @@ private class Rig {
         }
     }
 
-    /** CSV 数据行（非 `#` 开头）的列数是否都等于表头列数。 */
-    fun dataRowColumnIssue(): String {
+    /** CSV 数据行（非 `#` 开头）的列数是否都等于表头列数。 */    fun dataRowColumnIssue(): String {
         val header = lines.firstOrNull { it.startsWith("idx,") } ?: return "没有表头"
         val expected = header.split(",").size
         for (line in lines) {
@@ -140,6 +139,11 @@ private class Rig {
             if (n != expected) return "列数 $n != $expected : $line"
         }
         return ""
+    }
+
+    /** 只推进时钟、不喂帧（模拟"帧流被打断"，例如通知栏把相机挤掉了）。 */
+    fun idle(ms: Long) {
+        now += ms
     }
 
     fun hasLog(fragment: String): Boolean = logs.any { it.contains(fragment) }
@@ -369,6 +373,57 @@ private fun testV539FailureCaseIsNowCovered() {
     )
 }
 
+private fun testGapAndBlinkMarkers() {
+    println("\n[15] 帧流中断 ≥1.5 秒 = 也记一个分段边界（v5.42 兜底）")
+    val r = Rig()
+    r.hold(true, 1000, proxAvailable = true, lux = 22f)
+    r.hold(false, 4000, proxNear = true, proxAvailable = true, lux = 8f)
+    r.hold(true, 1500, proxAvailable = true, lux = 22f)
+    check("录起来了", r.recorder.state == ProbeState.RECORDING)
+    check("第 1 段", r.recorder.phase == 1, "phase=${r.recorder.phase}")
+
+    // 模拟"手掌压到屏幕把通知栏拉下来"：8 秒一帧都没有。
+    r.idle(8000)
+    r.hold(true, 1000, proxAvailable = true, lux = 30f)
+    check(
+        "帧流断了 8 秒 → 记了一个分段边界（真实第三轮就是这里丢了 9 秒）",
+        r.recorder.phase == 2,
+        "phase=${r.recorder.phase}",
+    )
+    check("CSV 里写了原因", r.hasLine("frame gap"), )
+    check("日志里写了原因", r.hasLog("frame gap"))
+
+    // 短的帧间隔（正常 15fps）不能触发。
+    val r2 = Rig()
+    r2.hold(true, 1000)
+    r2.hold(false, 4000, dark = true)
+    r2.hold(true, 3000)
+    val before = r2.recorder.phase
+    r2.idle(300)
+    r2.hold(true, 1000)
+    check("只断 300ms 不算边界", r2.recorder.phase == before, "phase=${r2.recorder.phase}")
+}
+
+private fun testBlinkMarker() {
+    println("\n[16] 录制中眨出一次翻页 = 换下一段（不用碰手机）")
+    val r = Rig()
+    r.hold(true, 1000, proxAvailable = true, lux = 22f)
+    r.hold(false, 4000, proxNear = true, proxAvailable = true, lux = 8f)
+    r.hold(true, 1500, proxAvailable = true, lux = 22f)
+    check("录起来了", r.recorder.state == ProbeState.RECORDING)
+    val rowsBefore = r.recorder.rows
+    r.recorder.onMarker("blink:2", r.now)
+    check("眨一次翻页 → 第 2 段", r.recorder.phase == 2, "phase=${r.recorder.phase}")
+    check("不额外写数据行", r.recorder.rows == rowsBefore)
+    check("日志里写了 marker", r.hasLog("marker blink:2"))
+
+    // 不在录制中时，标记不算数。
+    val r2 = Rig()
+    r2.hold(true, 1000)
+    r2.recorder.onMarker("blink:2", r2.now)
+    check("待机时的眨眼不算分段", r2.recorder.phase == 0, "phase=${r2.recorder.phase}")
+}
+
 private fun testStopCoverThreshold() {
     println("\n[14] 分段 / 结束的分界线是 6 秒（v5.41：用户按'1 秒'盖的实际是 2.1~2.3 秒）")
     val r = Rig()
@@ -464,6 +519,8 @@ fun main() {
     testStateLine()
     testV539FailureCaseIsNowCovered()
     testStopCoverThreshold()
+    testGapAndBlinkMarkers()
+    testBlinkMarker()
     println("\n=== 结果：${if (failures == 0) "全部通过" else "$failures 项失败"} ===")
     if (failures != 0) throw IllegalStateException("$failures 项失败")
 }

@@ -521,7 +521,13 @@ private const val REF_LOG_INTERVAL_MS = 400L
         // 关掉测试功能时它一点开销都没有。传感器不存在时 available=false，上层自动退回画面判据。
         proximity = ProximityMonitor(this)
 
-        blinkDetector = BlinkDetector { reason -> fireSwipe("blink:$reason", SwipeDirection.UP) }
+        blinkDetector = BlinkDetector { reason ->
+            // v5.42：把"眨出一次翻页"同时当作采集的分段标记 —— 用户不用碰手机就能换下一段
+            // （第三轮实测里用手盖摄像头时把通知栏拉下来了，那 9 秒一帧都没有）。
+            // 只观测，不影响触发：下面照常 fireSwipe。
+            probeRecorder?.onMarker("blink:$reason", SystemClock.elapsedRealtime())
+            fireSwipe("blink:$reason", SwipeDirection.UP)
+        }
 
         // v5.35：歪头（左右压耳朵，ML Kit 的 headEulerAngleZ）→ 音量加 / 减。
         // 判据与阈值见 [TiltDetector]；方向（哪边加、哪边减）由用户在设置页选。

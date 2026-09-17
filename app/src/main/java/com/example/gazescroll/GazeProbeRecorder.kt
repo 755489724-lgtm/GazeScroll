@@ -209,6 +209,20 @@ class GazeProbeRecorder(
         /** 人脸消失期间 `cover-probe` 诊断行的最小间隔。 */
         const val COVER_LOG_INTERVAL_MS = 1000L
 
+        /**
+         * 帧流中断 ≥ 这么久 → 也记一个分段边界（v5.42 的兜底）。
+         *
+         * 为什么需要：第三轮实测里用户盖摄像头时手掌压到了屏幕最上方，
+         * **把通知栏拉下来了**（MIUI 日志：`StatusBar1 ACTION_DOWN 18:56:42.943 → ACTION_UP 18:56:51.931`）。
+         * 通知栏一弹出来抖音就不是前台 → 相机被系统释放 → 那 9 秒**一帧都没有**，
+         * 于是"盖住"这条判据根本没有输入，分段标记与结束都没发生，用户白盖了 9 秒。
+         *
+         * 帧流本身的**中断**是同样可靠的信号："这段录制被打断了" —— 不管打断它的是
+         * 手掌、通知栏还是切了应用。所以：**帧间隔 ≥ 这个值就记一个分段边界**，
+         * 让"分段"这件事至少有一个判据能成立。
+         */
+        const val FRAME_GAP_MARKER_MS = 1500L
+
         /** CSV 的列顺序。改这里就必须同步改 [formatRow]，两边永远一起动。 */
         val COLUMNS = listOf(
             "idx", "wall", "elapsed", "phase", "face", "cover", "luma", "tex", "prox", "lux",
@@ -272,6 +286,9 @@ class GazeProbeRecorder(
 
     /** 上一次 `cover-probe` 诊断行的时刻（v5.40）。 */
     private var lastCoverLogAtMs = 0L
+
+    /** 上一帧的时刻（v5.42），用来识别帧流中断。 */
+    private var lastFrameAtMs = 0L
 
     private var sessionStartMs = 0L
     private var sessionStartWallMs = 0L
@@ -391,6 +408,36 @@ class GazeProbeRecorder(
         }
     }
 
+    /**
+     * 记一个分段边界（v5.41：只由"盖住 1~6 秒"触发；v5.42 起三种来源共用）：
+     * 盖住、帧流中断、以及外部标记（眨眼翻页那一下，见 [onMarker]）。
+     */
+    private fun markPhase(nowMs: Long, reason: String) {
+        if (state != ProbeState.RECORDING) return
+        phaseRows.add(rowsInPhase)
+        phaseFaces.add(facesInPhase)
+        phase++
+        rowsInPhase = 0
+        facesInPhase = 0
+        write("# PHASE $phase at elapsed=${nowMs - sessionStartMs}ms ($reason, rows=$rows)")
+        log(
+            "PHASE $phase at ${"%.1f".format(Locale.US, (nowMs - sessionStartMs) / 1000f)}s" +
+                " ($reason, rows=$rows)",
+        )
+    }
+
+    /**
+     * 外部标记（v5.42）：最典型的来源是**眨眼触发翻页**那一下。
+     *
+     * 用户戴着手表/拿着手机时，用手去盖摄像头很容易误触屏幕（第三轮实测就是把通知栏
+     * 拉下来了）。所以除了"盖住"，再给一个完全不用碰手机的标记方式：
+     * **在录制中眨出一次翻页** = 换下一段。它只在录制中计数，不影响任何触发逻辑。
+     */
+    fun onMarker(reason: String, nowMs: Long) {
+        if (state != ProbeState.RECORDING) return
+        markPhase(nowMs, "marker $reason")
+    }
+
     private fun startSession(sample: ProbeSample, nowMs: Long) {
         sessionIndex++
         sessionStartMs = nowMs
@@ -401,6 +448,8 @@ class GazeProbeRecorder(
         coverStartMs = 0L
         // 新一次录制里，第一次"盖住"要能立刻打日志（不要被上一次的限流挡住）。
         lastCoverLogAtMs = 0L
+        // 帧流中断的计时从零开始（否则上一次录制的最后时刻会被算成"中断"）。
+        lastFrameAtMs = 0L
         fileName = "probe-" + nameFormat.format(Date(sample.wallMs)) + ".csv"
         phase = 1
         rows = 0
@@ -431,6 +480,12 @@ class GazeProbeRecorder(
     private fun recordFrame(sample: ProbeSample, nowMs: Long, covered: Boolean) {
         var stopReason: String? = null
 
+        // v5.42 兜底：帧流中断这么久 = 这一段录制被打断了（手掌压到屏幕把通知栏拉下来、
+        // 相机被系统释放、切了应用…），一律记一个分段边界 —— 见 [FRAME_GAP_MARKER_MS]。
+        val gapMs = if (lastFrameAtMs == 0L) 0L else nowMs - lastFrameAtMs
+        if (gapMs >= FRAME_GAP_MARKER_MS) markPhase(nowMs, "frame gap ${gapMs}ms")
+        lastFrameAtMs = nowMs
+
         if (covered) {
             if (coverStartMs == 0L) coverStartMs = nowMs
             val held = nowMs - coverStartMs
@@ -438,15 +493,7 @@ class GazeProbeRecorder(
         } else if (coverStartMs != 0L) {
             val held = nowMs - coverStartMs
             coverStartMs = 0L
-            if (held >= MIN_PHASE_COVER_MS) {
-                phaseRows.add(rowsInPhase)
-                phaseFaces.add(facesInPhase)
-                phase++
-                rowsInPhase = 0
-                facesInPhase = 0
-                write("# PHASE $phase at elapsed=${nowMs - sessionStartMs}ms (cover ${held}ms, rows=${rows})")
-                log("PHASE $phase at ${"%.1f".format(Locale.US, (nowMs - sessionStartMs) / 1000f)}s (cover ${held}ms, rows=$rows)")
-            }
+            if (held >= MIN_PHASE_COVER_MS) markPhase(nowMs, "cover ${held}ms")
         }
 
         rows++

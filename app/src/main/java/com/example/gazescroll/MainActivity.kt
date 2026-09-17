@@ -1182,9 +1182,8 @@ class MainActivity : AppCompatActivity() {
     private var dragCard: View? = null
     private var dragStartRawY = 0f
 
-    /** 换槽累计位移：卡片换了一格、格子本身也挪了，把这部分抵消掉视觉上才不跳。 */
-    private var dragShift = 0f
-    private var dragOrderChanged = false
+    /** 松手后要落到的槽位（拖动过程中只算不换，见 [endCardDrag] 的注释）。 */
+    private var dragTargetIndex = -1
 
     private fun onCardTouch(event: android.view.MotionEvent): Boolean {
         lastTouchRawY = event.rawY
@@ -1209,28 +1208,55 @@ class MainActivity : AppCompatActivity() {
         if (dragCard != null) return
         dragCard = card
         dragStartRawY = lastTouchRawY
-        dragShift = 0f
-        dragOrderChanged = false
+        dragTargetIndex = binding.llCards.indexOfChild(card)
         card.elevation = 8f * resources.displayMetrics.density
         card.scaleX = 1.02f
         card.scaleY = 1.02f
         card.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+
+        // v5.49（装机实测抓到的）：纵向一动手势就会被外层 ScrollView 抢走 ——
+        // `ScrollView.onInterceptTouchEvent` 超过 touchSlop 就拦截，子 View 只会收到
+        // ACTION_CANCEL，于是「长按抬起来了、一拖却变成滚页面」。
+        // 拖动期间禁止父级拦截（这个标记会一路传到 ScrollView 与 DrawerLayout）。
+        card.parent?.requestDisallowInterceptTouchEvent(true)
     }
 
     private fun dragCardTo(rawY: Float) {
         val card = dragCard ?: return
-        card.translationY = (rawY - dragStartRawY) - dragShift
         val from = binding.llCards.indexOfChild(card)
         if (from < 0) return
+        card.translationY = rawY - dragStartRawY
         val loc = IntArray(2)
         binding.llCards.getLocationOnScreen(loc)
-        val target = cardIndexAt(card, from, rawY, loc[1])
-        if (target == from) return
-        dragShift += slotShift(from, target)
-        binding.llCards.removeView(card)
-        binding.llCards.addView(card, target)
-        card.translationY = (rawY - dragStartRawY) - dragShift
-        dragOrderChanged = true
+        dragTargetIndex = cardIndexAt(card, from, rawY, loc[1])
+        previewShift(card, from, dragTargetIndex)
+    }
+
+    /**
+     * 拖动过程中的「让位预览」：只改 translationY，**一个视图都不重排**。
+     *
+     * 这里绕开了一个坑（v5.50 装机实测抓到的）：拖动中如果 `removeView` + `addView` 去实时换位，
+     * `removeView` 会当场把被拖卡片的触摸**取消**掉 —— `ACTION_CANCEL` 先跑进 [endCardDrag]
+     * （那时 `dragOrderChanged` 还是 false，于是永远存不下去），剩下的手势事件落回 ScrollView
+     * 变成滚页面。所以换位推迟到松手之后再做一次，拖动期间只用位移做预览。
+     */
+    private fun previewShift(card: View, from: Int, target: Int) {
+        if (target < 0) return
+        val space = (card.height + marginsOf(card)).toFloat()
+        for (i in 0 until binding.llCards.childCount) {
+            val c = binding.llCards.getChildAt(i)
+            if (c === card) continue
+            c.translationY = when {
+                target > from && i in (from + 1)..target -> -space
+                target < from && i in target until from -> space
+                else -> 0f
+            }
+        }
+    }
+
+    private fun marginsOf(view: View): Int {
+        val lp = view.layoutParams as? android.widget.LinearLayout.LayoutParams ?: return 0
+        return lp.topMargin + lp.bottomMargin
     }
 
     /** 手指现在落在哪一格：越过某张卡的中线就换到它那一格。 */
@@ -1249,30 +1275,25 @@ class MainActivity : AppCompatActivity() {
         return target
     }
 
-    /**
-     * 换槽后「卡片所在格子」本身位移了多少 = 被让位的那些卡片的占位高度之和
-     * （往下换为正、往上换为负）。卡片高度不一样，所以必须按各自的真实高度算。
-     */
-    private fun slotShift(from: Int, target: Int): Float {
-        var sum = 0f
-        for (i in minOf(from, target)..maxOf(from, target)) {
-            if (i == from) continue
-            val c = binding.llCards.getChildAt(i)
-            val lp = c.layoutParams as? android.widget.LinearLayout.LayoutParams
-            sum += c.height + (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
-        }
-        return if (target > from) sum else -sum
-    }
-
     private fun endCardDrag() {
         val card = dragCard ?: return
+        val target = dragTargetIndex
         dragCard = null
+        dragTargetIndex = -1
         card.translationY = 0f
         card.elevation = 0f
         card.scaleX = 1f
         card.scaleY = 1f
-        if (dragOrderChanged) {
-            dragOrderChanged = false
+        // 手势结束，把「不许拦截」还给父级，页面恢复可滚动。
+        card.parent?.requestDisallowInterceptTouchEvent(false)
+        // 先清掉所有预览位移，再做唯一的一次真实换位。
+        for (i in 0 until binding.llCards.childCount) {
+            binding.llCards.getChildAt(i).translationY = 0f
+        }
+        val from = binding.llCards.indexOfChild(card)
+        if (target in 0 until binding.llCards.childCount && target != from) {
+            binding.llCards.removeView(card)
+            binding.llCards.addView(card, target)
             saveCardOrder()
             toast(getString(R.string.card_order_saved))
         }

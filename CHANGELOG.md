@@ -80,7 +80,79 @@
 > 没有这个依赖），所以是 `LinearLayout` + 手动换位，逐张卡按真实高度算位移、视觉上不跳。
 > 检测逻辑照旧一行未动。
 
+> **v5.50（2026-09-17）把 v5.48 的拖动排序修好**（装机实测抓出两处只有真机才会暴露的缺陷）：
+> ① **外层 `ScrollView` 会抢走纵向手势** —— 长按抬起卡片后手指一动就变成滚页面，
+> 子 View 只收到 `ACTION_CANCEL`；② **拖动中 `removeView()+addView()` 会当场取消触摸** ——
+> 顺序刚换完位，`ACTION_CANCEL` 已经先跑进收尾函数（那时"已改序"标记还是 false），
+> 于是**永远存不下去**，剩下的事件还落回 ScrollView 又滚一下。修法：
+> 长按开始时 `requestDisallowInterceptTouchEvent(true)`；**拖动期间一个视图都不重排**
+> （被拖的跟手指走、让位的用 `translationY` 做预览），松手后才做唯一的一次换位并落盘。
+> **造不出拖动就只能靠用户的手指 —— 这两条都是"离线想不出来、装机一看就明白"的坑。**
+
 ---
+
+## [5.50] - 2026-09-17
+
+v5.48 的拖动排序在真机上完全不工作。本轮在**装机验证**里把它查清并修好 ——
+两条缺陷都属于"编译能过、离线回放也过、只有真机手势才会暴露"的那一类。
+
+### 缺陷 ①：外层 ScrollView 抢走纵向手势（v5.49 修）
+
+现象（`backup\GazeScroll-v5.50\data\` 的抓拍）：长按标题行，卡片确实**抬起来了**
+（放大 2% + 阴影 + 按下态）—— 说明长按识别没问题；但手指一纵向移动，**卡片不动、页面开始滚**。
+
+根因：`ScrollView.onInterceptTouchEvent` 只要纵向超过 touchSlop 就拦截，子 View 只会收到
+`ACTION_CANCEL`。标准做法是在拖动期间禁止父级拦截：
+
+```kotlin
+card.parent?.requestDisallowInterceptTouchEvent(true)   // 长按时
+card.parent?.requestDisallowInterceptTouchEvent(false)  // 松手时
+```
+
+### 缺陷 ②：拖动中换位会把自己的触摸取消掉（v5.50 修）
+
+修完 ① 之后，卡片能跟着手指走了、**松手也确实换了位**，但**顺序永远存不下来**：
+`ui_prefs.xml` 里始终没有 `cardOrder`。把现象拆开看，三条线索指向同一个动作：
+
+1. 顺序变了（左右扭头跑到了第一位）→ 说明换位那几行确实执行了；
+2. 松手后卡片**没有**保持抬起状态 → 说明收尾函数跑过了；
+3. 页面**又滚了一点** → 说明剩下的手势事件没人接，落回了 ScrollView。
+
+根因：`ViewGroup.removeView()` 会当场把被移除视图的触摸**取消**（`dispatchDetachedFromWindow`
+那一串），于是 `ACTION_CANCEL` 在 `dragCardTo()` 还没走到 `dragOrderChanged = true` 之前
+就先跑进了 `endCardDrag()` —— 收尾函数看到"没改过序"，什么都不存；之后 `addView` 把卡片
+插到新位置（所以顺序看起来变了），而取消掉的手势剩下的事件全部落回 ScrollView（所以又滚了）。
+
+**修法：拖动期间一个视图都不重排。** 被拖的卡片只改 `translationY`（跟着手指），
+让位的卡片也只改 `translationY`（`previewShift()` 做换位预览），
+**松手之后**（手势已经结束，取消不取消都无所谓了）才做唯一的一次 `removeView + addView`，
+紧接着 `saveCardOrder()`。顺带删掉了原来那套"边拖边换位 + `dragShift` 抵消格子位移"的算式
+（不再需要，因为不再有中途换位）。
+
+### 验证证据（同一条手势，修前修后各跑一遍）
+
+用 `input swipe 400 407 400 700 10000` 复现真实拖动的手势形状：**前 800ms 只走 22px**
+（不越过 touchSlop，所以长按能成立），之后才越过下一张卡的中线。
+
+| | v5.48 | v5.50 |
+| --- | --- | --- |
+| 长按抬起卡片 | ✅ | ✅ |
+| 卡片跟手 | ❌（变成滚页面） | ✅（`v550-drag-preview.png`） |
+| 松手换位 | ✅（但只是碰巧） | ✅ |
+| `ui_prefs.xml` 里的 `cardOrder` | ❌ 始终没有 | ✅ `cardTurn,cardHeadPose,cardTilt,…` |
+| 重启后顺序 | — | ✅ 仍是左右扭头在第一位（`v550-order-persisted.png`） |
+| 「恢复默认顺序」 | — | ✅ 键被删掉、顺序回到默认（`v550-order-reset.png`） |
+
+- 离线构建：`versionCode=100 / versionName=5.50`，APK：`apk\gazescroll-5.50-debug.apk`。
+- **用户设置一个字节没动**：升级前后 `gaze_scroll_prefs.xml` 逐行比对，47 个键、无重复键，
+  唯一变化是 `headBaselineDeg`（App 自己学基准线写的）。
+- 顺带确认：**「张嘴点击」的开关在这一轮里被关掉了**（`mouthTapEnabled: true → false`）。
+  我的自动化只点过 `400,407`（卡片标题）/`992,219`（设置）/`303,2098`·`303,1986`（主题单选）/
+  `374,491`（恢复默认顺序）这几处，都不在那一行的开关上，所以**不是我改的**；
+  按 HANDOVER §7.1 的规矩我也没有代改回去。
+
+---
+
 
 ## [5.48] - 2026-09-17
 
@@ -117,7 +189,11 @@
 ### 验证证据
 
 - 离线构建通过：`versionCode=98 / versionName=5.48`，APK：`apk\gazescroll-5.48-debug.apk`。
-- 装机截图：见 `backup\GazeScroll-v5.48\data\`（含拖动中间态与改序后重进 App 的顺序）。
+- 装机截图：见 `backup\GazeScroll-v5.48\data\`（首页 / 展开态 / 设置页 / 首页卡片节 / 黑夜主题）。
+
+> ⚠️ **本版的拖动排序在真机上是不工作的**（构建通过、长按能抬起卡片，但一拖就变成滚页面，
+> 顺序也存不下来）。两处缺陷都是**只有装机才会暴露**的，已在本版装机的同一轮里定位并修掉，
+> 见下面的 **[5.50]** —— 拖动排序请用 v5.50。
 
 ---
 

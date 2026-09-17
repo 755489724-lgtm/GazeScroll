@@ -18,6 +18,7 @@ object UiPrefs {
 
     private const val FILE = "ui_prefs"
     private const val KEY_THEME = "themeMode"
+    private const val KEY_CARD_ORDER = "cardOrder"
 
     const val THEME_LIGHT = "light"
     const val THEME_DARK = "dark"
@@ -41,5 +42,20 @@ object UiPrefs {
         THEME_DARK -> AppCompatDelegate.MODE_NIGHT_YES
         THEME_SYSTEM -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
         else -> AppCompatDelegate.MODE_NIGHT_NO
+    }
+
+    /**
+     * 首页卡片的顺序（v5.48）：存的是**资源名**（`cardHeadPose,cardTurn,…`）而不是数字 id，
+     * 这样重新构建、改布局也不会让顺序串位。null = 从没用过自定义顺序（用布局里的默认顺序）。
+     */
+    fun cardOrder(ctx: Context): String? =
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(KEY_CARD_ORDER, null)
+
+    fun setCardOrder(ctx: Context, order: String?) {
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit()
+            .apply { if (order == null) remove(KEY_CARD_ORDER) else putString(KEY_CARD_ORDER, order) }
+            .apply()
     }
 }

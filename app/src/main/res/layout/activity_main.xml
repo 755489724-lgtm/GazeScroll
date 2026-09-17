@@ -2052,6 +2052,46 @@
                     android:layout_marginBottom="14dp"
                     android:background="@color/divider" />
 
+                <!-- ===== 首页卡片（v5.48 自由排序） ===== -->
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_home_cards"
+                    android:textColor="@color/accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingMultiplier="1.35"
+                    android:text="@string/card_order_hint"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/btnResetCardOrder"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp"
+                    android:text="@string/card_order_reset"
+                    android:textColor="@color/accent"
+                    android:textSize="14sp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="@color/divider" />
+
                 <!-- ===== 测试与诊断 ===== -->
 
                 <TextView

@@ -150,7 +150,7 @@
 
     <string name="home_subtitle">前置摄像头 · 免手翻页</string>
     <string name="home_btn_settings">设置</string>
-    <string name="home_swipe_hint">往左滑打开设置 · 按返回键退到后台，翻页照常运行</string>
+    <string name="home_swipe_hint">长按卡片标题可拖动排序 · 往左滑打开设置 · 按返回键退到后台</string>
 
     <string name="home_status_running">运行中</string>
     <string name="home_status_standby">待机</string>
@@ -219,6 +219,14 @@
     <string name="theme_system">跟随系统</string>
 
     <string name="about_version">版本 %1$s</string>
+
+    <!-- ================= v5.48：首页卡片自由排序 ================= -->
+
+    <string name="section_home_cards">首页卡片</string>
+    <string name="card_order_hint">**长按**首页任意一张卡片的标题，就能把它拖到别的位置；松手即保存，下次打开还是这个顺序。\n点标题是展开 / 收起二级详情，两者不冲突。</string>
+    <string name="card_order_reset">恢复默认顺序</string>
+    <string name="card_order_reset_done">已恢复默认顺序</string>
+    <string name="card_order_saved">顺序已保存</string>
 
     <string name="shizuku_missing">未检测到 Shizuku，已改用无障碍服务方式翻页</string>
     <string name="shizuku_opened">已打开 Shizuku，请在其中启动服务后回来申请权限</string>

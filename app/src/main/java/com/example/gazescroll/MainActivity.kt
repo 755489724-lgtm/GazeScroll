@@ -1134,28 +1134,182 @@ class MainActivity : AppCompatActivity() {
     /**
      * 功能卡：一级只留「标题 + 一句话说明 + 开关」，详细设置与长解释全在三角里。
      *
-     * 卡片顺序 = 布局里 [ActivityMainBinding.llCards] 子 View 的物理顺序，
-     * v5.48 的自由排序就是重排这些子 View，不需要另建一套数据。
+     * 卡片顺序 = 布局里 [ActivityMainBinding.llCards] 子 View 的物理顺序；
+     * v5.48 的自由排序就是重排这些子 View（长按标题行拖动），顺序存在 UiPrefs 里。
      */
     private fun setupFeatureCards() {
-        val cards = listOf(
-            Triple(R.id.headerHeadPose, R.id.detailHeadPose, R.id.ivChevHeadPose),
-            Triple(R.id.headerTurn, R.id.detailTurn, R.id.ivChevTurn),
-            Triple(R.id.headerTilt, R.id.detailTilt, R.id.ivChevTilt),
-            Triple(R.id.headerBlink, R.id.detailBlink, R.id.ivChevBlink),
-            Triple(R.id.headerMouth, R.id.detailMouth, R.id.ivChevMouth),
-            Triple(R.id.headerGate, R.id.detailGate, R.id.ivChevGate),
-            Triple(R.id.headerGuard, R.id.detailGuard, R.id.ivChevGuard),
-            Triple(R.id.headerSwipe, R.id.detailSwipe, R.id.ivChevSwipe),
-            Triple(R.id.headerTargets, R.id.detailTargets, R.id.ivChevTargets),
-            Triple(R.id.headerGlobal, R.id.detailGlobal, R.id.ivChevGlobal),
-        )
-        // 三角本身不设监听：它不 clickable，点它会落到整行标题上，展开行为就统一了。
-        for ((headerId, detailId, chevronId) in cards) {
-            binding.root.findViewById<View>(headerId)?.setOnClickListener {
-                toggleCard(detailId, chevronId)
+        for (c in featureCards) {
+            val card = binding.root.findViewById<View>(c.cardId) ?: continue
+            val header = binding.root.findViewById<View>(c.headerId) ?: continue
+            // 短按 = 展开 / 收起二级详情；长按 = 把这张卡抬起来拖动排序。
+            header.setOnClickListener { toggleCard(c.detailId, c.chevronId) }
+            header.setOnLongClickListener {
+                startCardDrag(card)
+                true
             }
+            header.setOnTouchListener { _, event -> onCardTouch(event) }
         }
+        applySavedCardOrder()
+    }
+
+    // ------------------------------------------------------ v5.48 自由排序 --
+
+    /** 一张功能卡的四个 id：外层卡片 / 标题行 / 二级详情 / 三角。列表顺序 = 默认顺序。 */
+    private data class FeatureCard(
+        val cardId: Int,
+        val headerId: Int,
+        val detailId: Int,
+        val chevronId: Int,
+    )
+
+    private val featureCards = listOf(
+        FeatureCard(R.id.cardHeadPose, R.id.headerHeadPose, R.id.detailHeadPose, R.id.ivChevHeadPose),
+        FeatureCard(R.id.cardTurn, R.id.headerTurn, R.id.detailTurn, R.id.ivChevTurn),
+        FeatureCard(R.id.cardTilt, R.id.headerTilt, R.id.detailTilt, R.id.ivChevTilt),
+        FeatureCard(R.id.cardBlink, R.id.headerBlink, R.id.detailBlink, R.id.ivChevBlink),
+        FeatureCard(R.id.cardMouth, R.id.headerMouth, R.id.detailMouth, R.id.ivChevMouth),
+        FeatureCard(R.id.cardGate, R.id.headerGate, R.id.detailGate, R.id.ivChevGate),
+        FeatureCard(R.id.cardGuard, R.id.headerGuard, R.id.detailGuard, R.id.ivChevGuard),
+        FeatureCard(R.id.cardSwipe, R.id.headerSwipe, R.id.detailSwipe, R.id.ivChevSwipe),
+        FeatureCard(R.id.cardTargets, R.id.headerTargets, R.id.detailTargets, R.id.ivChevTargets),
+        FeatureCard(R.id.cardGlobal, R.id.headerGlobal, R.id.detailGlobal, R.id.ivChevGlobal),
+    )
+
+    /** 手指最后一次落点的屏幕 Y —— 长按回调拿不到坐标，所以在触摸回调里先记下来。 */
+    private var lastTouchRawY = 0f
+
+    /** 正在被拖动的卡片；null = 没在拖。 */
+    private var dragCard: View? = null
+    private var dragStartRawY = 0f
+
+    /** 换槽累计位移：卡片换了一格、格子本身也挪了，把这部分抵消掉视觉上才不跳。 */
+    private var dragShift = 0f
+    private var dragOrderChanged = false
+
+    private fun onCardTouch(event: android.view.MotionEvent): Boolean {
+        lastTouchRawY = event.rawY
+        val card = dragCard ?: return false
+        return when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_MOVE -> {
+                dragCardTo(event.rawY)
+                true
+            }
+
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                endCardDrag()
+                true
+            }
+
+            else -> false
+        }
+    }
+
+    /** 长按标题行：把这张卡「抬起来」（放大 + 阴影 + 一下震动）。 */
+    private fun startCardDrag(card: View) {
+        if (dragCard != null) return
+        dragCard = card
+        dragStartRawY = lastTouchRawY
+        dragShift = 0f
+        dragOrderChanged = false
+        card.elevation = 8f * resources.displayMetrics.density
+        card.scaleX = 1.02f
+        card.scaleY = 1.02f
+        card.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    private fun dragCardTo(rawY: Float) {
+        val card = dragCard ?: return
+        card.translationY = (rawY - dragStartRawY) - dragShift
+        val from = binding.llCards.indexOfChild(card)
+        if (from < 0) return
+        val loc = IntArray(2)
+        binding.llCards.getLocationOnScreen(loc)
+        val target = cardIndexAt(card, from, rawY, loc[1])
+        if (target == from) return
+        dragShift += slotShift(from, target)
+        binding.llCards.removeView(card)
+        binding.llCards.addView(card, target)
+        card.translationY = (rawY - dragStartRawY) - dragShift
+        dragOrderChanged = true
+    }
+
+    /** 手指现在落在哪一格：越过某张卡的中线就换到它那一格。 */
+    private fun cardIndexAt(card: View, from: Int, rawY: Float, containerTop: Int): Int {
+        var target = from
+        for (i in 0 until binding.llCards.childCount) {
+            val c = binding.llCards.getChildAt(i)
+            if (c === card) continue
+            val mid = containerTop + (c.top + c.bottom) / 2f
+            if (i < from && rawY < mid) {
+                target = i
+                break
+            }
+            if (i > from && rawY > mid) target = i
+        }
+        return target
+    }
+
+    /**
+     * 换槽后「卡片所在格子」本身位移了多少 = 被让位的那些卡片的占位高度之和
+     * （往下换为正、往上换为负）。卡片高度不一样，所以必须按各自的真实高度算。
+     */
+    private fun slotShift(from: Int, target: Int): Float {
+        var sum = 0f
+        for (i in minOf(from, target)..maxOf(from, target)) {
+            if (i == from) continue
+            val c = binding.llCards.getChildAt(i)
+            val lp = c.layoutParams as? android.widget.LinearLayout.LayoutParams
+            sum += c.height + (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+        }
+        return if (target > from) sum else -sum
+    }
+
+    private fun endCardDrag() {
+        val card = dragCard ?: return
+        dragCard = null
+        card.translationY = 0f
+        card.elevation = 0f
+        card.scaleX = 1f
+        card.scaleY = 1f
+        if (dragOrderChanged) {
+            dragOrderChanged = false
+            saveCardOrder()
+            toast(getString(R.string.card_order_saved))
+        }
+    }
+
+    /** 顺序按**资源名**存进 ui_prefs.xml（不是数字 id，重新构建也不会串位）。 */
+    private fun saveCardOrder() {
+        val names = (0 until binding.llCards.childCount).map { i ->
+            val v = binding.llCards.getChildAt(i)
+            runCatching { resources.getResourceEntryName(v.id) }.getOrNull().orEmpty()
+        }
+        UiPrefs.setCardOrder(this, names.joinToString(","))
+    }
+
+    /** 启动时按存下来的顺序重排；对不上（卡片增删过 / 数量变了）就保持布局默认顺序。 */
+    private fun applySavedCardOrder() {
+        val saved = UiPrefs.cardOrder(this) ?: return
+        val names = saved.split(',').filter { it.isNotBlank() }
+        val views = (0 until binding.llCards.childCount).map { binding.llCards.getChildAt(it) }
+        val byName = views.associateBy {
+            runCatching { resources.getResourceEntryName(it.id) }.getOrNull()
+        }
+        if (names.size != views.size || names.any { byName[it] == null }) return
+        binding.llCards.removeAllViews()
+        for (name in names) byName[name]?.let { binding.llCards.addView(it) }
+    }
+
+    /** 「恢复默认顺序」：清掉存下来的顺序，并按 [featureCards] 的默认顺序重排。 */
+    private fun resetCardOrder() {
+        UiPrefs.setCardOrder(this, null)
+        val byId = (0 until binding.llCards.childCount).associate {
+            val v = binding.llCards.getChildAt(it)
+            v.id to v
+        }
+        binding.llCards.removeAllViews()
+        for (c in featureCards) byId[c.cardId]?.let { binding.llCards.addView(it) }
+        toast(getString(R.string.card_order_reset_done))
     }
 
     /** 展开 / 收起一张卡的二级详情，顺带把三角转 180°。 */
@@ -1200,6 +1354,8 @@ class MainActivity : AppCompatActivity() {
             runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
         }
         binding.rowPermService.setOnClickListener { restartDetectionService() }
+        // v5.48：首页卡片顺序随时可以一键回到默认。
+        binding.btnResetCardOrder.setOnClickListener { resetCardOrder() }
     }
 
     private fun openSettingsPanel() {

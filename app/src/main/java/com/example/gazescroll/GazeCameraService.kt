@@ -291,6 +291,23 @@ private const val REF_LOG_INTERVAL_MS = 400L
     /** 上一帧是否处于"歪出中位带"状态（v5.35），用来在歪头结束时重学头部基准线。 */
     private var tiltGateWasActive = false
 
+    // --------------------------------------- v5.39：注视数据采集（测试功能） --
+
+    /**
+     * 采集器（v5.39，**测试功能，默认关闭**）：把人脸框 / 十个关键点 / 画面亮度逐帧写进
+     * `files/probe/probe-*.csv`，供离线判定「眼睛有没有盯着屏幕」能用哪几个量。
+     *
+     * 它**只记录、不判定**：既不改任何阈值，也不参与任何一次触发判定。
+     * 起止由"盖住前置摄像头"控制，规则见 [GazeProbeRecorder]。
+     */
+    private var probeRecorder: GazeProbeRecorder? = null
+
+    /** 当前打开的采集文件；null = 没在录。 */
+    private var probeWriter: java.io.BufferedWriter? = null
+
+    /** 距离上次 flush 攒了多少行 —— 逐帧 flush 太浪费，攒一批再落盘。 */
+    private var probeRowsSinceFlush = 0
+
     /**
      * 上一次任何动作（翻页 / 调音量 / 张嘴点击）的时刻（v5.36）。
      *
@@ -475,6 +492,16 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
         analyzer = FaceGazeAnalyzer(::onFrame)
 
+        // v5.39：注视数据采集（测试功能）。落盘与打日志由这里注入，采集器本身是纯逻辑
+        // （可以用 tools/probe-replay/run.ps1 离线回放）。
+        probeRecorder = GazeProbeRecorder(
+            log = { message -> Log.i("GazeProbe", message) },
+            openFile = ::openProbeFile,
+            write = ::writeProbeLine,
+            closeFile = ::closeProbeFile,
+            appTag = "GazeScroll v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+        )
+
         blinkDetector = BlinkDetector { reason -> fireSwipe("blink:$reason", SwipeDirection.UP) }
 
         // v5.35：歪头（左右压耳朵，ML Kit 的 headEulerAngleZ）→ 音量加 / 减。
@@ -534,6 +561,11 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
     override fun onDestroy() {
         running.set(false)
+        // v5.39：采集器收尾 —— 进行中的一次录制要写出 SUMMARY 并关掉文件句柄，
+        // 否则服务重启后那次录制的 CSV 会缺尾巴（行还在，汇总没了）。
+        runCatching { probeRecorder?.disable(SystemClock.elapsedRealtime()) }
+        probeRecorder = null
+        runCatching { closeProbeFile() }
         AppStateManager.removeListener(appStateListener)
         AppStateManager.stopPolling()
         runCatching { unregisterReceiver(screenReceiver) }
@@ -1013,6 +1045,16 @@ private const val REF_LOG_INTERVAL_MS = 400L
         staleBeganAtMs = 0L
         val cfg = GazeRuntime.config
 
+        // v5.39：注视数据采集（测试功能）。放在所有判定之前 —— 它只记录，不参与判定。
+        // 关掉时连采样对象都不构造（与 v5.36 的逐帧开销完全一致）。
+        probeRecorder?.let { probe ->
+            if (cfg.probeEnabled) {
+                probe.onFrame(buildProbeSample(frame, System.currentTimeMillis()), now)
+            } else {
+                probe.disable(now)
+            }
+        }
+
         if (running.get()) {
             // 先同步闸门，再打诊断日志，日志里的 cooling 才是本帧的真实状态。
             globalGate.syncConfig(cfg.globalCooldownEnabled, cfg.globalCooldownMs, now)
@@ -1233,7 +1275,109 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 ),
                 // 冷却倒计时，设置页用来直观展示「防误触冷却」正在生效。
                 cooldownRemainMs = globalGate.remainingMs(now),
+                // v5.39：注视数据采集的实时状态（设置页显示"现在在不在录、录到第几段"）。
+                probeState = probeRecorder?.state?.label ?: ProbeState.OFF.label,
+                probePhase = probeRecorder?.phase ?: 0,
+                probeRows = probeRecorder?.rows ?: 0,
+                probeDurationMs = probeRecorder?.durationMs ?: 0L,
+                probeFile = probeRecorder?.fileName ?: "",
+                probeLast = probeRecorder?.lastSummary ?: "",
             )
+        }
+    }
+
+    // ------------------------------------------- v5.39：注视数据采集（测试功能） --
+
+    /**
+     * [AnalyzedFrame] → [ProbeSample]（只在采集开关打开时调用）。
+     *
+     * 已有字段直接搬过来，原始几何量来自 [AnalyzedFrame.probe]（人脸检测那一层算的）。
+     * 缺失一律是 null，采集端写 CSV 时落成 -1 —— 绝不把"没读到"当成 0。
+     */
+    private fun buildProbeSample(frame: AnalyzedFrame, wallMs: Long): ProbeSample {
+        val p = frame.probe
+        return ProbeSample(
+            wallMs = wallMs,
+            faceDetected = frame.faceDetected,
+            standby = frame.standby,
+            frameWidth = p?.frameWidth ?: 0,
+            frameHeight = p?.frameHeight ?: 0,
+            luma = p?.luma,
+            boxLeft = p?.boxLeft ?: -1f,
+            boxTop = p?.boxTop ?: -1f,
+            boxRight = p?.boxRight ?: -1f,
+            boxBottom = p?.boxBottom ?: -1f,
+            faceRatio = frame.faceRatio,
+            eulerX = frame.headEulerAngleX,
+            eulerY = frame.headEulerAngleY,
+            eulerZ = frame.headEulerAngleZ,
+            eyeLeftX = p?.eyeLeftX,
+            eyeLeftY = p?.eyeLeftY,
+            eyeRightX = p?.eyeRightX,
+            eyeRightY = p?.eyeRightY,
+            noseX = p?.noseX,
+            noseY = p?.noseY,
+            mouthX = p?.mouthX,
+            mouthY = p?.mouthY,
+            earLeftX = p?.earLeftX,
+            earLeftY = p?.earLeftY,
+            earRightX = p?.earRightX,
+            earRightY = p?.earRightY,
+            cheekLeftX = p?.cheekLeftX,
+            cheekLeftY = p?.cheekLeftY,
+            cheekRightX = p?.cheekRightX,
+            cheekRightY = p?.cheekRightY,
+            eyeOpenLeft = frame.leftEyeOpenProbability,
+            eyeOpenRight = frame.rightEyeOpenProbability,
+            mouthOpenRatio = frame.mouthOpenRatio,
+            chinRatio = frame.chinRatio,
+            noseNormY = frame.noseNormY,
+            chinNormY = frame.chinNormY,
+            eyeNormY = frame.eyeNormY,
+            noseRelEye = frame.noseRelEye,
+            chinRelEye = frame.chinRelEye,
+            trackingId = p?.trackingId,
+        )
+    }
+
+    /** 建目录并打开一个新的采集文件（v5.39）。失败只记日志：采集是测试功能，不能拖垮服务。 */
+    private fun openProbeFile(name: String) {
+        closeProbeFile()
+        runCatching {
+            val dir = java.io.File(filesDir, "probe")
+            if (!dir.exists()) dir.mkdirs()
+            probeWriter = java.io.BufferedWriter(
+                java.io.OutputStreamWriter(
+                    java.io.FileOutputStream(java.io.File(dir, name)),
+                    Charsets.UTF_8,
+                ),
+            )
+            probeRowsSinceFlush = 0
+            Log.i("GazeProbe", "file opened: ${java.io.File(dir, name).absolutePath}")
+        }.onFailure { Log.w("GazeProbe", "cannot open $name: ${it.message}") }
+    }
+
+    /** 写一行（CSV 数据行或 `#` 注释行），每 15 行 flush 一次（v5.39）。 */
+    private fun writeProbeLine(line: String) {
+        val writer = probeWriter ?: return
+        runCatching {
+            writer.write(line)
+            writer.newLine()
+            probeRowsSinceFlush++
+            if (probeRowsSinceFlush >= 15) {
+                writer.flush()
+                probeRowsSinceFlush = 0
+            }
+        }.onFailure { Log.w("GazeProbe", "write failed: ${it.message}") }
+    }
+
+    /** 收尾：flush + close（v5.39）。 */
+    private fun closeProbeFile() {
+        val writer = probeWriter ?: return
+        probeWriter = null
+        runCatching {
+            writer.flush()
+            writer.close()
         }
     }
 
@@ -1688,6 +1832,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 "${if (cfg.tiltRightVolumeUp) "R=up" else "R=down"}" +
                 " ${tiltDetector?.stateLine() ?: "tilt=-"}" +
                 " tiltSteps=$tiltVolumeSteps" +
+                // v5.39：注视数据采集状态（测试功能；off = 没开，完全不参与判定）。
+                " ${probeRecorder?.stateLine() ?: "probe=off"}" +
                 // v5.36：全局动作间隔还剩多久（0 = 现在可以做新动作）。
                 " gapRemain=${if (lastActionAtMs == 0L) 0L else (lastActionAtMs + ACTION_GAP_MS - now).coerceAtLeast(0L)}ms" +
                 // v5.31：基准线重建期禁触发的状态（丢脸回来 / 重绑后约 1.1 秒内为 true）。

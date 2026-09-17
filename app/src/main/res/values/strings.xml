@@ -123,6 +123,18 @@
     <string name="settings_live_hint">对着前置摄像头自然睁眼，看「睁眼」时的数值；再眨一下，看「闭眼」时能降到多少。\n把灵敏度阈值选在两者之间即可。</string>
     <string name="settings_live_empty">（未检测到人脸）</string>
 
+    <!-- ================= v5.39：注视数据采集（测试功能） ================= -->
+
+    <string name="settings_probe_title">注视数据采集（测试功能）</string>
+    <string name="settings_probe_switch">打开「注视数据采集」</string>
+    <string name="settings_probe_state_off">当前：关。打开后才会记录数据。</string>
+    <string name="settings_probe_state_idle">当前：待机。用整只手盖住前置摄像头 3 秒 → 进入「已就绪」。</string>
+    <string name="settings_probe_state_idle_noface">当前：待机（还没看到脸）。先把手机举到面前、让前置摄像头看到脸，再盖住 3 秒。</string>
+    <string name="settings_probe_state_armed">当前：已就绪。把手拿开、露出脸 → 立刻开始录制。</string>
+    <string name="settings_probe_state_rec">当前：录制中 · 第 %1$d 段 · 已 %2$d 帧 / %3$s 秒</string>
+    <string name="settings_probe_last">上次：%1$s</string>
+    <string name="settings_probe_hint">这是给「眼睛必须盯着屏幕才触发翻页」这个新功能做数据准备用的**测试功能**：打开后，前置摄像头的每一帧都会把「人脸框位置、十个关键点、画面亮度」写进手机里的 CSV 文件；本版**不做任何判定、也不改变任何一条现有触发规则**。\n用法（盖住前置摄像头就是开关）：\n1) 打开这个开关；\n2) 切到抖音、正常举着手机；\n3) 用整只手盖住前置摄像头 **3 秒** → 松手露脸，看到「录制中」就是已开始；\n4) 按测试脚本一段一段做动作，每换一段先盖住摄像头 **1 秒**（分段）；\n5) 全部做完，盖住摄像头 **3 秒以上** → 结束。\n录制中不会因为「转头看别处」而误判结束：只有画面真的变黑（被手盖住）才算盖住。文件在 App 私有目录 files/probe/ 下，用 adb 取，你不用管。</string>
+
     <string name="shizuku_missing">未检测到 Shizuku，已改用无障碍服务方式翻页</string>
     <string name="shizuku_opened">已打开 Shizuku，请在其中启动服务后回来申请权限</string>
     <string name="shizuku_launch_failed">无法打开 Shizuku</string>

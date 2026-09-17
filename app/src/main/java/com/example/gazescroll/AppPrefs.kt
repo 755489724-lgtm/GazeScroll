@@ -62,6 +62,11 @@ object AppPrefs {
     /** v4.5：按前台应用自适应上下滑动幅度。 */
     private const val K_ADAPTIVE_SWIPE = "adaptiveSwipeEnabled"
 
+    /**
+     * v5.39：注视数据采集（测试功能）。默认关，只有用户自己在设置页打开才会启用。
+     */
+    private const val K_GAZE_PROBE = "gazeProbeEnabled"
+
     /** v4.6：用户自定的列表类应用滑动幅度。 */
     private const val K_LIST_SWIPE_DISTANCE = "listSwipeDistance"
 
@@ -153,6 +158,8 @@ object AppPrefs {
             tiltHoldMs = sp.getLong(K_TILT_HOLD_MS, d.tiltHoldMs),
             tiltVolumeStep = sp.getInt(K_TILT_VOLUME_STEP, d.tiltVolumeStep),
             adaptiveSwipeEnabled = sp.getBoolean(K_ADAPTIVE_SWIPE, d.adaptiveSwipeEnabled),
+            // v5.39：注视数据采集（测试功能），默认关。
+            probeEnabled = sp.getBoolean(K_GAZE_PROBE, d.probeEnabled),
             listSwipeDistance = sp.getFloat(K_LIST_SWIPE_DISTANCE, d.listSwipeDistance),
             globalPagingEnabled = sp.getBoolean(K_GLOBAL_PAGING, d.globalPagingEnabled),
             staticLockEnabled = sp.getBoolean(K_STATIC_LOCK_ENABLED, d.staticLockEnabled),
@@ -197,6 +204,7 @@ object AppPrefs {
             .putLong(K_TILT_HOLD_MS, s.tiltHoldMs)
             .putInt(K_TILT_VOLUME_STEP, s.tiltVolumeStep)
             .putBoolean(K_ADAPTIVE_SWIPE, s.adaptiveSwipeEnabled)
+            .putBoolean(K_GAZE_PROBE, s.probeEnabled)
             .putFloat(K_LIST_SWIPE_DISTANCE, s.listSwipeDistance)
             .putBoolean(K_GLOBAL_PAGING, s.globalPagingEnabled)
             .putBoolean(K_STATIC_LOCK_ENABLED, s.staticLockEnabled)

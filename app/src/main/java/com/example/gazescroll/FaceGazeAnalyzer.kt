@@ -130,6 +130,16 @@ data class AnalyzedFrame(
     val occlusionReason: OcclusionReason?,
     val faceDetected: Boolean,
     val standby: Boolean,
+
+    // --------------------------------------------------- v5.39：注视数据采集 --
+    /**
+     * 「注视数据采集」（测试功能）用的**原始几何量**；开关关掉时恒为 null。
+     *
+     * 只有 `GazeConfig.probeEnabled` 打开时才算，所以平时的每帧开销没有任何变化。
+     * 采集器 [GazeProbeRecorder] 把这些量逐帧写进 CSV，离线判定「眼睛有没有盯着屏幕」
+     * 到底能用哪几个量（现有的人脸检测**没有虹膜**，只能靠头姿 + 关键点几何）。
+     */
+    val probe: ProbeFrame? = null,
 ) {
     /** 距离档位，仅用于界面展示与日志。 */
     val distanceLabel: String
@@ -150,6 +160,45 @@ data class AnalyzedFrame(
         const val MID_FACE_RATIO = 0.38f
     }
 }
+
+/**
+ * v5.39「注视数据采集」用的一帧原始几何量（**只在测试模式下计算**）。
+ *
+ * 与 [AnalyzedFrame] 里已有的那些"派生量"不同，这里全是**没有经过任何加工**的原始读数：
+ * 关键点在摆正后的画面里的归一化坐标、人脸框位置、画面平均亮度。方向和符号一律不下结论，
+ * 留到离线分析时按真人数据定（v5.35 的 roll 就是这么定下来的）。
+ *
+ * @param frameWidth 摆正后的画面宽（把相机缓冲按 `rotationDegrees` 转正之后的宽）
+ * @param frameHeight 摆正后的画面高
+ * @param luma 画面平均亮度 0..255。手掌/手指盖住前置摄像头时是个位数到十几，
+ *   正常举着手机看屏幕时 ≥40 —— 「被盖住」这条判据靠它，详见 [GazeProbeRecorder]。
+ */
+data class ProbeFrame(
+    val frameWidth: Int,
+    val frameHeight: Int,
+    val luma: Float?,
+    val boxLeft: Float,
+    val boxTop: Float,
+    val boxRight: Float,
+    val boxBottom: Float,
+    val trackingId: Int?,
+    val eyeLeftX: Float?,
+    val eyeLeftY: Float?,
+    val eyeRightX: Float?,
+    val eyeRightY: Float?,
+    val noseX: Float?,
+    val noseY: Float?,
+    val mouthX: Float?,
+    val mouthY: Float?,
+    val earLeftX: Float?,
+    val earLeftY: Float?,
+    val earRightX: Float?,
+    val earRightY: Float?,
+    val cheekLeftX: Float?,
+    val cheekLeftY: Float?,
+    val cheekRightX: Float?,
+    val cheekRightY: Float?,
+)
 
 /**
  * CameraX analyzer: front camera frame -> ML Kit face -> [AnalyzedFrame].
@@ -255,18 +304,70 @@ class FaceGazeAnalyzer(
         val rotation = imageProxy.imageInfo.rotationDegrees
         // Upright frame height, per the note in the class doc.
         val uprightHeight = if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
+        // v5.39：摆正后的宽度（关键点 X 要按它归一化），以及画面平均亮度（判"摄像头被盖住"）。
+        // 亮度只在采集开关打开时才算，关掉时这一个分支都不进，逐帧开销与 v5.36 完全一致。
+        val probeWanted = GazeRuntime.config.probeEnabled
+        val uprightWidth = if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
+        val luma = if (probeWanted) meanLuma(imageProxy) else null
 
         val image = InputImage.fromMediaImage(mediaImage, rotation)
         detector.process(image)
-            .addOnSuccessListener { faces -> deliver(faces, uprightHeight.toFloat(), now) }
-            .addOnFailureListener { deliver(emptyList(), uprightHeight.toFloat(), now) }
+            .addOnSuccessListener { faces ->
+                deliver(faces, uprightWidth.toFloat(), uprightHeight.toFloat(), luma, now)
+            }
+            .addOnFailureListener {
+                deliver(emptyList(), uprightWidth.toFloat(), uprightHeight.toFloat(), luma, now)
+            }
             .addOnCompleteListener {
                 // Must close on every path or the analysis pipeline stalls.
                 imageProxy.close()
             }
     }
 
-    private fun deliver(faces: List<Face>, uprightHeight: Float, nowMs: Long) {
+    /**
+     * 画面平均亮度（v5.39）：只在「注视数据采集」打开时调用。
+     *
+     * YUV 的 Y 平面就是亮度，按固定步长抽 ~32×32 个点求平均，成本可以忽略（每帧 1000 次
+     * 绝对读）。它解决的问题是：「人脸消失」这一条**分不开**"手掌盖住摄像头"和"人还在
+     * 画面里、只是把头转到别处"—— 采集脚本里本来就有"眼睛/头离开屏幕"的段落，只判人脸
+     * 会让整场采集被误当成结束。而被盖住时画面是黑的，一眼就分得开。
+     */
+    private fun meanLuma(proxy: ImageProxy): Float? {
+        val plane = proxy.planes.getOrNull(0) ?: return null
+        val buffer = plane.buffer
+        val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride
+        val w = proxy.width
+        val h = proxy.height
+        if (w <= 0 || h <= 0 || rowStride <= 0) return null
+        val stepX = (w / 32).coerceAtLeast(1)
+        val stepY = (h / 32).coerceAtLeast(1)
+        var sum = 0L
+        var count = 0
+        var y = 0
+        while (y < h) {
+            val rowBase = y * rowStride
+            var x = 0
+            while (x < w) {
+                val index = rowBase + x * pixelStride
+                if (index < buffer.limit()) {
+                    sum += buffer.get(index).toInt() and 0xFF
+                    count++
+                }
+                x += stepX
+            }
+            y += stepY
+        }
+        return if (count == 0) null else sum.toFloat() / count
+    }
+
+    private fun deliver(
+        faces: List<Face>,
+        uprightWidth: Float,
+        uprightHeight: Float,
+        luma: Float?,
+        nowMs: Long,
+    ) {
         val face = pickLargestFace(faces)
 
         if (face != null) {
@@ -318,7 +419,94 @@ class FaceGazeAnalyzer(
                 occlusionReason = reason,
                 faceDetected = face != null,
                 standby = standby,
+                // v5.39：采集开关打开时附带一帧原始几何量（关掉时是 null，一个字节都不多算）。
+                probe = if (GazeRuntime.config.probeEnabled) {
+                    buildProbeFrame(face, uprightWidth, uprightHeight, luma)
+                } else {
+                    null
+                },
             )
+        )
+    }
+
+    /**
+     * 组装 [ProbeFrame]（v5.39，只在采集开关打开时调用）。
+     *
+     * 关键点坐标按**摆正后的画面**归一化（x 除以宽、y 除以高），人脸框同理；
+     * 这样"关键点在画面里的位置"和"关键点在脸框里的位置"离线都能算出来。
+     * 没有脸时框写成 -1，其余为 null —— 采集端必须能分清"没读到"与"读到 0"。
+     */
+    private fun buildProbeFrame(
+        face: Face?,
+        uprightWidth: Float,
+        uprightHeight: Float,
+        luma: Float?,
+    ): ProbeFrame {
+        val w = uprightWidth
+        val h = uprightHeight
+        if (face == null || w <= 0f || h <= 0f) {
+            return ProbeFrame(
+                frameWidth = w.toInt(),
+                frameHeight = h.toInt(),
+                luma = luma,
+                boxLeft = -1f,
+                boxTop = -1f,
+                boxRight = -1f,
+                boxBottom = -1f,
+                trackingId = null,
+                eyeLeftX = null,
+                eyeLeftY = null,
+                eyeRightX = null,
+                eyeRightY = null,
+                noseX = null,
+                noseY = null,
+                mouthX = null,
+                mouthY = null,
+                earLeftX = null,
+                earLeftY = null,
+                earRightX = null,
+                earRightY = null,
+                cheekLeftX = null,
+                cheekLeftY = null,
+                cheekRightX = null,
+                cheekRightY = null,
+            )
+        }
+
+        fun landmarkX(id: Int): Float? =
+            face.getLandmark(id)?.position?.x?.let { (it / w).coerceIn(-0.5f, 1.5f) }
+
+        fun landmarkY(id: Int): Float? =
+            face.getLandmark(id)?.position?.y?.let { (it / h).coerceIn(-0.5f, 1.5f) }
+
+        val box = face.boundingBox
+        // trackingId 在"没开跟踪"时是 -1；写成可空值，采集端就不会把 -1 当成一个真 ID。
+        val trackingId: Int? = face.trackingId
+        return ProbeFrame(
+            frameWidth = w.toInt(),
+            frameHeight = h.toInt(),
+            luma = luma,
+            boxLeft = box.left / w,
+            boxTop = box.top / h,
+            boxRight = box.right / w,
+            boxBottom = box.bottom / h,
+            trackingId = trackingId?.takeIf { it >= 0 },
+            eyeLeftX = landmarkX(FaceLandmark.LEFT_EYE),
+            eyeLeftY = landmarkY(FaceLandmark.LEFT_EYE),
+            eyeRightX = landmarkX(FaceLandmark.RIGHT_EYE),
+            eyeRightY = landmarkY(FaceLandmark.RIGHT_EYE),
+            noseX = landmarkX(FaceLandmark.NOSE_BASE),
+            noseY = landmarkY(FaceLandmark.NOSE_BASE),
+            mouthX = landmarkX(FaceLandmark.MOUTH_BOTTOM),
+            mouthY = landmarkY(FaceLandmark.MOUTH_BOTTOM),
+            earLeftX = landmarkX(FaceLandmark.LEFT_EAR),
+            earLeftY = landmarkY(FaceLandmark.LEFT_EAR),
+            earRightX = landmarkX(FaceLandmark.RIGHT_EAR),
+            earRightY = landmarkY(FaceLandmark.RIGHT_EAR),
+            cheekLeftX = landmarkX(FaceLandmark.LEFT_CHEEK),
+            cheekLeftY = landmarkY(FaceLandmark.LEFT_CHEEK),
+            cheekRightX = landmarkX(FaceLandmark.RIGHT_CHEEK),
+            cheekRightY = landmarkY(FaceLandmark.RIGHT_CHEEK),
         )
     }
 

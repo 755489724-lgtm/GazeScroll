@@ -1,0 +1,331 @@
+package com.example.gazescroll
+
+/**
+ * v5.39「注视数据采集」状态机的离线回归验证。
+ *
+ * 直接编译并运行**真实的** [GazeProbeRecorder]（它本身没有任何 Android 依赖，落盘和
+ * 打日志都是注入进来的 lambda），用合成帧回放整套协议：
+ *
+ *   盖 3 秒 → 露脸开始录 → 盖 1~3 秒分段 → 盖 ≥3 秒结束
+ *
+ * 重点验证两件容易写错的事：
+ *  1. **只判"人脸消失"是不够的** —— 录制中"转头看别处"（没脸但画面是亮的）绝不能被
+ *     当成盖住，否则采集脚本里"眼睛离开屏幕"的段落会把整场录制提前结束；
+ *  2. 停止之后必须重新"露脸 + 盖 3 秒"才能开始第二次，不能自己接着录。
+ *
+ * 跑法见同目录 run.ps1。
+ */
+private var failures = 0
+
+private fun check(name: String, ok: Boolean, detail: String = "") {
+    if (ok) {
+        println("  PASS  $name")
+    } else {
+        failures++
+        println("  FAIL  $name  $detail")
+    }
+}
+
+/** 一次采集会话的落盘/日志接收器 + 帧发生器。 */
+private class Rig {
+    val logs = ArrayList<String>()
+    val lines = ArrayList<String>()
+    var filesOpened = 0
+    var filesClosed = 0
+    var lastName = ""
+
+    val recorder = GazeProbeRecorder(
+        log = { logs.add(it) },
+        openFile = { name ->
+            filesOpened++
+            lastName = name
+        },
+        write = { lines.add(it) },
+        closeFile = { filesClosed++ },
+        appTag = "replay",
+    )
+
+    var now = 0L
+    private var wall = 1_700_000_000_000L
+
+    /** 喂一帧并前进 [stepMs]（实测帧间隔 63~116ms，默认 66ms ≈ 15fps）。 */
+    fun frame(face: Boolean, dark: Boolean = false, luma: Float? = null, stepMs: Long = 66L) {
+        val effective = when {
+            luma != null -> luma
+            dark -> 8f
+            else -> 95f
+        }
+        recorder.onFrame(
+            ProbeSample(
+                wallMs = wall,
+                faceDetected = face,
+                standby = false,
+                frameWidth = 480,
+                frameHeight = 640,
+                luma = effective,
+                boxLeft = if (face) 0.30f else -1f,
+                boxTop = if (face) 0.25f else -1f,
+                boxRight = if (face) 0.70f else -1f,
+                boxBottom = if (face) 0.75f else -1f,
+                faceRatio = if (face) 0.50f else null,
+                eulerX = if (face) 4f else null,
+                eulerY = if (face) -2f else null,
+                eulerZ = if (face) 1f else null,
+                eyeLeftX = if (face) 0.42f else null,
+                eyeLeftY = if (face) 0.38f else null,
+                eyeRightX = if (face) 0.58f else null,
+                eyeRightY = if (face) 0.38f else null,
+                noseX = if (face) 0.50f else null,
+                noseY = if (face) 0.50f else null,
+                mouthX = if (face) 0.50f else null,
+                mouthY = if (face) 0.62f else null,
+                eyeOpenLeft = if (face) 0.95f else 0f,
+                eyeOpenRight = if (face) 0.94f else 0f,
+                mouthOpenRatio = if (face) 0.21f else null,
+                chinRatio = if (face) 0.33f else null,
+                noseNormY = if (face) 0.50f else null,
+                chinNormY = if (face) 0.74f else null,
+                eyeNormY = if (face) 0.26f else null,
+                noseRelEye = if (face) 0.24f else null,
+                chinRelEye = if (face) 0.48f else null,
+                trackingId = if (face) 7 else null,
+            ),
+            now,
+        )
+        now += stepMs
+        wall += stepMs
+    }
+
+    /** 保持 [ms] 毫秒的同一状态。 */
+    fun hold(face: Boolean, ms: Long, dark: Boolean = false, luma: Float? = null, stepMs: Long = 66L) {
+        var remaining = ms
+        while (remaining > 0) {
+            frame(face, dark, luma, stepMs)
+            remaining -= stepMs
+        }
+    }
+
+    /** CSV 数据行（非 `#` 开头）的列数是否都等于表头列数。 */
+    fun dataRowColumnIssue(): String {
+        val header = lines.firstOrNull { it.startsWith("idx,") } ?: return "没有表头"
+        val expected = header.split(",").size
+        for (line in lines) {
+            if (line.startsWith("#") || line.startsWith("idx,")) continue
+            val n = line.split(",").size
+            if (n != expected) return "列数 $n != $expected : $line"
+        }
+        return ""
+    }
+
+    fun hasLog(fragment: String): Boolean = logs.any { it.contains(fragment) }
+
+    fun hasLine(fragment: String): Boolean = lines.any { it.contains(fragment) }
+}
+
+// ------------------------------------------------------------------ 用例 --
+
+private fun testNoFaceMeansNoStart() {
+    println("\n[1] 还没见过脸时，盖住 5 秒也不算开始")
+    val r = Rig()
+    r.hold(false, 5000, dark = true)
+    check("没有 armed", r.recorder.state == ProbeState.IDLE, "state=${r.recorder.state}")
+    check("没有开文件", r.filesOpened == 0)
+}
+
+private fun testArmRequiresThreeSeconds() {
+    println("\n[2] 盖住 2 秒不够、3 秒以上才算「已就绪」")
+    val a = Rig()
+    a.hold(true, 1000)
+    a.hold(false, 2500, dark = true)
+    check("2.5 秒还没 armed", a.recorder.state == ProbeState.IDLE, "state=${a.recorder.state}")
+
+    val b = Rig()
+    b.hold(true, 1000)
+    b.hold(false, 3200, dark = true)
+    check("3.2 秒 armed", b.recorder.state == ProbeState.ARMED, "state=${b.recorder.state}")
+    check("打了 ARMED 日志", b.hasLog("ARMED"))
+}
+
+private fun testStartOnFaceReturn() {
+    println("\n[3] 已就绪后露出脸 → 立刻开始录制，写出表头与数据行")
+    val r = Rig()
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    r.hold(true, 1000)
+    check("录制中", r.recorder.state == ProbeState.RECORDING, "state=${r.recorder.state}")
+    check("开了 1 个文件", r.filesOpened == 1)
+    check("第 1 段", r.recorder.phase == 1, "phase=${r.recorder.phase}")
+    check("文件名像 probe-*.csv", r.lastName.startsWith("probe-") && r.lastName.endsWith(".csv"), r.lastName)
+    check("有表头", r.hasLine("idx,wall,elapsed"))
+    check("有 # 元信息", r.hasLine("cover = no face"))
+    check("列数一致", r.dataRowColumnIssue().isEmpty(), r.dataRowColumnIssue())
+    val rows = r.recorder.rows
+    check("帧数 ≈ 1000/66", rows in 14..16, "rows=$rows")
+}
+
+private fun testPhaseSeparator() {
+    println("\n[4] 录制中盖 2 秒 = 分段，录制不中断")
+    val r = Rig()
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    r.hold(true, 1000)
+    val before = r.recorder.rows
+    r.hold(false, 2000, dark = true)
+    r.hold(true, 500)
+    check("仍在录制", r.recorder.state == ProbeState.RECORDING, "state=${r.recorder.state}")
+    check("第 2 段", r.recorder.phase == 2, "phase=${r.recorder.phase}")
+    check("文件没被关", r.filesClosed == 0)
+    check("帧数在涨", r.recorder.rows > before, "${r.recorder.rows} vs $before")
+    check("有 PHASE 日志", r.hasLog("PHASE 2"))
+    check("CSV 里有 # PHASE 2", r.hasLine("# PHASE 2"))
+}
+
+private fun testShortCoverIgnored() {
+    println("\n[5] 录制中只盖 0.5 秒（手晃一下）= 不分段")
+    val r = Rig()
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    r.hold(true, 1000)
+    r.hold(false, 500, dark = true)
+    r.hold(true, 500)
+    check("还是第 1 段", r.recorder.phase == 1, "phase=${r.recorder.phase}")
+    check("仍在录制", r.recorder.state == ProbeState.RECORDING)
+}
+
+private fun testStopOnLongCover() {
+    println("\n[6] 录制中盖 3.2 秒 = 结束，写 SUMMARY 并关文件")
+    val r = Rig()
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    r.hold(true, 2000)
+    r.hold(false, 3200, dark = true)
+    check("回到 IDLE", r.recorder.state == ProbeState.IDLE, "state=${r.recorder.state}")
+    check("关了文件", r.filesClosed == 1, "closed=${r.filesClosed}")
+    check("有 SUMMARY", r.hasLine("# SUMMARY"))
+    check("每段都有汇总", r.hasLine("# PHASE 1 rows="))
+    check("打了 REC STOP", r.hasLog("REC STOP"))
+    check("lastSummary 有内容", r.recorder.lastSummary.isNotEmpty())
+}
+
+private fun testLookingAwayDoesNotStop() {
+    println("\n[7] 录制中转头看别处 6 秒（没脸但画面亮）→ 既不结束也不分段 ★关键")
+    val r = Rig()
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    r.hold(true, 1000)
+    // 画面是亮的（luma=95）但没有人脸：人还在，只是把头转开了。
+    r.hold(false, 6000, dark = false)
+    check("仍在录制", r.recorder.state == ProbeState.RECORDING, "state=${r.recorder.state}")
+    check("仍然第 1 段", r.recorder.phase == 1, "phase=${r.recorder.phase}")
+    check("文件没被关", r.filesClosed == 0)
+    r.hold(true, 1000)
+    check("回到画面照样继续录", r.recorder.state == ProbeState.RECORDING)
+}
+
+private fun testSecondSessionNeedsNewCover() {
+    println("\n[8] 结束之后：只露脸不盖摄像头 → 不会自己接着录；重新盖 3 秒才开始第二次")
+    val r = Rig()
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    check("第一次已结束", r.recorder.state == ProbeState.IDLE)
+    r.hold(true, 3000)
+    check("只露脸不会开始", r.recorder.state == ProbeState.IDLE && r.filesOpened == 1, "state=${r.recorder.state}")
+    r.hold(false, 3200, dark = true)
+    check("盖 3 秒 → armed", r.recorder.state == ProbeState.ARMED, "state=${r.recorder.state}")
+    r.hold(true, 500)
+    check("第二次开始录制", r.recorder.state == ProbeState.RECORDING && r.filesOpened == 2)
+    check("段号从 1 重新数", r.recorder.phase == 1)
+}
+
+private fun testLumaUnavailableFallsBackToFaceLoss() {
+    println("\n[9] 亮度读不到（luma=null）时退化成「只看人脸消失」")
+    val r = Rig()
+    check(
+        "没脸 + 亮度未知 → 算盖住",
+        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = null)),
+    )
+    check(
+        "有脸 + 亮度未知 → 不算盖住",
+        !r.recorder.isCovered(ProbeSample(0, true, false, 480, 640, luma = null)),
+    )
+    check(
+        "没脸 + 画面亮 → 不算盖住（转头看别处）",
+        !r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 95f)),
+    )
+    check(
+        "没脸 + 画面黑 → 算盖住",
+        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 5f)),
+    )
+    check(
+        "有脸 + 画面黑（脸在暗处）→ 不算盖住",
+        !r.recorder.isCovered(ProbeSample(0, true, false, 480, 640, luma = 5f)),
+    )
+}
+
+private fun testDisableMidRecording() {
+    println("\n[10] 录制中关掉开关 → 立刻收尾（写 SUMMARY + 关文件），重复关闭不重复收尾")
+    val r = Rig()
+    r.hold(true, 1000)
+    r.hold(false, 3200, dark = true)
+    r.hold(true, 2000)
+    r.recorder.disable(r.now)
+    check("状态 OFF", r.recorder.state == ProbeState.OFF)
+    check("关了文件", r.filesClosed == 1)
+    check("有 SUMMARY", r.hasLine("# SUMMARY"))
+    check("打了 probe OFF", r.hasLog("probe OFF"))
+    val summaries = r.lines.count { it.startsWith("# SUMMARY") }
+    r.recorder.disable(r.now)
+    check(
+        "重复 disable 幂等",
+        r.filesClosed == 1 && r.lines.count { it.startsWith("# SUMMARY") } == summaries,
+    )
+    r.hold(true, 600)
+    check(
+        "重新喂帧后从待机重新开始（不会自动接上刚才那次）",
+        r.recorder.state == ProbeState.IDLE && r.filesOpened == 1,
+        "state=${r.recorder.state} opened=${r.filesOpened}",
+    )
+}
+
+private fun testMaxSessionGuard() {
+    println("\n[11] 5 分钟保险：一直录也会自己结束")
+    val r = Rig()
+    r.hold(true, 1000, stepMs = 1000L)
+    r.hold(false, 4000, dark = true, stepMs = 1000L)
+    r.hold(true, 400_000, stepMs = 1000L)
+    check("自动结束", r.recorder.state == ProbeState.IDLE, "state=${r.recorder.state}")
+    check("SUMMARY 里写了 max", r.hasLine("stop=max"), "没有 max 原因")
+    check("关了文件", r.filesClosed == 1)
+}
+
+private fun testStateLine() {
+    println("\n[12] 诊断行字段（GazeDiag 里用）")
+    val r = Rig()
+    check("关着时 probe=off", r.recorder.stateLine() == "probe=off", r.recorder.stateLine())
+    r.hold(true, 1000)
+    check("待机时可见有没有见过脸", r.recorder.stateLine().startsWith("probe=idle sawFace="), r.recorder.stateLine())
+    r.hold(false, 3200, dark = true)
+    check("armed", r.recorder.stateLine() == "probe=armed", r.recorder.stateLine())
+    r.hold(true, 1000)
+    check("录制中带段号与帧数", r.recorder.stateLine().startsWith("probe=rec ph=1 rows="), r.recorder.stateLine())
+}
+
+fun main() {
+    println("=== GazeProbeRecorder v5.39 离线回放验证（真实代码，无 Android 依赖）===")
+    testNoFaceMeansNoStart()
+    testArmRequiresThreeSeconds()
+    testStartOnFaceReturn()
+    testPhaseSeparator()
+    testShortCoverIgnored()
+    testStopOnLongCover()
+    testLookingAwayDoesNotStop()
+    testSecondSessionNeedsNewCover()
+    testLumaUnavailableFallsBackToFaceLoss()
+    testDisableMidRecording()
+    testMaxSessionGuard()
+    testStateLine()
+    println("\n=== 结果：${if (failures == 0) "全部通过" else "$failures 项失败"} ===")
+    if (failures != 0) throw IllegalStateException("$failures 项失败")
+}

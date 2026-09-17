@@ -82,6 +82,7 @@ class MainActivity : AppCompatActivity() {
         setupHorizontalSwipeUi()
         setupMouthTapUi()
         setupTiltVolumeUi()
+        setupProbeUi()
         setupAdaptiveSwipeUi()
         setupGlobalPagingUi()
         setupSensitivityUi()
@@ -289,6 +290,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvLiveValues.text = text
         renderCooldownLive(s)
         renderAdaptiveSwipeUi(s)
+        renderProbeUi(s)
         binding.tvGlobalPagingState.text =
             globalPagingStateText(GazeRuntime.config.globalPagingEnabled, this)
     }
@@ -647,8 +649,48 @@ class MainActivity : AppCompatActivity() {
         renderLive(GazeRuntime.snapshot)
     }
 
-    // --------------------------------------------------- v4.5 自适应滑动幅度 --
+    // ------------------------------------ v5.39：注视数据采集（测试功能） --
 
+    /**
+     * 「注视数据采集」开关 + 实时状态。
+     *
+     * 这是给「眼睛必须盯着屏幕才触发翻页」做数据准备用的测试功能：打开后每帧多算一组
+     * 原始几何量并写进 `files/probe/probe-*.csv`，**不做任何判定、不改任何现有行为**。
+     * 起止全部由"盖住前置摄像头"控制（盖 3 秒 = 开始 / 结束，盖 1 秒 = 分段），
+     * 所以录制过程中用户全程不需要碰手机屏幕 —— 这也是为什么状态要显示得这么直白。
+     */
+    private fun setupProbeUi() {
+        binding.switchGazeProbe.isChecked = GazeRuntime.config.probeEnabled
+        binding.switchGazeProbe.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(probeEnabled = checked) }
+            renderProbeUi(GazeRuntime.snapshot)
+        }
+        renderProbeUi(GazeRuntime.snapshot)
+    }
+
+    /** 采集状态一行字：关 / 待机 / 已就绪 / 录制中（第几段、多少帧、几秒、文件名）。 */
+    private fun renderProbeUi(s: GazeRuntime.Snapshot) {
+        val on = GazeRuntime.config.probeEnabled
+        binding.tvProbeState.text = when {
+            !on -> getString(R.string.settings_probe_state_off)
+
+            s.probeState == ProbeState.RECORDING.label -> {
+                val seconds = String.format(java.util.Locale.US, "%.1f", s.probeDurationMs / 1000f)
+                getString(R.string.settings_probe_state_rec, s.probePhase, s.probeRows, seconds) +
+                    "\n文件：" + s.probeFile
+            }
+
+            s.probeState == ProbeState.ARMED.label -> getString(R.string.settings_probe_state_armed)
+
+            s.faceDetected -> getString(R.string.settings_probe_state_idle)
+
+            else -> getString(R.string.settings_probe_state_idle_noface)
+        }
+        binding.tvProbeLast.text =
+            if (s.probeLast.isEmpty()) "" else getString(R.string.settings_probe_last, s.probeLast)
+    }
+
+    // --------------------------------------------------- v4.5 自适应滑动幅度 --
     /**
      * 「自适应滑动」开关 + 「自定义滑动柔度」滑块 + 恢复默认。
      *

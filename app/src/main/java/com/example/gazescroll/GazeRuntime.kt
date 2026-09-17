@@ -80,6 +80,21 @@ object GazeRuntime {
          */
         val cooldownRemainMs: Long = 0L,
 
+        // ---- v5.39 注视数据采集（测试功能）：设置页要能看到"现在在不在录、录到第几段" ----
+
+        /** 采集状态：off / idle / armed / rec（见 [ProbeState]）。 */
+        val probeState: String = ProbeState.OFF.label,
+        /** 已录到的段号（0 = 还没开始录）。 */
+        val probePhase: Int = 0,
+        /** 本次已录制的帧数。 */
+        val probeRows: Int = 0,
+        /** 本次录制时长（毫秒）。 */
+        val probeDurationMs: Long = 0L,
+        /** 当前采集文件名（空 = 没在录）。 */
+        val probeFile: String = "",
+        /** 最近一次采集的收尾摘要。 */
+        val probeLast: String = "",
+
         val note: String = "未启动",
     )
 

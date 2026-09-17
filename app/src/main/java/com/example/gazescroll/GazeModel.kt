@@ -266,6 +266,24 @@ data class GazeConfig(
      */
     val globalCooldownMs: Long = GlobalTriggerGate.DEFAULT_COOLDOWN_MS,
 
+    // ------------------------------------------- v5.39：注视数据采集（测试功能） --
+
+    /**
+     * 「注视数据采集」（v5.39）：**测试功能，默认关闭**。
+     *
+     * 打开后，摄像头每一帧都会额外算一组**原始几何量**（人脸框、十个关键点、画面亮度）
+     * 并按帧写进 App 私有目录下的 CSV（`files/probe/probe-*.csv`），供离线分析
+     * 「眼睛有没有盯着屏幕」到底能用哪几个量判定 —— ML Kit 的人脸检测**没有虹膜**，
+     * 只能靠头姿 + 关键点几何（用户提的"鼻子辅助定位"就在这里）。
+     *
+     * 采集的起止由**盖住前置摄像头**控制（详见 [GazeProbeRecorder]）：
+     * 盖 ≥3 秒 → 露脸开始录；录制中盖 1~3 秒 → 分段；盖 ≥3 秒 → 结束。
+     *
+     * 它**只记录、不判定**：不开这个开关时逐帧开销与 v5.36 一模一样，开了也不改变
+     * 任何一条触发通道的行为。
+     */
+    val probeEnabled: Boolean = false,
+
     /**
      * Legacy "look at the bottom, then at the top" two-zone state machine.
      * Kept for debugging only — OFF by default, blink is the real trigger.

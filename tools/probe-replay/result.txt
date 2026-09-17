@@ -1,0 +1,81 @@
+﻿=== GazeProbeRecorder v5.39 离线回放验证（真实代码，无 Android 依赖）===
+
+[1] 还没见过脸时，盖住 5 秒也不算开始
+  PASS  没有 armed
+  PASS  没有开文件
+
+[2] 盖住 2 秒不够、3 秒以上才算「已就绪」
+  PASS  2.5 秒还没 armed
+  PASS  3.2 秒 armed
+  PASS  打了 ARMED 日志
+
+[3] 已就绪后露出脸 → 立刻开始录制，写出表头与数据行
+  PASS  录制中
+  PASS  开了 1 个文件
+  PASS  第 1 段
+  PASS  文件名像 probe-*.csv
+  PASS  有表头
+  PASS  有 # 元信息
+  PASS  列数一致
+  PASS  帧数 ≈ 1000/66
+
+[4] 录制中盖 2 秒 = 分段，录制不中断
+  PASS  仍在录制
+  PASS  第 2 段
+  PASS  文件没被关
+  PASS  帧数在涨
+  PASS  有 PHASE 日志
+  PASS  CSV 里有 # PHASE 2
+
+[5] 录制中只盖 0.5 秒（手晃一下）= 不分段
+  PASS  还是第 1 段
+  PASS  仍在录制
+
+[6] 录制中盖 3.2 秒 = 结束，写 SUMMARY 并关文件
+  PASS  回到 IDLE
+  PASS  关了文件
+  PASS  有 SUMMARY
+  PASS  每段都有汇总
+  PASS  打了 REC STOP
+  PASS  lastSummary 有内容
+
+[7] 录制中转头看别处 6 秒（没脸但画面亮）→ 既不结束也不分段 ★关键
+  PASS  仍在录制
+  PASS  仍然第 1 段
+  PASS  文件没被关
+  PASS  回到画面照样继续录
+
+[8] 结束之后：只露脸不盖摄像头 → 不会自己接着录；重新盖 3 秒才开始第二次
+  PASS  第一次已结束
+  PASS  只露脸不会开始
+  PASS  盖 3 秒 → armed
+  PASS  第二次开始录制
+  PASS  段号从 1 重新数
+
+[9] 亮度读不到（luma=null）时退化成「只看人脸消失」
+  PASS  没脸 + 亮度未知 → 算盖住
+  PASS  有脸 + 亮度未知 → 不算盖住
+  PASS  没脸 + 画面亮 → 不算盖住（转头看别处）
+  PASS  没脸 + 画面黑 → 算盖住
+  PASS  有脸 + 画面黑（脸在暗处）→ 不算盖住
+
+[10] 录制中关掉开关 → 立刻收尾（写 SUMMARY + 关文件），重复关闭不重复收尾
+  PASS  状态 OFF
+  PASS  关了文件
+  PASS  有 SUMMARY
+  PASS  打了 probe OFF
+  PASS  重复 disable 幂等
+  PASS  重新喂帧后从待机重新开始（不会自动接上刚才那次）
+
+[11] 5 分钟保险：一直录也会自己结束
+  PASS  自动结束
+  PASS  SUMMARY 里写了 max
+  PASS  关了文件
+
+[12] 诊断行字段（GazeDiag 里用）
+  PASS  关着时 probe=off
+  PASS  待机时可见有没有见过脸
+  PASS  armed
+  PASS  录制中带段号与帧数
+
+=== 结果：全部通过 ===

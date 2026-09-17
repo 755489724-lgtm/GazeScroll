@@ -36,6 +36,7 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 & "$jdk\bin\java.exe" "-Dfile.encoding=UTF-8" -cp $compilerCp org.jetbrains.kotlin.cli.jvm.K2JVMCompiler `
     -no-stdlib -nowarn -cp "$stdlib" -d $out `
     (Join-Path $proj 'app\src\main\java\com\example\gazescroll\GazeProbeRecorder.kt') `
+    (Join-Path $proj 'app\src\main\java\com\example\gazescroll\GazeGate.kt') `
     (Join-Path $root 'ProbeReplay.kt')
 
 # Run it; UTF-8 -> result.txt. Continue (not Stop): a failing run exits non-zero on purpose,

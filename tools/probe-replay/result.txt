@@ -114,4 +114,20 @@
   PASS  日志里写了 marker
   PASS  待机时的眨眼不算分段
 
+[17] 注视门（v5.43）：判据逐条验证
+  PASS  没脸 → no-face
+  PASS  脸太小 → too-far
+  PASS  偏航 14° → head-turned
+  PASS  偏航 14° + 扭头通道 → 放行（扭头本身就是偏航）
+  PASS  滚转 25° → head-tilted
+  PASS  滚转 25° + 歪头通道 → 放行（歪头本身就是滚转）
+  PASS  没有基准线（yaw=null）→ 放行
+  PASS  没有 faceRatio → 放行
+  PASS  50cm 一直睁着眼 → 放行（duty≈1.0）
+  PASS  眼睛离开屏幕 2 秒 → eyes-away
+  PASS  刚眨过眼 → 仍然放行（占比≈0.9）
+  PASS  30cm（faceRatio 0.52）一直读低 → 仍然放行
+  PASS  同一个读数放到 50cm（0.35）→ 拦
+  PASS  丢脸清空窗口 → 占比未知、不拦
+
 === 结果：全部通过 ===

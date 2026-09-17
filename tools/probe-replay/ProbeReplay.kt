@@ -503,6 +503,126 @@ private fun testStateLine() {
     check("录制中带段号与帧数", r.recorder.stateLine().startsWith("probe=rec ph=1 rows="), r.recorder.stateLine())
 }
 
+// ------------------------------------------------ v5.43 注视门（GazeGate） --
+
+private class GateRig {
+    val gate = GazeGate()
+    var now = 0L
+
+    /** 喂 [ms] 毫秒的同一状态，返回结束时刻。 */
+    fun feed(eyeOpen: Float?, ms: Long, step: Long = 66L) {
+        var remaining = ms
+        while (remaining > 0) {
+            gate.onFrame(eyeOpen, eyeOpen, now)
+            now += step
+            remaining -= step
+        }
+    }
+
+    fun decide(
+        channel: GateChannel = GateChannel.BLINK,
+        face: Boolean = true,
+        ratio: Float? = 0.35f,
+        yaw: Float? = 0f,
+        roll: Float? = 0f,
+    ) = gate.decide(channel, face, ratio, yaw, roll)
+}
+
+private fun testGazeGate() {
+    println("\n[17] 注视门（v5.43）：判据逐条验证")
+    val g = GateRig()
+
+    // ① 脸不在画面 → 拦。
+    check(
+        "没脸 → no-face",
+        g.decide(face = false).reason == "no-face",
+        "${g.decide(face = false).reason}",
+    )
+    // ② 脸太小（手机放桌上了）→ 拦。
+    check(
+        "脸太小 → too-far",
+        g.decide(ratio = 0.15f).reason == "too-far",
+        "${g.decide(ratio = 0.15f).reason}",
+    )
+    // ③ 头转开 → 拦；但扭头通道豁免。
+    check(
+        "偏航 14° → head-turned",
+        g.decide(yaw = 14f).reason == "head-turned",
+        "${g.decide(yaw = 14f).reason}",
+    )
+    check(
+        "偏航 14° + 扭头通道 → 放行（扭头本身就是偏航）",
+        g.decide(channel = GateChannel.TURN, yaw = 14f).allowed,
+    )
+    // ④ 躺下 / 侧脸 → 拦；但歪头通道豁免。
+    check(
+        "滚转 25° → head-tilted",
+        g.decide(roll = 25f).reason == "head-tilted",
+        "${g.decide(roll = 25f).reason}",
+    )
+    check(
+        "滚转 25° + 歪头通道 → 放行（歪头本身就是滚转）",
+        g.decide(channel = GateChannel.TILT, roll = 25f).allowed,
+    )
+    // ⑤ 读数缺失 → 一律放开（fail-open）。
+    check("没有基准线（yaw=null）→ 放行", g.decide(yaw = null).allowed)
+    check("没有 faceRatio → 放行", g.decide(ratio = null).allowed)
+
+    // ⑥ 睁眼占比：50cm 盯着屏幕 → 放行。
+    val eyes = GateRig()
+    eyes.feed(1.0f, 2000)
+    check(
+        "50cm 一直睁着眼 → 放行（duty≈1.0）",
+        eyes.decide().allowed,
+        "duty=${eyes.gate.eyeOpenDuty()}",
+    )
+
+    // ⑦ 眼睛离开屏幕（持续低头）→ 拦。
+    val away = GateRig()
+    away.feed(1.0f, 1000)
+    away.feed(0.01f, 2000)
+    check(
+        "眼睛离开屏幕 2 秒 → eyes-away",
+        away.decide().reason == "eyes-away",
+        "reason=${away.decide().reason} duty=${away.gate.eyeOpenDuty()}",
+    )
+
+    // ⑧ 眨眼不能把自己拦死：一次 200ms 的眨眼，占比仍然很高。
+    val blink = GateRig()
+    blink.feed(1.0f, 2000)
+    blink.feed(0.01f, 200)   // 眨眼
+    blink.feed(1.0f, 400)
+    check(
+        "刚眨过眼 → 仍然放行（占比≈0.9）",
+        blink.decide().allowed,
+        "duty=${blink.gate.eyeOpenDuty()}",
+    )
+
+    // ⑨ 近距离档跳过"睁眼占比"（实测 30cm 下这项分不开）。
+    val near = GateRig()
+    near.feed(0.05f, 3000)
+    check(
+        "30cm（faceRatio 0.52）一直读低 → 仍然放行",
+        near.decide(ratio = 0.52f).allowed,
+        "reason=${near.decide(ratio = 0.52f).reason}",
+    )
+    check(
+        "同一个读数放到 50cm（0.35）→ 拦",
+        near.decide(ratio = 0.35f).reason == "eyes-away",
+        "${near.decide(ratio = 0.35f).reason}",
+    )
+
+    // ⑩ 丢脸再回来：旧的"睁着"样本不能留着。
+    val lost = GateRig()
+    lost.feed(1.0f, 2000)
+    lost.gate.onFrame(null, null, lost.now)   // 没脸
+    check(
+        "丢脸清空窗口 → 占比未知、不拦",
+        lost.gate.eyeOpenDuty() == null && lost.decide().allowed,
+        "duty=${lost.gate.eyeOpenDuty()}",
+    )
+}
+
 fun main() {
     println("=== GazeProbeRecorder v5.39 离线回放验证（真实代码，无 Android 依赖）===")
     testNoFaceMeansNoStart()
@@ -521,6 +641,7 @@ fun main() {
     testStopCoverThreshold()
     testGapAndBlinkMarkers()
     testBlinkMarker()
+    testGazeGate()
     println("\n=== 结果：${if (failures == 0) "全部通过" else "$failures 项失败"} ===")
     if (failures != 0) throw IllegalStateException("$failures 项失败")
 }

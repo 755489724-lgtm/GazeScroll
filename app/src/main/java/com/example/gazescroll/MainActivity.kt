@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
         setupMouthTapUi()
         setupTiltVolumeUi()
         setupProbeUi()
+        setupGazeGateUi()
         setupAdaptiveSwipeUi()
         setupGlobalPagingUi()
         setupSensitivityUi()
@@ -291,6 +292,7 @@ class MainActivity : AppCompatActivity() {
         renderCooldownLive(s)
         renderAdaptiveSwipeUi(s)
         renderProbeUi(s)
+        renderGazeGateUi(s)
         binding.tvGlobalPagingState.text =
             globalPagingStateText(GazeRuntime.config.globalPagingEnabled, this)
     }
@@ -688,6 +690,51 @@ class MainActivity : AppCompatActivity() {
         }
         binding.tvProbeLast.text =
             if (s.probeLast.isEmpty()) "" else getString(R.string.settings_probe_last, s.probeLast)
+    }
+
+    // ------------------------------------- v5.43：注视门（眼睛得盯着屏幕） --
+
+    /**
+     * 「注视门」三档模式 + 实时状态。
+     *
+     * 默认「观察」：只把"本来会拦掉哪一次触发"写进日志，一次都不拦 —— 这是有意的
+     * （v5.37 就是加严过头被整版退回的），先量代价再决定要不要默认拦截。
+     * 判据与实测依据见 [GazeGate] 的注释。
+     */
+    private fun setupGazeGateUi() {
+        val mode = GazeRuntime.config.gazeGateMode
+        binding.rgGateMode.check(
+            when (mode) {
+                GateMode.OFF -> R.id.rbGateOff
+                GateMode.ENFORCE -> R.id.rbGateEnforce
+                else -> R.id.rbGateObserve
+            },
+        )
+        binding.rgGateMode.setOnCheckedChangeListener { _, checkedId ->
+            val next = when (checkedId) {
+                R.id.rbGateOff -> GateMode.OFF
+                R.id.rbGateEnforce -> GateMode.ENFORCE
+                else -> GateMode.OBSERVE
+            }
+            updateConfig { it.copy(gazeGateMode = next) }
+            renderGazeGateUi(GazeRuntime.snapshot)
+        }
+        renderGazeGateUi(GazeRuntime.snapshot)
+    }
+
+    /** 实时状态一行字：现在算不算"盯着屏幕"、卡在哪条判据、睁眼占比多少。 */
+    private fun renderGazeGateUi(s: GazeRuntime.Snapshot) {
+        if (GazeRuntime.config.gazeGateMode == GateMode.OFF) {
+            binding.tvGateState.text = getString(R.string.settings_gate_state_off)
+            return
+        }
+        val duty = s.gazeGateDuty?.let { String.format(java.util.Locale.US, "%.2f", it) } ?: "--"
+        val state = when {
+            s.gazeGateText == "OK" -> "看着屏幕（门是开的）"
+            s.gazeGateText.startsWith("BLOCK") -> "没在看着屏幕 → " + s.gazeGateText
+            else -> s.gazeGateText
+        }
+        binding.tvGateState.text = getString(R.string.settings_gate_state, state, duty)
     }
 
     // --------------------------------------------------- v4.5 自适应滑动幅度 --

@@ -351,6 +351,18 @@ private const val REF_LOG_INTERVAL_MS = 400L
     private var lastRefLogAtMs = 0L
 
     /**
+     * 注视门（v5.43）：**眼睛盯着屏幕才允许触发**。
+     *
+     * 判据、阈值与四轮实机数据的依据全部写在 [GazeGate] 的注释里。默认 [GateMode.OBSERVE]：
+     * 只记录"这一次触发本来会被拦掉"，不真的拦 —— 先量代价，再决定是否默认拦截。
+     */
+    private val gazeGate = GazeGate()
+
+    /** 最近一次注视门的结论（诊断行 / 设置页显示用）。 */
+    @Volatile
+    private var lastGateDecision: GateDecision = GateDecision(true, null, "")
+
+    /**
      * 全局触发冷却闸门——点头和眨眼**共用**这一个计时器。
      *
      * 它是所有触发路径的必经出口（见 [fireSwipe]）。逐帧检测下一次动作原本会命中
@@ -1067,10 +1079,17 @@ private const val REF_LOG_INTERVAL_MS = 400L
         lastFramePitchDeg = frame.headEulerAngleX
         lastFrameRollDeg = frame.headEulerAngleZ
         lastFrameChinRatio = frame.chinRatio
+        // v5.43：注视门要算"偏航相对本人基准线"，基准线在检测器里，原始读数得先存下来。
+        frameYawForGate = frame.headEulerAngleY
+        frameHasFaceForGate = frame.faceDetected
         // v5.7：真的收到帧就把"持续无画面"的计时清零。这是硬重建升级判据的唯一出口，
         // 所以必须在这里做——放在重绑路径里会让它永远归零、失去意义。
         staleBeganAtMs = 0L
         val cfg = GazeRuntime.config
+
+        // v5.43：注视门的"睁眼占比"滑窗必须**先于**本帧的检测器更新 —— 眨眼/点头/张嘴的
+        // 回调都在那几个更新里同步触发，晚一步就会用上一帧的占比去判。
+        gazeGate.onFrame(frame.leftEyeOpenProbability, frame.rightEyeOpenProbability, now)
 
         // v5.39：注视数据采集（测试功能）。放在所有判定之前 —— 它只记录，不参与判定。
         // 关掉时连采样对象都不构造（与 v5.36 的逐帧开销完全一致）。
@@ -1273,6 +1292,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
         val detector = blinkDetector
         val machine = stateMachine
+        // v5.43：本帧过完之后刷新注视门的显示结论（检测器的基准线都已更新）。
+        updateGateDisplay()
         GazeRuntime.publish { s ->
             s.copy(
                 faceDetected = frame.faceDetected,
@@ -1312,6 +1333,15 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 probeDurationMs = probeRecorder?.durationMs ?: 0L,
                 probeFile = probeRecorder?.fileName ?: "",
                 probeLast = probeRecorder?.lastSummary ?: "",
+                // v5.43：注视门的实时结论（设置页显示"眼睛现在算不算盯着屏幕"）。
+                gazeGateText = if (cfg.gazeGateMode == GateMode.OFF) {
+                    "off"
+                } else if (lastGateDecision.allowed) {
+                    "OK"
+                } else {
+                    "BLOCK(${lastGateDecision.reason} ${lastGateDecision.detail})"
+                },
+                gazeGateDuty = gazeGate.eyeOpenDuty(),
             )
         }
     }
@@ -1431,6 +1461,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
      * it must not be called from the main thread.
      */
     private fun fireSwipe(reason: String, direction: SwipeDirection) {
+        // v5.43：注视门。—— 先过门，再走冷却：被门拦下的那一次不该消耗冷却，
+        // 也不该记进"上一次动作"（否则会顺带把歪头通道的两秒窗口推开）。
+        if (!passGazeGate(reason, channelFor(reason))) return
         // 闸门同时负责「判断是否在冷却」和「开始新一轮冷却」，两者是原子的：
         // 同一帧里第二个检测器再来问，必然得到 false。
         val now = SystemClock.elapsedRealtime()
@@ -1613,6 +1646,97 @@ private const val REF_LOG_INTERVAL_MS = 400L
     private fun faceRatioText(): String =
         lastFrameFaceRatio?.let { "%.2f".format(it) } ?: "-"
 
+    // ------------------------------------------------------------ v5.43 注视门 --
+
+    /**
+     * 触发来源 → 注视门通道。
+     *
+     * 只有 [GateChannel.TURN]（扭头）与 [GateChannel.TILT]（歪头）有豁免：
+     * 那两个动作本身就是被判的那条轴（扭头 = 偏航、歪头 = 滚转），拿它当门等于把这条通道关掉。
+     * 其余通道（眨眼 / 点头 / 张嘴）都要过完整的门。
+     */
+    private fun channelFor(reason: String): GateChannel = when {
+        reason.startsWith("blink") -> GateChannel.BLINK
+        reason.startsWith("nod") || reason.startsWith("tilt:") -> GateChannel.NOD
+        reason.startsWith("turn") -> GateChannel.TURN
+        reason.startsWith("mouth") -> GateChannel.MOUTH
+        else -> GateChannel.OTHER
+    }
+
+    /**
+     * 过注视门。返回 true = 放行。
+     *
+     * 三种模式（[GazeRuntime.config] 的 `gazeGateMode`）：
+     *  - `OFF`：完全不算（逐帧开销为零）；
+     *  - `OBSERVE`（**默认**）：算，判不过只打一行 `would-block`，**照常放行**；
+     *  - `ENFORCE`：判不过就丢弃这次触发（日志 + 界面写明原因）。
+     *
+     * 默认不是 ENFORCE 是有意的：v5.37 就是"加严过头"被整版退回的，而且这道门的
+     * "睁眼占比"判据在 30cm 近距离下不可用（见 [GazeGate]）—— 先量代价再拦。
+     */
+    private fun passGazeGate(reason: String, channel: GateChannel): Boolean {
+        val mode = GazeRuntime.config.gazeGateMode
+        if (mode == GateMode.OFF) return true
+
+        val decision = gazeGate.decide(
+            channel = channel,
+            faceDetected = frameHasFaceForGate,
+            faceRatio = lastFrameFaceRatio,
+            yawDeltaDeg = yawDeltaForGate(),
+            rollDeltaDeg = tiltDetector?.tiltDeg,
+        )
+        lastGateDecision = decision
+        if (decision.allowed) return true
+
+        val yawDelta = yawDeltaForGate()
+        val text = "gate ${if (mode == GateMode.ENFORCE) "blocked" else "would-block"}" +
+            " trigger=$reason channel=$channel reason=${decision.reason}" +
+            " ${decision.detail} ${gazeGate.describe()} faceRatio=${faceRatioText()}" +
+            " yawDelta=${yawDelta?.let { "%.1f".format(it) } ?: "-"}" +
+            " rollDelta=${tiltDetector?.tiltDeg?.let { "%.1f".format(it) } ?: "-"}"
+        if (mode == GateMode.ENFORCE) {
+            Log.i("GazeGate", text)
+            GazeRuntime.publish {
+                it.copy(note = "注视门拦下「$reason」（${decision.reason}）")
+            }
+            return false
+        }
+        Log.i("GazeGate", text)
+        return true
+    }
+
+    /** 当前偏航相对本人基准线的差；没有基准线时返回 null（= 不拦）。 */
+    private fun yawDeltaForGate(): Float? {
+        val head = headPoseDetector ?: return null
+        val yaw = frameYawForGate ?: return null
+        if (!head.calibrated) return null
+        return yaw - head.baselineYawDeg
+    }
+
+    /** 每帧刷新一次"注视门当前结论"，只为诊断行与设置页显示（真正的拦截在触发点另判）。 */
+    private fun updateGateDisplay() {
+        if (GazeRuntime.config.gazeGateMode == GateMode.OFF) {
+            lastGateDecision = GateDecision(true, null, "")
+            return
+        }
+        // 显示用最严的一档（OTHER 没有任何豁免），用户看到的就是"眼睛到底盯没盯屏幕"。
+        lastGateDecision = gazeGate.decide(
+            channel = GateChannel.OTHER,
+            faceDetected = frameHasFaceForGate,
+            faceRatio = lastFrameFaceRatio,
+            yawDeltaDeg = yawDeltaForGate(),
+            rollDeltaDeg = tiltDetector?.tiltDeg,
+        )
+    }
+
+    /** 最近一帧的偏航原始读数（只在帧线程上写，供 [passGazeGate] 算相对基准线的差）。 */
+    @Volatile
+    private var frameYawForGate: Float? = null
+
+    /** 最近一帧有没有脸（= 有没有 faceRatio）。 */
+    @Volatile
+    private var frameHasFaceForGate: Boolean = false
+
     /**
      * 张嘴 → 在屏幕中央点一下。
      *
@@ -1623,6 +1747,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
      * 也**不设置任何暂停状态**：眨眼、点头、左右扭头在张嘴之后照常工作。
      */
     private fun onMouthOpen() {
+        // v5.43：注视门。
+        if (!passGazeGate("mouth", GateChannel.MOUTH)) return
         // v5.36：张嘴点击也算"动作"，记进全局动作时钟（之后 2 秒内不认新动作）。
         lastActionAtMs = SystemClock.elapsedRealtime()
         if (!SwipeInjector.isReady(this)) {
@@ -1681,6 +1807,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
      */
     private fun onTiltVolume(event: TiltEvent) {
         val cfg = GazeRuntime.config
+        // v5.43：注视门（歪头通道豁免滚转判据 —— 歪头本身就是滚转）。
+        if (!passGazeGate("tilt", GateChannel.TILT)) return
         val up = if (event.side == TiltSide.LEFT) cfg.tiltLeftVolumeUp else cfg.tiltRightVolumeUp
         // v5.36：动作时刻立刻记账，并把翻页闸门一起推到"2 秒后" —— 全局两秒不该只关住
         // 音量这一条通道（用户要求"上一秒你做了什么动作，必须强制等两秒才能触发"）。
@@ -1877,6 +2005,12 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 " gapRemain=${if (lastActionAtMs == 0L) 0L else (lastActionAtMs + ACTION_GAP_MS - now).coerceAtLeast(0L)}ms" +
                 // v5.31：基准线重建期禁触发的状态（丢脸回来 / 重绑后约 1.1 秒内为 true）。
                 " baselineSettling=${headPoseDetector?.baselineSettling ?: false}" +
+                // v5.43：注视门 —— 这一帧门是开还是关、卡在哪条判据、睁眼占比多少。
+                " gazeGate=${cfg.gazeGateMode.name}" +
+                " gateOk=${lastGateDecision.allowed}" +
+                " gateWhy=${lastGateDecision.reason ?: "-"}" +
+                " gateDetail=${lastGateDecision.detail.ifEmpty { "-" }}" +
+                " ${gazeGate.describe()}" +
                 " triggers=${GazeRuntime.snapshot.triggers}" +
                 " needBlinks=${cfg.blinkTriggerCount}" +
                 " pending=${blinkDetector?.pendingBlinks ?: 0}" +

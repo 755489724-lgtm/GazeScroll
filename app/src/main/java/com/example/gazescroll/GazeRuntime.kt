@@ -95,6 +95,13 @@ object GazeRuntime {
         /** 最近一次采集的收尾摘要。 */
         val probeLast: String = "",
 
+        // ---- v5.43 注视门：设置页要能看到"现在眼睛算不算盯着屏幕" ----
+
+        /** `off` / `OK` / `BLOCK(原因 明细)`。 */
+        val gazeGateText: String = "off",
+        /** 最近 1.5 秒里"两眼平均睁着"的帧占比；null = 没有样本。 */
+        val gazeGateDuty: Float? = null,
+
         val note: String = "未启动",
     )
 

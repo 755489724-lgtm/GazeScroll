@@ -67,6 +67,10 @@ object AppPrefs {
      */
     private const val K_GAZE_PROBE = "gazeProbeEnabled"
 
+    /** v5.43：注视门模式（off / observe / enforce）。默认 observe（只观察、不拦）。 */
+    private const val K_GAZE_GATE_MODE = "gazeGateMode"
+
+
     /** v4.6：用户自定的列表类应用滑动幅度。 */
     private const val K_LIST_SWIPE_DISTANCE = "listSwipeDistance"
 
@@ -160,6 +164,10 @@ object AppPrefs {
             adaptiveSwipeEnabled = sp.getBoolean(K_ADAPTIVE_SWIPE, d.adaptiveSwipeEnabled),
             // v5.39：注视数据采集（测试功能），默认关。
             probeEnabled = sp.getBoolean(K_GAZE_PROBE, d.probeEnabled),
+            // v5.43：注视门模式，默认 observe（只观察、不拦）。
+            gazeGateMode = sp.getString(K_GAZE_GATE_MODE, null)
+                ?.let { name -> GateMode.entries.firstOrNull { it.name == name } }
+                ?: d.gazeGateMode,
             listSwipeDistance = sp.getFloat(K_LIST_SWIPE_DISTANCE, d.listSwipeDistance),
             globalPagingEnabled = sp.getBoolean(K_GLOBAL_PAGING, d.globalPagingEnabled),
             staticLockEnabled = sp.getBoolean(K_STATIC_LOCK_ENABLED, d.staticLockEnabled),
@@ -205,6 +213,7 @@ object AppPrefs {
             .putInt(K_TILT_VOLUME_STEP, s.tiltVolumeStep)
             .putBoolean(K_ADAPTIVE_SWIPE, s.adaptiveSwipeEnabled)
             .putBoolean(K_GAZE_PROBE, s.probeEnabled)
+            .putString(K_GAZE_GATE_MODE, s.gazeGateMode.name)
             .putFloat(K_LIST_SWIPE_DISTANCE, s.listSwipeDistance)
             .putBoolean(K_GLOBAL_PAGING, s.globalPagingEnabled)
             .putBoolean(K_STATIC_LOCK_ENABLED, s.staticLockEnabled)

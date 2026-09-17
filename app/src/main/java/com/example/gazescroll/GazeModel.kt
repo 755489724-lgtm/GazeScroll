@@ -284,6 +284,21 @@ data class GazeConfig(
      */
     val probeEnabled: Boolean = false,
 
+    // ------------------------------------------- v5.43：注视门（眼睛得盯着屏幕） --
+
+    /**
+     * 「注视门」模式（v5.43，用户点名的新功能）：**眼睛盯着屏幕才允许触发**，用来压误触。
+     *
+     * 默认 [GateMode.OBSERVE]（**只观察、不拦**），原因写在这里，别改错：
+     *  - v5.37 就是因为"加严过头"被用户整版退回的（见 CHANGELOG 的 [5.37]/[5.38] 一节）；
+     *  - 这道门有一条判据（睁眼占比）**在 30cm 近距离下不可用**（实测：盯着屏幕时中位数
+     *    也只有 0.21，与"眼睛看别处"的 0.03 大面积重叠），所以它天然挡不住"近距离时的误触"；
+     *  - 因此先让它**只记录"本来会拦掉哪一次触发"**，拿真实使用量出代价，再决定要不要默认拦。
+     *
+     * 判据、阈值与实测依据全部写在 [GazeGate] 的注释里。
+     */
+    val gazeGateMode: GateMode = GateMode.OBSERVE,
+
     /**
      * Legacy "look at the bottom, then at the top" two-zone state machine.
      * Kept for debugging only — OFF by default, blink is the real trigger.

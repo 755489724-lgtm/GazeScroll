@@ -123,6 +123,17 @@
     <string name="settings_live_hint">对着前置摄像头自然睁眼，看「睁眼」时的数值；再眨一下，看「闭眼」时能降到多少。\n把灵敏度阈值选在两者之间即可。</string>
     <string name="settings_live_empty">（未检测到人脸）</string>
 
+    <!-- ================= v5.43：注视门（眼睛得盯着屏幕） ================= -->
+
+    <string name="settings_gate_title">注视门（眼睛盯着屏幕才触发）</string>
+    <string name="settings_gate_mode">模式</string>
+    <string name="settings_gate_off">关（不算、不拦）</string>
+    <string name="settings_gate_observe">观察（只记录，不拦 —— 默认，先量代价）</string>
+    <string name="settings_gate_enforce">拦截（判不过就丢弃这次触发）</string>
+    <string name="settings_gate_state">当前：%1$s    睁眼占比 %2$s</string>
+    <string name="settings_gate_state_off">当前：关</string>
+    <string name="settings_gate_hint">这一版要让「眼睛得盯着屏幕」才允许翻页 / 调音量 / 张嘴点击。判据（全部来自你本人四轮实机采集，不是猜的）：\n① 脸在画面里、且脸够大（脸高占画面 ≥20%）——手机放桌上 / 人走开就不触发；\n② 偏航不超过你本人基准线 ±10°——头转开看别处就不触发；\n③ 滚转不超过 ±20°——躺下、侧脸不触发；\n④ 睁眼占比 ≥30%（最近 1.5 秒里"两只眼平均睁着"的帧比例）——**眼睛离开屏幕**就不触发。\n关于④：实测你最远 50cm 盯着屏幕时两只眼的中位数是 **1.00**，眼睛往下看别处时是 **0.01** —— 这项对你的"眼睛"是有效的；但 **30cm 近距离下 ML Kit 本来就把睁眼读得很低**（盯着屏幕时中位数只有 0.21），实测两项分布重叠，所以**近距离档自动跳过这条**（只用①②③）。\n默认是「观察」：它只把"本来会拦掉哪一次触发"写进日志，不真的拦 —— 我先用量出来的代价（会不会误伤真实动作）来决定要不要默认拦截。你也可以自己拨到「拦截」，不满意随时拨回来。\n摇头的手势会豁免对应判据：左右扭头本身就是偏航、歪头调音量本身就是滚转，拿它当门等于把这两条通道关掉。</string>
+
     <!-- ================= v5.39：注视数据采集（测试功能） ================= -->
 
     <string name="settings_probe_title">注视数据采集（测试功能）</string>

@@ -61,6 +61,16 @@
 > - **版本号为什么跳到 5.60**：同仓库还有一条**检测/日志线**的并行会话（它提交过 v5.46 的验收数字），
 >   `5.52~5.59` 留给它，避免撞车。它只改 `.md`，本线只改 `res/` + `app/src/.../MainActivity.kt` 等，
 >   两边已核对没有互相冲掉；但**两边都会 `adb install`**，同时上机会互相顶掉版本，动手前先确认。
+>
+> ### 📌 磁盘已清理（2026-09-17 深夜，用户要求「只留 5.36 和 5.60，其余全删」）
+>
+> `backup\` 现在**只有 `GazeScroll-v5.36`（用户认可锚点）与 `GazeScroll-v5.60`（当前在用）**；
+> `apk\` 里**只有 `gazescroll-5.36-debug.apk` 与 `gazescroll-5.60-debug.apk`**，
+> 但**所有验证日志 / probe CSV / prefs 现场一律保留**（证据，几十 KB 而已）。共释放 4.26 GB。
+> **旧版本没有丢**：git 仓库才 2 MB、30 个 tag 全在 —— 要哪个版本就
+> `git checkout <tag> -- app tools` 再 `--offline assembleDebug` 重建，APK 也就回来了。
+> ⚠️ 因此本文档里那些 `apk\gazescroll-5.4x-debug.apk` 的引用**现在指向不存在的文件**，
+> 以及 `tools\install-v539.ps1` / `install-v540.ps1` 也已经没有对应 APK —— 需要时按 tag 重建。
 
 ---
 

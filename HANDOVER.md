@@ -265,9 +265,16 @@ CSV 落在 `files/probe/`，用 `adb shell "run-as com.example.gazescroll cat <p
     —— **就是一次真实的抬头**，与"抬头翻页"完全一致，任何阈值都分不开；只有注视门能碰一点
     （同场 19:38:33 那次它标了 `head-turned yaw=+10.4°`）。
 
-**v5.46 那场（1.5 小时真实使用）的验收数据**：`flicker ignored=22`、`occlusion detected=8`（全部
-`headBaseline=kept`、1 次 `reset`）、`blocked=2 / would-block=6`、触发 仰头 25 / 点头 8 / 扭头 13、
-注入 UP 27 / DOWN 6。
+**v5.46 那场（19:53~22:17，共 2.4 小时真实使用）的最终验收数据**：
+- **抖动**：`flicker ignored=165` —— 165 次 1~2 帧的人脸漏检被正确忽略，不再变成遮挡
+- **遮挡**：`occlusion detected=20`（v5.44 那场是 47 次），且 **20 次全部 `headBaseline=kept`**，
+  只有 1 次 `reset`（丢脸 ≥1 秒）→ **基准线不再被无脑清空**
+- **注视门（拦截）**：`blocked=12 / would-block=6` = 2.4 小时共 18 次判错（**约 8 分钟一次**），
+  原因 `head-turned ×16 / head-tilted ×1 / eyes-away ×1` —— 正是它该拦的那三类
+- **触发 / 注入**：仰头 63 / 点头 22 / 扭头 23；注入 UP 64 / DOWN 13 / 左右 23 / 点击 4
+- 22:18 之后手机息屏、无线调试断开，抓取循环空转到 22:54 正常收尾（`capture window finished`）
+- ⚠️ 用户**还没有口头确认**这一版的体感（他只说了"保留这一版的数据"）—— 下一轮先问体感，
+  再决定是否继续动 §8.2 里的线索
 
 ---
 

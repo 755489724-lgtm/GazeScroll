@@ -170,6 +170,30 @@ private const val REF_LOG_INTERVAL_MS = 400L
         /** 打"检测抖动被忽略"那行的最小间隔（v5.45），避免刷屏。 */
         private const val FLICKER_LOG_INTERVAL_MS = 2000L
 
+        /**
+         * 遮挡时要丢脸多久才值得**清空头部基准线**（v5.46）。
+         *
+         * ## 实机依据（2026-09-17 19:38~19:39，用户报"没看屏幕还是触发了仰头 / 还有一次误触"）
+         *
+         * 那一场有 11 次遮挡（丢脸 358~737ms），每次都无条件 `recalibrate()` ——
+         * **基准线被清空、然后在"用户正抬头看别处"的那几帧上重建**。诊断行实测：
+         *
+         * ```
+         * 19:38:38  raw 11.1  base 13.9  signed  -2.8
+         * 19:38:44  raw 17.3  base 10.4  signed  +6.9   ← 仰头触发
+         * 19:39:12  raw  7.9  base 25.5  signed -17.6   ← 基准线被锚在"抬头看别处"的姿势上
+         * 19:39:19  nodDown triggered  signed=-5.0°（阈值 2.5°）  ← 用户报的那次误触
+         * ```
+         *
+         * 三秒内基准线 7.1 → 13.9 → 10.4 → 16.9 → 19.0 → 25.5 → 10.0：正常的 45 帧中位数
+         * 不可能这么跳，只有"被清空重学"才做得到。这与 v5.36/v5.37 那次"基准线被锚到 32.6°"
+         * 是同一类事故（§6.2 的三个问题），只是触发源从 `TiltDetector.reset()` 换成了这里。
+         *
+         * 所以现在只在**丢脸 ≥1 秒**时才重学（那时姿势确实可能变了）；几百毫秒的丢失
+         * 只清手势状态、**保留基准线窗口**（窗口里本来就只有丢脸之前的样本，中位数仍然有效）。
+         */
+        private const val OCCLUSION_RECALIBRATE_MIN_MS = 1000L
+
         /** Give up after this many consecutive unproductive rebinds. */
         private const val MAX_RESTART_ATTEMPTS = 3
 
@@ -1627,7 +1651,12 @@ private const val REF_LOG_INTERVAL_MS = 400L
         lastOcclusionAtMs = now
         occlusionUntilMs = now + suppressMs
         occlusionEvents++
-        headPoseDetector?.recalibrate()
+        // v5.46：**不再无条件清空头部基准线** —— 见 [OCCLUSION_RECALIBRATE_MIN_MS]。
+        // 原来这里每次都 recalibrate()，而"丢脸几百毫秒"多数只是用户抬头看了别处：
+        // 基准线被清空后就在"他正抬头"的那几帧上重建，回到手机上时 signed 直接翻号 → 误触。
+        if (lostFor >= OCCLUSION_RECALIBRATE_MIN_MS) {
+            headPoseDetector?.recalibrate()
+        }
         blinkDetector?.reset()
         tiltDetector?.reset()
         // 张嘴检测也要重学：手挡脸时读出的嘴部数据完全不可信，v5.0 实测它会读出
@@ -1637,7 +1666,8 @@ private const val REF_LOG_INTERVAL_MS = 400L
         Log.i(
             "GazeDiag",
             "occlusion detected (reason=${reason.label}, faceLostFor=${lostFor}ms) " +
-                "-> suppress ${suppressMs}ms (#${occlusionEvents})",
+                "-> suppress ${suppressMs}ms (#${occlusionEvents})" +
+                " headBaseline=${if (lostFor >= OCCLUSION_RECALIBRATE_MIN_MS) "reset" else "kept(${lostFor}ms)"}",
         )
     }
 

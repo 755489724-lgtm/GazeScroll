@@ -613,21 +613,31 @@ class HeadPoseDetector(
         private const val MIN_TRAVEL_FRACTION = 0.5f
 
         /**
-         * 近距离档的「突然性」窗口（v5.28）：从 onset（0.4×阈值）涨到阈值最多容许这么久。
+         * 近距离档的「突然性」窗口（v5.28 引入，**v5.44 由 300ms 放宽到 450ms**）：
+         * 从 onset（0.4×阈值）涨到阈值最多容许这么久。
          *
          * 用户的原话：「点头和扭头的判定是**突然性**的，就是突然快速的点头，而不是慢慢的晃动，
          * 所以加一个判定方式吧，**不是快速扭头点头的时候，就不触发**」。
          *
-         * 近距离开头用 500ms（远处也一直是 500ms），实测近距离所有**真实**动作的
-         * 「onset → 触发」延迟都在 249ms 以内（本场 52 次触发统计：中位数约 100ms、
-         * 最长 249ms），所以 300ms 只砍得掉慢动作：头部从 1.5° 慢慢爬到 2.5~3.8°
-         * （速度 ≤0.006°/ms，就是"慢慢晃"），同时保留全部真实快速动作。
+         * v5.28 当时取 300ms，依据是"实测近距离所有真实动作的 onset → 触发延迟都在 249ms 以内"。
+         * **v5.44 实机数据推翻了这个前提**（2026-09-17 19:16 那次使用）：
+         *
+         * ```
+         * 19:16:23.675 I/HeadPose: pitch 13.78° base 7.76° delta 6.0°
+         * 19:16:23.675 I/HeadPose: ignored slow lean: rise 429ms > 300ms   ← 一次真实仰头被整段作废
+         * 19:16:23.676 tiltUp candidate rejected: pitch=6.0° speed=0.0569°/ms gate=0.0240°/ms
+         *              ... dist=near reason=slow-rise
+         * ```
+         *
+         * 用户的原话是「前面两分钟仰头翻页失灵」。全场这种"起手太慢"共 6 次，实测时长
+         * **336 / 429 / 429 / 563 / 684 / 839 ms** —— 300ms 把其中 3 次真实动作砍掉了。
+         * 放宽到 450ms 能救回 336/429/429 三次，仍挡得住 563ms 以上的慢晃。
          *
          * ⚠️ 为什么不用"触发延迟"直接做判据：延迟里**包含门控造成的等待**
          * （v5.27 远距离那两次 575/624ms 其实是很快的仰头，只是被闭眼门等了 2~3 帧），
          * 拿它当"慢"的判据会误杀真实动作。这里只量**从起点到第一次越阈值**的用时。
          */
-        private const val NEAR_SUDDEN_RISE_MS = 300L
+        private const val NEAR_SUDDEN_RISE_MS = 450L
 
         /**
          * 近距离档「突然扭头」的窗口（v5.28）：转速慢于这个节奏就不算扭头。
@@ -1863,7 +1873,7 @@ class HeadPoseDetector(
                 pitchReachedAtMs = nowMs
                 val riseMs = nowMs - pitchOnsetAtMs
                 // v5.28：近距离档要求"突然"（见 [NEAR_SUDDEN_RISE_MS]），远距离仍用用户设置的动作窗口。
-                val window = if (nearDistance) minOf(motionWindowMs, NEAR_SUDDEN_RISE_MS) else motionWindowMs
+                val window = pitchActionWindowMs()
                 pitchArmed = riseMs <= window
                 if (!pitchArmed) Log.i(TAG, "ignored slow lean: rise ${riseMs}ms > ${window}ms")
             }
@@ -1934,6 +1944,8 @@ class HeadPoseDetector(
                         // v5.28：扭头摆幅 + 已走过的位移（两个新判据的输入，可直接核对）。
                         "yawSwing=${"%.1f".format(yawSwingDeg)} " +
                         "travel=${if (excursionStartValid) "%.2f".format(abs(signed - excursionStartValue)) else "-"}" +
+                        // v5.44：当前**实际生效**的"突然性"窗口（与判定用的是同一个函数，永远自洽）。
+                        " actWin=${pitchActionWindowMs()}ms" +
                         " reason=$reject",
                 )
             }
@@ -2210,8 +2222,16 @@ class HeadPoseDetector(
      *
      * @param signedPitch 本帧的有符号俯仰偏移：负 = 低头（nod down），正 = 抬头（tilt up）
      */
-    private fun nearNodDownBoost(signedPitch: Float): Float = when {
-        // 仰头方向一律不动（v5.7：被动仰视 4~7° 不能被放行）。
+    /**
+     * 当前生效的俯仰「突然性」窗口（v5.28 起近距离收紧，v5.44 把近距离档 300 → 450ms）。
+     *
+     * 单独抽成函数是为了让**日志与判定用的是同一个值**（日志打 `actWin=`），
+     * 不会出现"日志说 450 实际判 300"这种自相矛盾 —— 与 v5.7 打实际生效增益同一套做法。
+     */
+    private fun pitchActionWindowMs(): Long =
+        if (nearDistance) minOf(motionWindowMs, NEAR_SUDDEN_RISE_MS) else motionWindowMs
+
+    private fun nearNodDownBoost(signedPitch: Float): Float = when {        // 仰头方向一律不动（v5.7：被动仰视 4~7° 不能被放行）。
         signedPitch >= 0f -> 1f
         // v5.12：**近距离 + 俯视**再给一档 —— 见 NEAR_LOOKDOWN_NOD_BOOST 的实机数据。
         nearDistance && lookingDown -> NEAR_LOOKDOWN_NOD_BOOST

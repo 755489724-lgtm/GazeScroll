@@ -1,0 +1,133 @@
+﻿=== HeadPoseDetector v5.44 离线回放（真实代码 + 打印版 Log 桩）===
+
+[1] 近距离仰头（实测 6 次起手时长逐条回放）
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.4° speed=0.0099°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.40 actWin=450ms reason=below-threshold
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] tiltUp triggered: pitch=6.8° speed=0.0378°/ms threshold=3.8° dist=near boost=1.00 latency=270ms (fast) travel=- yawSwing=0.0 shake=1.00 rev=0 — ctx 24f: -2070ms|0.0/-0.0/0.55 -1980ms|0.0/-0.0/0.55 -1890ms|0.0/-0.0/0.55 -1800ms|0.0/-0.0/0.55 -1710ms|0.0/-0.0/0.55 -1620ms|0.0/-0.0/0.55 -1530ms|0.0/-0.0/0.55 -1440ms|0.0/-0.0/0.55 -1350ms|0.0/-0.0/0.55 -1260ms|0.0/-0.0/0.55 -1170ms|0.0/-0.0/0.55 -1080ms|0.0/-0.0/0.55 -990ms|0.0/-0.0/0.55 -900ms|0.0/-0.0/0.55 -810ms|0.0/-0.0/0.55 -720ms|0.0/-0.0/0.55 -630ms|0.0/-0.0/0.55 -540ms|0.0/-0.0/0.55 -450ms|0.0/-0.0/0.55 -360ms|0.0/-0.0/0.55 -270ms|1.6/-0.0/0.55 -180ms|2.5/-0.0/0.55 -90ms|3.4/-0.0/0.55 0ms|6.8/-0.0/0.55
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0189°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] recenter lock released, head settled at own posture (pitch=6.8 settled=6.8 neutral=±1.5 450ms)
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+  PASS  起手 336ms → 应触发
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.4° speed=0.0066°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.40 actWin=450ms reason=below-threshold
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] tiltUp triggered: pitch=6.8° speed=0.0378°/ms threshold=3.8° dist=near boost=1.00 latency=360ms (fast) travel=- yawSwing=0.0 shake=1.00 rev=0 — ctx 24f: -2070ms|0.0/-0.0/0.55 -1980ms|0.0/-0.0/0.55 -1890ms|0.0/-0.0/0.55 -1800ms|0.0/-0.0/0.55 -1710ms|0.0/-0.0/0.55 -1620ms|0.0/-0.0/0.55 -1530ms|0.0/-0.0/0.55 -1440ms|0.0/-0.0/0.55 -1350ms|0.0/-0.0/0.55 -1260ms|0.0/-0.0/0.55 -1170ms|0.0/-0.0/0.55 -1080ms|0.0/-0.0/0.55 -990ms|0.0/-0.0/0.55 -900ms|0.0/-0.0/0.55 -810ms|0.0/-0.0/0.55 -720ms|0.0/-0.0/0.55 -630ms|0.0/-0.0/0.55 -540ms|0.0/-0.0/0.55 -450ms|0.0/-0.0/0.55 -360ms|1.6/-0.0/0.55 -270ms|2.2/-0.0/0.55 -180ms|2.8/-0.0/0.55 -90ms|3.4/-0.0/0.55 0ms|6.8/-0.0/0.55
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0189°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] recenter lock released, head settled at own posture (pitch=6.8 settled=6.8 neutral=±1.5 450ms)
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+  PASS  起手 429ms → 应触发
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.4° speed=0.0066°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.40 actWin=450ms reason=below-threshold
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] tiltUp triggered: pitch=6.8° speed=0.0378°/ms threshold=3.8° dist=near boost=1.00 latency=360ms (fast) travel=- yawSwing=0.0 shake=1.00 rev=0 — ctx 24f: -2070ms|0.0/-0.0/0.55 -1980ms|0.0/-0.0/0.55 -1890ms|0.0/-0.0/0.55 -1800ms|0.0/-0.0/0.55 -1710ms|0.0/-0.0/0.55 -1620ms|0.0/-0.0/0.55 -1530ms|0.0/-0.0/0.55 -1440ms|0.0/-0.0/0.55 -1350ms|0.0/-0.0/0.55 -1260ms|0.0/-0.0/0.55 -1170ms|0.0/-0.0/0.55 -1080ms|0.0/-0.0/0.55 -990ms|0.0/-0.0/0.55 -900ms|0.0/-0.0/0.55 -810ms|0.0/-0.0/0.55 -720ms|0.0/-0.0/0.55 -630ms|0.0/-0.0/0.55 -540ms|0.0/-0.0/0.55 -450ms|0.0/-0.0/0.55 -360ms|1.6/-0.0/0.55 -270ms|2.2/-0.0/0.55 -180ms|2.8/-0.0/0.55 -90ms|3.4/-0.0/0.55 0ms|6.8/-0.0/0.55
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0189°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] recenter lock released, head settled at own posture (pitch=6.8 settled=6.8 neutral=±1.5 450ms)
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+  PASS  起手 429ms → 应触发
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.0° speed=0.0040°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.04 actWin=450ms reason=below-threshold
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.4° speed=0.0040°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.40 actWin=450ms reason=below-threshold
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] ignored slow lean: rise 540ms > 450ms
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0378°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+  PASS  起手 563ms → 仍然应被挡（慢晃）
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.1° speed=0.0033°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.10 actWin=450ms reason=below-threshold
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.4° speed=0.0033°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.40 actWin=450ms reason=below-threshold
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] ignored slow lean: rise 630ms > 450ms
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0378°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+  PASS  起手 684ms → 仍然应被挡（慢晃）
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.2° speed=0.0025°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.18 actWin=450ms reason=below-threshold
+    [LOG HeadPose] tiltUp candidate rejected: pitch=3.4° speed=0.0025°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=3.40 actWin=450ms reason=below-threshold
+    [LOG HeadPose] pitch 14.8° base 8.0° delta 6.8° yaw 0.0°
+    [LOG HeadPose] ignored slow lean: rise 810ms > 450ms
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0378°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=6.8° speed=0.0000°/ms gate=0.0240°/ms threshold=3.8° dist=near posture=down shake=1.00 rev=0 boost=1.00 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=6.80 actWin=450ms reason=slow-rise
+  PASS  起手 839ms → 仍然应被挡（慢晃）
+
+[2] 远距离不受影响（窗口仍是用户设的 500ms，阈值 6.0°）
+    [LOG HeadPose] pitch 6.5666666° base 2.0° delta 4.6° yaw 0.0°
+    [LOG HeadPose] tiltUp candidate rejected: pitch=5.6° speed=0.0115°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=5.60 actWin=500ms reason=below-threshold
+    [LOG HeadPose] pitch 11.0° base 2.0° delta 9.0° yaw 0.0°
+    [LOG HeadPose] tiltUp triggered: pitch=9.0° speed=0.0378°/ms threshold=6.0° dist=mid/far boost=1.00 latency=360ms (fast) travel=- yawSwing=0.0 shake=1.00 rev=0 — ctx 24f: -2070ms|0.0/-0.0/0.35 -1980ms|0.0/-0.0/0.35 -1890ms|0.0/-0.0/0.35 -1800ms|0.0/-0.0/0.35 -1710ms|0.0/-0.0/0.35 -1620ms|0.0/-0.0/0.35 -1530ms|0.0/-0.0/0.35 -1440ms|0.0/-0.0/0.35 -1350ms|0.0/-0.0/0.35 -1260ms|0.0/-0.0/0.35 -1170ms|0.0/-0.0/0.35 -1080ms|0.0/-0.0/0.35 -990ms|0.0/-0.0/0.35 -900ms|0.0/-0.0/0.35 -810ms|0.0/-0.0/0.35 -720ms|0.0/-0.0/0.35 -630ms|0.0/-0.0/0.35 -540ms|0.0/-0.0/0.35 -450ms|0.0/-0.0/0.35 -360ms|2.5/-0.0/0.35 -270ms|3.5/-0.0/0.35 -180ms|4.6/-0.0/0.35 -90ms|5.6/-0.0/0.35 0ms|9.0/-0.0/0.35
+    [LOG HeadPose] pitch 11.0° base 2.0° delta 9.0° yaw 0.0°
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0189°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=500ms reason=hold-not-met
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=500ms reason=hold-not-met
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=500ms reason=speed-gate
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=500ms reason=speed-gate
+    [LOG HeadPose] recenter lock released, head settled at own posture (pitch=9.0 settled=9.0 neutral=±2.4 450ms)
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=500ms reason=speed-gate
+  PASS  远档起手 400ms → 触发
+    [LOG HeadPose] pitch 6.05° base 2.0° delta 4.1° yaw 0.0°
+    [LOG HeadPose] tiltUp candidate rejected: pitch=5.1° speed=0.0057°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=5.08 actWin=500ms reason=below-threshold
+    [LOG HeadPose] tiltUp candidate rejected: pitch=5.6° speed=0.0057°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=5.60 actWin=500ms reason=below-threshold
+    [LOG HeadPose] pitch 11.0° base 2.0° delta 9.0° yaw 0.0°
+    [LOG HeadPose] ignored slow lean: rise 630ms > 500ms
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0378°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=9.00 actWin=500ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=9.00 actWin=500ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=9.00 actWin=500ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=9.00 actWin=500ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=9.00 actWin=500ms reason=slow-rise
+    [LOG HeadPose] tiltUp candidate rejected: pitch=9.0° speed=0.0000°/ms gate=0.0120°/ms threshold=6.0° dist=far posture=flat shake=1.00 rev=0 boost=1.00 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=9.00 actWin=500ms reason=slow-rise
+  PASS  远档起手 700ms → 被挡（>500ms）
+
+[3] 近档点头（这次没改的那条通道）行为不变：快速点头触发、慢晃不触发
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] nodDown candidate rejected: pitch=-2.2° speed=0.0122°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=- actWin=450ms reason=below-threshold
+    [LOG HeadPose] pitch 2.5° base 8.0° delta -5.5° yaw 0.0°
+    [LOG HeadPose] nodDown triggered (boosted, dist=near posture=down threshold=2.5 light=yes(0.0→-5.5)° strong=yes) pitch=-5.5° latency=180ms (fast, v=0.037°/ms) travel=- yawSwing=0.0 shake=1.00 rev=0 — ctx 24f: -2070ms|0.0/-0.0/0.55 -1980ms|0.0/-0.0/0.55 -1890ms|0.0/-0.0/0.55 -1800ms|0.0/-0.0/0.55 -1710ms|0.0/-0.0/0.55 -1620ms|0.0/-0.0/0.55 -1530ms|0.0/-0.0/0.55 -1440ms|0.0/-0.0/0.55 -1350ms|0.0/-0.0/0.55 -1260ms|0.0/-0.0/0.55 -1170ms|0.0/-0.0/0.55 -1080ms|0.0/-0.0/0.55 -990ms|0.0/-0.0/0.55 -900ms|0.0/-0.0/0.55 -810ms|0.0/-0.0/0.55 -720ms|0.0/-0.0/0.55 -630ms|0.0/-0.0/0.55 -540ms|0.0/-0.0/0.55 -450ms|0.0/-0.0/0.55 -360ms|0.0/-0.0/0.55 -270ms|0.0/-0.0/0.55 -180ms|-1.1/-0.0/0.55 -90ms|-2.2/-0.0/0.55 0ms|-5.5/-0.0/0.55
+    [LOG HeadPose] pitch 2.5° base 8.0° delta -5.5° yaw 0.0°
+    [LOG HeadPose] nodDown candidate rejected: pitch=-5.5° speed=0.0183°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] nodDown candidate rejected: pitch=-5.5° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] nodDown candidate rejected: pitch=-5.5° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] nodDown candidate rejected: pitch=-5.5° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+    [LOG HeadPose] recenter lock released, head settled at own posture (pitch=-5.5 settled=-5.5 neutral=±1.0 450ms)
+    [LOG HeadPose] nodDown candidate rejected: pitch=-5.5° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=1 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=0.00 actWin=450ms reason=no-travel
+  PASS  近档点头 200ms → 触发（A 方案没做，阈值仍是 2.5°）
+    [LOG HeadPose] distance tier: mid/far -> near (faceRatio raw=0.55 smoothed=0.55 enter=0.46 exit=0.4) -> boost=×2.00 speedGate=0.0240°/ms staticRange=3.0° nodDownThreshold=4.1°
+    [LOG HeadPose] posture changed: flat -> down (baseline=8.0° baseThreshold=4.0°) — 近距离俯视点头增益 ×0.42
+    [LOG HeadPose] nodDown candidate rejected: pitch=-2.4° speed=0.0063°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=1.71 actWin=450ms reason=below-threshold
+    [LOG HeadPose] nodDown candidate rejected: pitch=-3.0° speed=0.0063°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=2.29 actWin=450ms reason=hold-not-met
+    [LOG HeadPose] nodDown candidate rejected: pitch=-3.0° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=2.29 actWin=450ms reason=hold-not-met
+    [LOG HeadPose] nodDown candidate rejected: pitch=-3.0° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=- actWin=450ms reason=hold-not-met
+    [LOG HeadPose] nodDown candidate rejected: pitch=-3.0° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=- actWin=450ms reason=hold-not-met
+    [LOG HeadPose] nodDown candidate rejected: pitch=-3.0° speed=0.0000°/ms gate=0.0240°/ms threshold=2.5° dist=near posture=down shake=1.00 rev=0 boost=0.42 strong=0 refV=0/+0.000 thr=0.025 yawSwing=0.0 travel=- actWin=450ms reason=speed-gate
+  PASS  近档边缘 + 匀速慢晃 700ms → 不触发
+
+=== 结果：全部通过 ===

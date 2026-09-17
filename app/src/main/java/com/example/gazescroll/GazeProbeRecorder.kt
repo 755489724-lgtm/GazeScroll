@@ -157,10 +157,18 @@ class GazeProbeRecorder(
         /** 盖住摄像头 ≥ 这么久 → 开始（空闲时）/ 结束（录制中）。用户口述的"3 秒"。 */
         const val START_COVER_MS = 3000L
 
-        /** 录制中盖住 ≥ 这个时长就结束（与开始用同一条界线）。 */
-        const val STOP_COVER_MS = 3000L
+        /**
+         * 录制中盖住 ≥ 这个时长就结束（v5.41：3000 → **6000**）。
+         *
+         * 为什么改：第一轮正式采集里，用户按脚本"盖 1 秒"分段的实际时长是
+         * **2153 / 2109 / 2299ms**（他对"1 秒"的感觉偏长），于是第 4 段之后那次盖到
+         * **3036ms** 就越过了 3000ms 的界线，整场录制被提前结束 —— 11 段只录到 5 段。
+         * 分段与结束之间只有 800ms 的容错，对人是不可靠的。现在：
+         * **分段 1~6 秒（盖 2 秒）、结束 ≥6 秒（盖 8 秒）**，两边各留 3 秒以上余量。
+         */
+        const val STOP_COVER_MS = 6000L
 
-        /** 录制中盖住 1~3 秒算一次分段标记；不足 1 秒的手一晃忽略。 */
+        /** 录制中盖住 1~6 秒算一次分段标记；不足 1 秒的手一晃忽略。 */
         const val MIN_PHASE_COVER_MS = 1000L
 
         /** 单次录制的保险上限：5 分钟。 */
@@ -171,18 +179,32 @@ class GazeProbeRecorder(
          *
          * v5.39 只有这一条（32），实机证明**不够**：前置摄像头自动曝光会把被盖住的画面
          * 提亮到 32 以上，于是整场采集一次都没认出"盖住"。v5.40 起它降级为三条并联信号
-         * 里的一条（AEC 没来得及补偿时仍然有效），主判据交给近距离传感器与纹理量。
+         * 里的一条（AEC 没来得及补偿时仍然有效）。
          */
         const val COVER_LUMA_MAX = 32f
 
         /**
-         * 「画面被盖住」的纹理上限（v5.40）：抽样网格上相邻采样点的平均亮度差。
+         * 「画面被盖住」的纹理上限（v5.40 引入，v5.41 由 4.0 调到 **5.0**）。
          *
-         * 手掌/手指贴住镜头时画面完全离焦，相邻采样点几乎一样（个位数以下）；
-         * 正常画面（人脸、房间、哪怕是暗房间的噪点）都在它之上。
-         * CSV 里逐帧记了 `tex`、`cover-probe` 行每秒记一次，实测后可以再调。
+         * 抽样网格上相邻采样点的平均亮度差。实机实测（2026-09-17 那两场）：
+         *  - 手掌盖住镜头：**2.4 ~ 4.5**（刚盖上的头 1 秒是 7~13，等 AEC/对焦稳下来才掉下去）；
+         *  - 没盖住、画面里只有房间没有脸：**8.1 ~ 11.4**；
+         *  - 有脸时：15 ~ 22。
+         * 所以 5.0 站在两个分布中间，两边各有 3 个单位以上的余量。
          */
-        const val COVER_TEXTURE_MAX = 4f
+        const val COVER_TEXTURE_MAX = 5f
+
+        /**
+         * 近距离传感器的**旁证**上限（v5.41）：环境光 lux 必须同时低于它才算"盖住"。
+         *
+         * 为什么需要旁证：这颗 Xiaomi 的 proximity 是 on-change 的虚拟传感器，实测会
+         * **闩锁在 NEAR**——18:47:21 盖住之后它一直报 NEAR，脸回到画面里两分半都没回到 far
+         * （`18:47:24 face=true prox=NEAR lux=22`、`18:49:35 face=false prox=NEAR lux=55`）。
+         * 只信它的话，任何一次"脸离开画面"都会被当成盖住。
+         * 而环境光是可靠的：手掌盖住时 lux = **0~9**，没盖住时 = **21~55**（同一场实测）。
+         * 手机没有环境光时（lux 读不到）退化成"只信近距离传感器"。
+         */
+        const val COVER_LUX_MAX = 15f
 
         /** 人脸消失期间 `cover-probe` 诊断行的最小间隔。 */
         const val COVER_LOG_INTERVAL_MS = 1000L
@@ -263,18 +285,33 @@ class GazeProbeRecorder(
     private val nameFormat = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
     private val stampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
-    fun isCovered(sample: ProbeSample): Boolean {
-        if (sample.faceDetected) return false
-        // ① 近距离传感器（最硬的一条，与画面无关）。
-        if (sample.proximityAvailable && sample.proximityNear) return true
-        // ② 纹理量：手掌贴镜头 = 完全离焦 = 没有边缘，自动曝光变不出边缘来。
+    fun isCovered(sample: ProbeSample): Boolean = coverReason(sample) != null
+
+    /**
+     * 「这一帧摄像头被盖住了吗」—— 成立时返回是哪一条判据救的（诊断行用），否则 null。
+     *
+     * 三条独立信号并联（任意一条成立即算），全部读不到才退化成"只看人脸消失"：
+     *  1. **近距离传感器 + 环境光**：手掌贴住手机顶部时 proximity 翻"近"、环境光同时掉下来。
+     *     两个都要满足 —— 单靠 proximity 会被闩锁骗到（见 [COVER_LUX_MAX]）。
+     *  2. **纹理量**：手掌贴镜头 = 完全离焦 = 没有边缘；自动曝光只能整体提亮，变不出边缘。
+     *  3. **亮度**：AEC 还没补偿上来时仍然有效。
+     */
+    fun coverReason(sample: ProbeSample): String? {
+        if (sample.faceDetected) return null
+        // ① 近距离传感器 + 环境光旁证。
+        val lux = sample.lux
+        val luxOk = lux == null || lux < COVER_LUX_MAX
+        if (sample.proximityAvailable && sample.proximityNear && luxOk) {
+            return if (lux == null) "prox" else "prox+lux"
+        }
+        // ② 纹理量。
         val texture = sample.texture
-        if (texture != null && texture < COVER_TEXTURE_MAX) return true
-        // ③ 亮度（v5.39 的原判据，AEC 没来得及补偿时仍然有效）。
+        if (texture != null && texture < COVER_TEXTURE_MAX) return "tex"
+        // ③ 亮度。
         val luma = sample.luma
-        if (luma != null && luma < COVER_LUMA_MAX) return true
+        if (luma != null && luma < COVER_LUMA_MAX) return "luma"
         // 三条全都读不到（老机型没有近距离传感器、画面也读不出来）→ 退化成只看人脸消失。
-        return !sample.proximityAvailable && texture == null && luma == null
+        return if (!sample.proximityAvailable && texture == null && luma == null) "no-signal" else null
     }
 
     /** 开关被关掉（或服务停止）时调用：把进行中的一次录制收尾。 */
@@ -319,7 +356,8 @@ class GazeProbeRecorder(
                     "cover-probe faceLostFor=${nowMs - noFaceSinceMs}ms" +
                         " luma=${f(sample.luma, 1)} tex=${f(sample.texture, 1)}" +
                         " prox=${proximityLabel(sample)} lux=${f(sample.lux, 0)}" +
-                        " covered=${if (covered) 1 else 0} state=${state.label}",
+                        " covered=${if (covered) 1 else 0} why=${coverReason(sample) ?: "-"}" +
+                        " state=${state.label}",
                 )
             }
         }
@@ -378,8 +416,8 @@ class GazeProbeRecorder(
         if (appTag.isNotEmpty()) write("# app=$appTag")
         write("# session=${sessionIndex} start=${stampFormat.format(Date(sample.wallMs))}")
         write(
-            "# cover rule (v5.40): no face AND (proximity NEAR OR texture < ${f(COVER_TEXTURE_MAX, 1)}" +
-                " OR luma < ${f(COVER_LUMA_MAX, 1)}) ; " +
+            "# cover rule (v5.41): no face AND ( (proximity NEAR AND lux < ${f(COVER_LUX_MAX, 0)})" +
+                " OR texture < ${f(COVER_TEXTURE_MAX, 1)} OR luma < ${f(COVER_LUMA_MAX, 1)}) ; " +
                 "start >= ${START_COVER_MS}ms, phase cover ${MIN_PHASE_COVER_MS}..${STOP_COVER_MS}ms, " +
                 "stop >= ${STOP_COVER_MS}ms",
         )

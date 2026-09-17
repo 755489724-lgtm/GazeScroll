@@ -57,6 +57,7 @@ private class Rig {
         texture: Float? = null,
         proxNear: Boolean = false,
         proxAvailable: Boolean = false,
+        lux: Float? = null,
     ) {
         val effective = when {
             luma != null -> luma
@@ -76,6 +77,7 @@ private class Rig {
                 texture = effectiveTexture,
                 proximityNear = proxNear,
                 proximityAvailable = proxAvailable,
+                lux = lux,
                 boxLeft = if (face) 0.30f else -1f,
                 boxTop = if (face) 0.25f else -1f,
                 boxRight = if (face) 0.70f else -1f,
@@ -119,10 +121,11 @@ private class Rig {
         texture: Float? = null,
         proxNear: Boolean = false,
         proxAvailable: Boolean = false,
+        lux: Float? = null,
     ) {
         var remaining = ms
         while (remaining > 0) {
-            frame(face, dark, luma, stepMs, texture, proxNear, proxAvailable)
+            frame(face, dark, luma, stepMs, texture, proxNear, proxAvailable, lux)
             remaining -= stepMs
         }
     }
@@ -215,12 +218,12 @@ private fun testShortCoverIgnored() {
 }
 
 private fun testStopOnLongCover() {
-    println("\n[6] 录制中盖 3.2 秒 = 结束，写 SUMMARY 并关文件")
+    println("\n[6] 录制中盖 6.5 秒 = 结束，写 SUMMARY 并关文件")
     val r = Rig()
     r.hold(true, 1000)
     r.hold(false, 3200, dark = true)
     r.hold(true, 2000)
-    r.hold(false, 3200, dark = true)
+    r.hold(false, 6500, dark = true)
     check("回到 IDLE", r.recorder.state == ProbeState.IDLE, "state=${r.recorder.state}")
     check("关了文件", r.filesClosed == 1, "closed=${r.filesClosed}")
     check("有 SUMMARY", r.hasLine("# SUMMARY"))
@@ -250,7 +253,7 @@ private fun testSecondSessionNeedsNewCover() {
     r.hold(true, 1000)
     r.hold(false, 3200, dark = true)
     r.hold(true, 1000)
-    r.hold(false, 3200, dark = true)
+    r.hold(false, 6500, dark = true)
     check("第一次已结束", r.recorder.state == ProbeState.IDLE)
     r.hold(true, 3000)
     check("只露脸不会开始", r.recorder.state == ProbeState.IDLE && r.filesOpened == 1, "state=${r.recorder.state}")
@@ -285,11 +288,11 @@ private fun testLumaUnavailableFallsBackToFaceLoss() {
         r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 88f, texture = 1.5f)),
     )
     check(
-        "没脸 + 画面又亮又有纹理，但近距离传感器 NEAR → 算盖住 ★硬信号",
+        "没脸 + 画面又亮又有纹理，但近距离传感器 NEAR + 环境光也暗 → 算盖住 ★硬信号",
         r.recorder.isCovered(
             ProbeSample(
                 0, false, false, 480, 640, luma = 88f, texture = 20f,
-                proximityNear = true, proximityAvailable = true,
+                proximityNear = true, proximityAvailable = true, lux = 8f,
             ),
         ),
     )
@@ -298,31 +301,103 @@ private fun testLumaUnavailableFallsBackToFaceLoss() {
         !r.recorder.isCovered(
             ProbeSample(
                 0, false, false, 480, 640, luma = 88f, texture = 20f,
-                proximityNear = false, proximityAvailable = true,
+                proximityNear = false, proximityAvailable = true, lux = 22f,
             ),
         ),
+    )
+    check(
+        "★近距离传感器闩锁在 NEAR、但房间是亮的（真实场景 18:47:24）→ 不算盖住",
+        !r.recorder.isCovered(
+            ProbeSample(
+                0, false, false, 480, 640, luma = 88f, texture = 20f,
+                proximityNear = true, proximityAvailable = true, lux = 22f,
+            ),
+        ),
+    )
+    check(
+        "近距离传感器 NEAR 且环境光读不到（没有 ALS 的机型）→ 仍然算盖住",
+        r.recorder.isCovered(
+            ProbeSample(
+                0, false, false, 480, 640, luma = 88f, texture = 20f,
+                proximityNear = true, proximityAvailable = true, lux = null,
+            ),
+        ),
+    )
+    check(
+        "盖住时纹理掉到 4.5（实测值）也算盖住",
+        r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 80f, texture = 4.5f)),
+    )
+    check(
+        "没盖住时纹理 8.2（实测地板值）不算盖住",
+        !r.recorder.isCovered(ProbeSample(0, false, false, 480, 640, luma = 99f, texture = 8.2f)),
+    )
+    check(
+        "coverReason 能说出是哪一条救的",
+        r.recorder.coverReason(
+            ProbeSample(
+                0, false, false, 480, 640, luma = 88f, texture = 20f,
+                proximityNear = true, proximityAvailable = true, lux = 8f,
+            ),
+        ) == "prox+lux",
     )
 }
 
 private fun testV539FailureCaseIsNowCovered() {
     println("\n[13] 回放 v5.39 那次真实失败：盖住时人脸消失 50 秒、画面被自动曝光提亮")
     val r = Rig()
-    // 自动曝光把被盖住的画面提到 88，纹理 1.5，近距离传感器 NEAR。
-    r.hold(true, 1500, proxAvailable = true)
+    // 自动曝光把被盖住的画面提到 88，纹理 1.5，近距离传感器 NEAR，环境光掉到 8。
+    r.hold(true, 1500, proxAvailable = true, lux = 22f)
     check("先见到脸", r.recorder.state == ProbeState.IDLE)
-    r.hold(false, 4000, luma = 88f, texture = 1.5f, proxNear = true, proxAvailable = true)
+    r.hold(
+        false, 4000, luma = 88f, texture = 1.5f,
+        proxNear = true, proxAvailable = true, lux = 8f,
+    )
     check(
         "现在能进入已就绪（v5.39 时这里一直是 idle）",
         r.recorder.state == ProbeState.ARMED,
         "state=${r.recorder.state}",
     )
-    r.hold(true, 1000, texture = 20f, proxAvailable = true)
+    r.hold(true, 1000, texture = 20f, proxAvailable = true, lux = 30f)
     check("露脸即开始录制", r.recorder.state == ProbeState.RECORDING && r.filesOpened == 1)
-    check("打了 cover-probe 诊断行", r.hasLog("cover-probe"), )
+    check("打了 cover-probe 诊断行", r.hasLog("cover-probe"))
     check(
-        "cover-probe 行里有三个信号",
-        r.logs.any { it.contains("cover-probe") && it.contains("luma=") && it.contains("tex=") && it.contains("prox=") },
+        "cover-probe 行里有三个信号与命中原因",
+        r.logs.any {
+            it.contains("cover-probe") && it.contains("luma=") && it.contains("tex=") &&
+                it.contains("prox=") && it.contains("why=")
+        },
     )
+}
+
+private fun testStopCoverThreshold() {
+    println("\n[14] 分段 / 结束的分界线是 6 秒（v5.41：用户按'1 秒'盖的实际是 2.1~2.3 秒）")
+    val r = Rig()
+    r.hold(true, 1000, proxAvailable = true, lux = 22f)
+    r.hold(false, 4000, proxNear = true, proxAvailable = true, lux = 8f)
+    r.hold(true, 1500, proxAvailable = true, lux = 22f)
+    check("录起来了", r.recorder.state == ProbeState.RECORDING, "state=${r.recorder.state}")
+
+    // 用户"盖 1 秒"的实测时长 2.2 秒 → 必须只算分段，不能结束。
+    r.hold(false, 2200, proxNear = true, proxAvailable = true, lux = 8f)
+    r.hold(true, 800, proxAvailable = true, lux = 22f)
+    check(
+        "盖 2.2 秒 = 分段，录制继续（v5.40 时会被 3 秒界线以外的情况误伤）",
+        r.recorder.state == ProbeState.RECORDING && r.recorder.phase == 2,
+        "state=${r.recorder.state} phase=${r.recorder.phase}",
+    )
+
+    // 用户"盖 3 秒"的实测时长 3.04 秒 → 在 v5.40 里会结束录制，现在必须仍然只是分段。
+    r.hold(false, 3040, proxNear = true, proxAvailable = true, lux = 8f)
+    r.hold(true, 800, proxAvailable = true, lux = 22f)
+    check(
+        "盖 3.04 秒 = 仍然只是分段（这正是第一轮把整场录制止住的那一下）",
+        r.recorder.state == ProbeState.RECORDING && r.recorder.phase == 3,
+        "state=${r.recorder.state} phase=${r.recorder.phase}",
+    )
+
+    r.hold(false, 6500, proxNear = true, proxAvailable = true, lux = 8f)
+    check("盖 6.5 秒 = 结束", r.recorder.state == ProbeState.IDLE, "state=${r.recorder.state}")
+    check("关了文件", r.filesClosed == 1)
 }
 
 private fun testDisableMidRecording() {
@@ -388,6 +463,7 @@ fun main() {
     testMaxSessionGuard()
     testStateLine()
     testV539FailureCaseIsNowCovered()
+    testStopCoverThreshold()
     println("\n=== 结果：${if (failures == 0) "全部通过" else "$failures 项失败"} ===")
     if (failures != 0) throw IllegalStateException("$failures 项失败")
 }

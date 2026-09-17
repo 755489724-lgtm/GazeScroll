@@ -1,72 +1,64 @@
-# GazeScroll 交班说明（锚点版本：v5.36）
+# GazeScroll 交班说明（当前版本：**v5.46**）
 
-> **⚠️ 2026-09-17 补充（v5.39 → v5.45）**：工作区现在**不是** v5.36，而是
-> **v5.45 = v5.36 + 「注视数据采集」（测试）+「注视门」（v5.43，默认「观察」只记录不拦）
-> + v5.44 近距离仰头窗口 450ms + v5.45 遮挡误判修复**。注视门默认不拦。
-> 锚点仍是 **v5.36**，一键装回用 `tools\install-v536.ps1`。
-> 细节见 `CHANGELOG.md` 的 `[5.45]`~`[5.39]` 各节、`README.md` 的「注视门」「注视数据采集」两节、
-> `backup\GazeScroll-v5.45\ROLLBACK.txt`。
-> **§7.2 那两个近距离档症状在本轮都有了实机量化结论**：
-> ① "仰头失灵"（两种成因都查清并修了）：近距离档 `NEAR_SUDDEN_RISE_MS` 300ms 太紧（实测 429ms → v5.44 放宽到 450ms）；
->    以及**"1~2 帧的人脸漏检被当成遮挡"**（v4.9 老逻辑，v5.45 加了 300ms 下限；
->    三场日志的丢失时长双峰：抖动 60~218ms vs 真遮挡 335~606ms，**毫无重叠**）。
-> ② "误触" = 近档点头阈值 2.5°，但**用户有意的轻点头（3.0~4.4°）与误触（4.9~8°）在幅度和速度上
->    完全重叠**，任何阈值都分不开（不要再试"调阈值"这条路）。
-> **重要：这些毛病在 v5.36 锚点里同样存在**（回退不能解决，见 CHANGELOG [5.45] 的对照表）。
-> 版本号之所以是 5.39~5.45：**v5.37 / v5.38 已被上一轮那次失败实验占用**（tag / backup / apk / 文档条目）。
-> 本文件其余内容（v5.36 的状态清单、判据全表、事故复盘、经验教训）**依然有效**。
-
-> 写给下一个接手的人（新的 DSH 会话）。这份文档**自包含**：不需要读历史对话，
-> 也不需要猜上一轮发生了什么。所有结论都有实机日志或离线回放支撑，出处都写在文中。
+> 写给下一个接手的人（新的 DSH 会话）。这份文档**自包含**：不需要读历史对话。
+> 更新于 2026-09-17 晚（上一轮会话生成）· 上一版交班文档对应 v5.36，本文件覆盖到 v5.46。
 >
-> 生成时间：2026-09-17 凌晨 · 生成者：上一轮会话
-> 当前工作区代码 = **v5.36**（用户认可的锚点版本），`git tag v5.36-anchor`。
+> **配套文档**（按需读，不用全读）：
+> - `CHANGELOG.md` 的 `[5.46]`~`[5.39]` 七节 = **本轮完整工作日志**（每版都带实测证据与决策依据）
+> - `backup\GazeScroll-v5.46\ROLLBACK.txt` = 本版回退点；`backup\GazeScroll-v5.36\ROLLBACK.txt` = 锚点回退点
+> - `backup\GazeScroll-v5.46\data\` = 本轮全部原始数据（9 场验证日志、5 份采集 CSV、A/B 对照、prefs 现场）
+> - `HANDOVER-v5.36-era.md`（仓库根目录，同一份也在 `backup\GazeScroll-v5.46\`）
+>   = **v5.36 时代的完整交班文档**：里面是 v5.30~v5.38 的全部细节（单眼闭眼四轮复盘、
+>   v5.37 事故、恢复机制清单、当时的功能与判据全表）。本文件是它的**续篇 + 覆盖到 v5.46 的更新**，
+>   要查 v5.36 之前的历史细节就去那份。
 
 ---
 
-## 📋 新会话开场白（把下面这段直接粘给下一个会话）
+## 📋 新会话开场白（把这段粘给下一个会话）
 
 ```text
 接手一个已经在做的 Android 项目：免手刷抖音的 GazeScroll。
 工作区：D:\ruanjian\deepseek harness\GazeScroll
-请先完整读 GazeScroll\HANDOVER.md（自包含交班文档，包含硬约束、当前锚点 v5.36 的全部状态、
-环境与命令、功能与判据全表、历史事故与教训、两个已知小问题、下一步建议）。
+请先完整读 GazeScroll\HANDOVER.md（自包含交班文档：硬约束、当前 v5.46 的全部状态、
+环境与命令、功能与判据全表、本轮 v5.39~v5.46 的经过与证据、坑与教训、下一步建议）。
 读完先给我一句话总结，然后等我派活。本轮不要改任何代码。
 
 要点提醒：
-- 当前锚点版本 v5.36（用户认可），手机上已装；工作区代码就是 v5.36，git tag v5.36-anchor。
+- 当前版本 v5.46，手机上已装；用户认可的锚点仍是 v5.36（git tag v5.36-anchor）。
 - 不联网、不推 GitHub；自己用 adb 抓日志，不要找我要日志。
 - 一次只改一件小事，改前备份 + git tag，改完装机实测，并在日志里留可核对的新字段。
 - 除了我点名的功能，其他一律不动。
+- 用户的设置项**不要代改**（我手改 SharedPreferences 曾把他的设置清空过一次，见 §7.1）。
 ```
 
 ---
 
 ## 0. 一句话
 
-小米 13 前置摄像头做免手翻页（刷抖音 `com.ss.android.ugc.aweme`）：眨眼 3 次 = 下一个、
-点头/仰头 = 上下翻、左右扭头 = 左右滑、张嘴 = 点击屏幕中央；**v5.30~v5.35 试过"单眼闭眼控音量"，
-四轮都做不稳，已废弃**；v5.35 起改成 **歪头（roll）→ 音量加/减**，v5.36 是用户认可的稳定锚点。
-纯本地 Android/Kotlin 工程，不联网、不推 GitHub。
+小米 13 前置摄像头做免手翻页（刷抖音）：眨眼=下一个、点头/仰头=上下翻、左右扭头=左右滑、
+张嘴=点击屏幕中央、歪头=音量加减；**v5.43 起新增「注视门」**（眼睛得盯着屏幕才允许触发，
+用户点名要的功能，默认「观察」模式，可拨「拦截」）；v5.39~v5.42 加了「注视数据采集」测试功能
+（盖住摄像头控制起止、逐帧写 CSV），用来把注视门的阈值**从真实数据里定出来**而不是猜。
 
 ---
 
-## 1. 硬约束（用户的要求，务必遵守 —— 违反会直接被退回）
+## 1. 硬约束（用户的要求，违反会被退回）
 
 1. **不联网、不推 GitHub**，全程本地开发 + 本地 git 提交。
-2. **不要要求用户提供日志**：自己用 adb 抓（无线调试，见 §3）。用户明确说过这点。
-3. **不要问用户"你当时在做什么"**：用户会描述现象（"23:00:50 左右音量不降反增"），
-   剩下的靠日志自己还原。
+2. **不要要求用户提供日志**：自己用 adb 抓（无线调试，见 §3）。用户明确说过。
+3. **不要问用户"你当时在做什么"**：他描述现象（"38分40秒左右我眼睛没盯着屏幕却触发了仰头"），
+   剩下的靠日志还原。
 4. **一步一小改**：一版只改一件事（最多一组相关的事），改完实测、留证据。
-5. **改前备份、留回退点**：`backup\GazeScroll-vX.Y` + `git tag`。
-6. **版本号递增**，并同步 `README.md` / `CHANGELOG.md`（用户会检查）。
+5. **改前备份、留回退点**：`backup\GazeScroll-vX.Y` + `git tag vX.Y`，并写 `ROLLBACK.txt`。
+6. **版本号递增**，同步 `README.md` / `CHANGELOG.md`（用户会检查）。
 7. **不要动（除非用户点名）**：阈值表本身、方向仲裁（v5.8 那套）、远距离行为、
    30cm 静止硬锁定（`HARD_LOCK_NEAR_RATIO=0.55` / `HARD_LOCK_STILL_MS=1200`）、
-   眨眼档位、用户的设置项。
-8. 用户说"其余的不要动" = **只改他点名的那一处**，其他行为一个字节都别变。
-9. **用户验收方式**：自己拿手机实测 → 口头反馈 → 我读日志核对。
-   所以每次交付都要**在日志里留下可核对的新字段**（这套做法很有效，请延续）。
-10. **用户觉得变差了就如实承认并回退**，不要辩解。本会话就回退过一次（v5.37 → v5.36）。
+   眨眼档位、**用户的设置项**。
+8. 用户说"其余的不要动" = 只改他点名的那一处，其他行为一个字节都别变。
+9. **验收方式**：他拿手机实测 → 口头反馈现象 → 我读日志核对。所以每次交付都要
+   **在日志里留下可核对的新字段**（这套做法被证明最有效，请延续）。
+10. 用户觉得变差了就**如实承认并回退**，不要辩解。他要"保留某一版继续优化"时，就
+    以那一版为基础继续改（不要动别的东西）。
 
 ---
 
@@ -74,332 +66,306 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 手机上安装的版本 | **v5.36**（`versionCode=86`，`versionName=5.36`），已确认 `dumpsys package` |
-| 工作区代码 | **v5.36**；`git checkout v5.36 -- app ... tools` 的结果；HEAD = `a55f965` |
-| 关键校验 | 用工作区源码**重新构建**出的 APK 与 `apk\gazescroll-5.36-debug.apk` **逐字节一致**（hash 相同）→ 装的就是当初认可的那一份 |
-| git 标签 | `v5.36-anchor`（当前锚点）、`v5.36`、`v5.29-stable`、`v5.3-stable`、`v5.8-stable`；v5.30~v5.38 的标签也都在 |
-| 备份 | `backup\GazeScroll-v5.36`（**用户认可的一版**，含源码 + APK + ROLLBACK）、`GazeScroll-v5.38` / `-v5.37` / `-v5.35` / `-v5.34`（历史上还有 v5.29/v5.8/v5.3） |
-| APK 归档 | `apk\gazescroll-5.3*.apk`（5.30~5.38 都在）；**要装的是 `gazescroll-5.36-debug.apk`** |
-| 验证日志 | `apk\v536-anchor-verify.log`（当前锚点会话，含 `Tilt:` 明细）；历史 `v5xx-verify.log` 一大堆 |
-| 一键装回 | `GazeScroll\tools\install-v536.ps1`（找设备 → `install -r -d` → 核对版本 → 重启抓取） |
+| 手机上安装的版本 | **v5.46**（`versionCode=96` / `versionName=5.46`） |
+| 工作区代码 | **v5.46**；HEAD 见 `git log --oneline -1` |
+| git 标签 | `v5.36-anchor`（**用户认可的锚点**）、`v5.36`~`v5.46` 各版、`v5.29-stable` / `v5.8-stable` / `v5.3-stable` |
+| 备份 | `backup\GazeScroll-v5.36`（锚点，含源码+APK+ROLLBACK）、`GazeScroll-v5.39`~`-v5.46`（每版都有） |
+| APK 归档 | `apk\gazescroll-5.46-debug.apk`（5.3~5.46 全部在） |
+| 本轮验证日志 | `apk\v539~v546-verify.log`（每版一场；`v546-verify.log` 是最新的真实使用数据） |
+| 一键装回锚点 | `GazeScroll\tools\install-v536.ps1` |
+| 各版一键装回 | `tools\install-v539.ps1` / `-v540.ps1` |
 
-**用户当前设置**（以设置页为准；日志里观测到的值）：
-灵敏度 6.0°、眨眼次数 **3**（会话里也出现过 2）、`headPoseInvertPitch=false`、
-全局冷却 2000ms（开）、hSwipe 20°、`invertYaw=false`、静止锁定开/1.5、
-动窗 500ms / 保持 150ms、自适应滑动 26%、张嘴灵敏度 MEDIUM；
-**歪头控音量：开、左=调高/右=调低**、触发角度**试过 10°，最后一次用的是 13°**、保持 0.3 秒、
-每次 1 档。**不要主动覆盖用户的这些设置。**
+**用户当前的设置**（以设置页为准，日志里观测值）：灵敏度 6.0°、`blinkTriggerCount=2`、
+`globalCooldownMs=2000`、静止锁定开/1.5、`listSwipeDistance=0.26`、`mouthSensitivity=MEDIUM`、
+歪头控音量开（左=加/右=减）、`tiltThresholdDeg=13.0`、`tiltHoldMs=300`、档位 1；
+**注视门 = ENFORCE（拦截）**；**注视数据采集 = 关**。
+（它们都在 `shared_prefs/gaze_scroll_prefs.xml` 里，**不要手改**，见 §7.1。）
 
 ---
 
 ## 3. 环境、路径与常用命令（照抄即可）
 
 ```powershell
-# 路径
 $proj  = 'D:\ruanjian\deepseek harness\GazeScroll'                       # 工程源码
 $apkD  = 'D:\ruanjian\deepseek harness\apk'                              # APK 与验证日志
 $adb   = 'D:\ruanjian\deepseek harness\.android-build\android-sdk\platform-tools\adb.exe'
 $jdk   = 'D:\ruanjian\deepseek harness\.android-build\jdk\jdk-17.0.20.1+1'
 $sdk   = 'D:\ruanjian\deepseek harness\.android-build\android-sdk'
 
-# 构建（必须 --offline：AGP 8.6.1 已缓存在 C:\Users\WIT_User\.gradle）
+# 构建（必须 --offline：AGP 8.6.1 与 kotlinc 都已缓存在 C:\Users\WIT_User\.gradle）
 $env:JAVA_HOME=$jdk; $env:ANDROID_HOME=$sdk
 cd 'D:\ruanjian\deepseek harness'
 .\GazeScroll\gradlew.bat -p GazeScroll --console=plain --offline assembleDebug
 
 # 发布 + 安装 + 启动
-Copy-Item "$proj\app\build\outputs\apk\debug\app-debug.apk" "$apkD\gazescroll-5.36-debug.apk" -Force
-& $adb install -r -d "$apkD\gazescroll-5.36-debug.apk"     # -d = 允许降级
+Copy-Item "$proj\app\build\outputs\apk\debug\app-debug.apk" "$apkD\gazescroll-5.46-debug.apk" -Force
+& $adb install -r -d "$apkD\gazescroll-5.46-debug.apk"     # -d = 允许降级
 & $adb shell "dumpsys package com.example.gazescroll | grep versionName"
-& $adb shell am start -n com.example.gazescroll/.MainActivity
+& $adb shell am start -n com.example.gazescroll/.MainActivity --ez com.example.gazescroll.OPEN_SETTINGS true
 
-# 抓日志（必须用 powershell，不是 pwsh；这台机器 PATH 里没有 pwsh）
+# 抓日志（必须用 powershell，不是 pwsh；最好用后台 job，别用 Start-Process，见 §7.8）
 powershell -NoProfile -ExecutionPolicy Bypass -File "$proj\tools\capture-loop.ps1" `
-    -Out "$apkD\v536-anchor-verify.log" -Minutes 180
+    -Out "$apkD\v547-verify.log" -Minutes 180
 ```
 
-**设备**：小米 13（fuxi/2211133C，HyperOS 3.0.308.0，Android 14 / SDK 34）。
-无线调试序列号形如 `192.168.3.32:<port>`，**端口每次息屏后会变**；掉了就用
-`& $adb mdns services` 找 `_adb-tls-connect` 再 `& $adb connect <ip:port>`；
-`capture-loop.ps1` 已内置重连（它会在日志里写 `device not reachable, retrying`）。
-若 mDNS 什么都搜不到、但手机还能 ping 通（`Test-Connection 192.168.3.32`），
-说明**手机上无线调试被关了** → 让用户去「开发者选项 → 无线调试」打开，别干等。
+设备：小米 13（fuxi/2211133C，HyperOS 3.0.308.0，Android 14 / SDK 34）。
+无线调试序列号形如 `192.168.3.32:<port>`，**端口每次息屏都会变**：
+`& $adb mdns services` 找 `_adb-tls-connect` → `& $adb connect <ip:port>`。
+**若 mDNS 什么都搜不到、但手机还能 ping 通（`Test-Connection 192.168.3.32`），
+说明手机上无线调试被关了 → 让用户去「开发者选项 → 无线调试」打开，别干等**（本轮遇到 4 次）。
+
+### 离线工具（本轮的成果，都值得复用）
+
+| 工具 | 干什么 | 怎么跑 |
+| --- | --- | --- |
+| `tools/tilt-replay/` | 编译**真实** `TiltDetector.kt` 回放歪头判据（25+ 项） | `powershell -File .\run.ps1` |
+| `tools/probe-replay/` | 编译**真实** `GazeProbeRecorder.kt`+`GazeGate.kt` 回放采集状态机与注视门（**96 项**） | 同上 |
+| `tools/headpose-replay/` | 编译**真实** `HeadPoseDetector.kt` 回放"突然性窗口"（**10 项**）；`ab-old-300ms.txt` 是 300/450ms 的 A/B 对照 | 同上 |
+| `tools/probe-analyze/analyze.ps1` | 采集 CSV 的**逐段统计**（-Feature eY 看单个量） | `-Csv <file>` |
+| `tools/probe-analyze/timeline.ps1` | 采集 CSV 的**每 2 秒走势**（看一段里有没有分段/漂移） | `-Csv <file>` |
+| `tools/probe-analyze/percentiles.ps1` | 逐段 **p5/中位/p95**（定阈值用） | `-Csv a.csv,b.csv -Features eY,eX,openL` |
+
+**回放/分析脚本的三个坑**：① `.ps1` 必须纯 ASCII（Windows PowerShell 5.1 按 ANSI 读无 BOM 的 .ps1）；
+② CSV 里**没有** `boxCy`/`eyeNoseDx` 这些派生列，要用 `analyze.ps1`（它现算）；③ 回放的**动作形状
+必须照抄实测**（慢起手 + 一帧快越阈值），否则你验证的是另一道门（本轮就踩过，见 §7.5）。
 
 ---
 
-## 4. v5.36 有什么（功能与判据全表）
+## 4. 现在有什么（功能与判据全表）
 
 ### 4.1 触发通道
 
-| 通道 | 动作 | 结果 | 代码位置 |
+| 通道 | 动作 | 结果 | 代码 |
 | --- | --- | --- | --- |
-| 眨眼 | 连眨 N 次（用户设 3） | 上滑（下一个视频），硬编码 | `BlinkDetector.kt` |
-| 点头 | 俯仰向下越阈值 | 下滑（上一个） | `HeadPoseDetector.kt` |
-| 仰头 | 俯仰向上越阈值 | 上滑 | 同上 |
-| 左/右扭头 | 偏航越阈值 | 左滑/右滑 | 同上 |
-| 张嘴 | 一次 | 屏幕中央点击（暂停/播放） | `MouthOpenDetector.kt` |
-| **歪头** | 相对头姿基准线歪到阈值并保持 | **音量 ±N 档**（默认左=加、右=减） | `TiltDetector.kt` |
+| 眨眼 | 连眨 N 次（用户设 2） | 上滑（下一个） | `BlinkDetector.kt` |
+| 点头 / 仰头 | 俯仰越阈值 | 下滑 / 上滑 | `HeadPoseDetector.kt` |
+| 左/右扭头 | 偏航越阈值 | 左滑 / 右滑 | 同上 |
+| 张嘴 | 一次 | 点击屏幕中央 | `MouthOpenDetector.kt` |
+| 歪头 | 相对基准线歪到阈值并保持 | 音量 ±N 档 | `TiltDetector.kt` |
 
-### 4.2 歪头控音量（v5.35 引入，v5.36 定稿）—— 本会话的主要新功能
+### 4.2 注视门（v5.43，用户当前拨在**拦截**）
 
-判据（全部满足才触发）：
+**四条判据**（任一不成立 = "没在看着屏幕"；读数缺失一律放行 fail-open）：
 
-1. **`tilt = roll − baseline`**，`roll` 是 ML Kit 的 `headEulerAngleZ`（滚转/歪头）。
-   `baseline` = 最近 **45 帧**（≈4 秒）滚转角的中位数。
-2. **歪着的时候不更新基准线**：只有 `|tilt| ≤ 阈值` 时才把这一帧喂进基准线窗口，
-   否则一次故意歪头（停 1~2 秒）会把中位数带走。（这是 v5.36 的修复，见 §5.3）
-3. `|tilt| ≥ 阈值`：可选 **10 / 13（默认）/ 16 / 20°**（设置页「灵敏度 · 触发角度」）。
-4. 保持 **0.2 / 0.3（默认）/ 0.5 / 0.8 秒**（「灵敏度 · 保持时间」）。
-5. **一次歪头只调一组档位**：触发后必须回到中位带（`|tilt| ≤ 0.4×阈值`）并保持 400ms。
-6. **两秒动作间隔、没有提前量**（用户原话要求）：起手那一帧必须晚于
-   `上一次任何动作（翻页/调音量/张嘴）+ 2 秒`，早了整段作废（不顺延）。
-7. 读数 >55°（躺下/侧脸野值）→ 丢弃基准线窗口重学。
-8. 一次调几档：1（默认）/2/3/5，多档**一步跳到位**、只弹一次音量面板。
+| # | 判据 | 阈值 | 挡什么 |
+| --- | --- | --- | --- |
+| ① | 脸在画面里 | — | 手机放桌上 / 人走开 |
+| ② | 脸够大 | `faceRatio ≥ 0.20` | 离得太远 |
+| ③ | 偏航相对**本人**基准线 | `≤ ±10°` | 头转开（实测转开是 ±11~13°） |
+| ④ | 滚转相对基准线 | `≤ ±20°` | 躺下、侧脸 |
+| ⑤ | **睁眼占比**（最近 1.5 秒） | `≥ 30%` | 眼睛离开屏幕（**只在 `faceRatio < 0.45` 时生效**） |
 
-其它：这是"控制指令"，**不走全局冷却**（不占用也不被挡）；不需要无障碍/Shizuku
-（`AudioManager` 直调 `STREAM_MUSIC`）。**歪头期间会暂停翻页判定**（见 §5.4 的代价）。
+- **每通道豁免**：左右扭头豁免③、歪头调音量豁免④（动作本身就是那条轴）。
+- ⑤用"占比"不用瞬时值：眨眼要经过闭眼那一帧，瞬时判定会把眨眼通道自己拦死。
+- 实测账单（v5.46 那 1.5 小时）：`blocked=2 / would-block=6`，原因 `head-turned ×7, eyes-away ×1`
+  → **约 11 分钟才判错一次**。
+- **实测上限（重要）**：ML Kit 人脸检测**没有虹膜**，"头不动只把眼睛往旁边瞟"读不出来；
+  "抬头看别处"和"抬头翻页"在全部信号上完全重合（见 §5 的 v5.46 一节的原始读数）。
+  ⑤只是"眼皮遮住眼球"那一类的代理（50cm 下盯着屏幕中位数 **1.00**、眼睛往下看别处 **0.01**；
+  30cm 下两边是 0.21 vs 0.03，**不可用**，所以近距离档跳过⑤）。
 
-### 4.3 日志字段（读日志必备）
+### 4.3 注视数据采集（v5.39，测试功能，用户现在**关着**）
 
-- 每 3 秒一行 `I/GazeDiag`：
-  `face= eyeL= eyeR= pitch= base= yaw= **roll=** yawBase= mouth= … faceRatio= dist= staticLock=
-  staticHardLock= recenterLock= **pitchTh= pitchThUp= yawTh=** yawNow= pitchNow= …
-  shake= rev= accel= gyro= eyeDip= **abs dy=… opt=… | rel dy=… opt=…**
-  lastTrigger= lastTriggerAgeMs= blinkBelow= blinkFrames= blinks= **tiltVol= tiltDir= tilt=<倾斜角>
-  base=<基准线> thr=<阈值> held=<已保持> peak=<峰值> fired=<累计> last=<最近一次> tiltSteps=<累计档位>**
-  **gapRemain=<距两秒动作间隔还剩>** baselineSettling= triggers= needBlinks= cool…`
-- 歪头触发：`I/Tilt: tilt 左歪头 held=387ms tilt=-33.5° peak=37.6° thr=13° base=0.9°
-  neutralBefore=0ms dist=near -> volume UP 1 档 (1档=10) 20->30/150 applied=true
-  roll=-32.6° pitch=7.0° chin=0.294 faceRatio=0.51`
-- 歪头被作废：`I/Tilt: 右歪头 起手太早（还剩 89ms 才满两秒）→ 这一段不算，回正后重新歪`
-- 触发：`I/HeadPose: nodDown/tiltUp triggered … travel= yawSwing= shake= rev= — ctx 24f: …`
-  （ctx 是触发前约 1.2 秒的逐帧 `pitch/yaw/faceRatio`）
-- 被拒：`… candidate rejected: pitch= speed= gate= threshold= dist= posture= shake= rev=
-  boost= strong= refV=… thr=… yawSwing=… travel=… reason=…`
-- 眨眼：`I/Blink: blink #N closure=…ms minEye=L/R …` / `closure rejected:` / `closure ignored:`
-- 注入真值：`I/GazeA11y: swipe UP/DOWN/LEFT/RIGHT …`、`tap center (x, y) = true`
-- 前台与恢复：`I/AppState: window changed:/foreground=…`、
-  `I/GazeDiag: foreground change: A -> B (target=… reason=…)`、
-  `I/GazeCameraService: camera released: warm window elapsed|screen off`、
-  `I/A11yBootstrap: enabled but not bound — forcing a rebind`、
-  `I/GazeSelfCheck: periodic … targetActive= cameraBound= stale= framesAgoMs= a11yConnected=`
+盖住前置摄像头控制起止：**盖 ≥3 秒**→就绪，露脸即开录；录制中**盖 1~6 秒**→分段；
+**盖 ≥6 秒**→结束。另有两条兜底：**帧流中断 ≥1.5 秒**、**录制中眨出一次翻页**也记分段。
+"盖住"的判据（v5.41 定稿）：`没脸 且 (近距离传感器 NEAR 且 环境光<15 或 纹理<5 或 亮度<32)`。
+CSV 落在 `files/probe/`，用 `adb shell "run-as com.example.gazescroll cat <path>"` 取。
 
-**注意**：Android 会给短 tag 补空格，正则要写成 `I/Blink\s*\(`、`I/Tilt\s*\(` 这样。
+### 4.4 本轮改过、且**现在生效**的关键数值
 
----
-
-## 5. 本会话做过什么（每一步的证据与结论，避免重复踩坑）
-
-### 5.1 v5.30~v5.34：「单眼闭眼控音量」四轮都失败 → **这条路不要再走**
-
-用户最初要的是"单闭右眼=音量+、单闭左眼=音量−"。做了四版，全部被实机否掉：
-
-| 版本 | 判据 | 实测结果 |
+| 项 | 值 | 出处 |
 | --- | --- | --- |
-| v5.30 | 一只眼 <0.55 + 另一只 >0.70 + 保持 1 秒 | **一场 90 秒里误调 11 次，音量从 50 打到 0**（低头看屏幕时 ML Kit 把一只眼**反复读低**几十秒） |
-| v5.31 | 加"闭前必须明确睁着(>0.65) ≥600ms" | 把**真单闭也挡掉**（"一点动静没有"，22:17:56~22:18:05 连续 5 次） |
-| v5.32 | 删那条、另一只眼门槛降到"不是闭着" | **眨眼也能调音量**（22:25:56：两只眼一起半闭 0.54/0.65，差只有 0.11） |
-| v5.33 | 核心判据换成"两眼读数差 ≥0.30" + "合眼 ≤500ms" | 误触发没了，但**真单闭又被挡掉大半**（"还是不灵敏"）—— 真单闭的 onset 是 55~1732ms，与 v5.30 那批误触的 1.6~3.2s **完全重叠** |
-| v5.34 | 换时间域判据："最近 5 秒闭眼占比 ≤0.30" | 低头刚开始那一下仍会误调；用户最终放弃这条通道 |
+| 近距离档俯仰"突然性窗口" | **450ms**（v5.44 由 300 放宽） | `HeadPoseDetector.NEAR_SUDDEN_RISE_MS` |
+| 扭头窗口 | 400ms（没动） | `NEAR_SUDDEN_TURN_RISE_MS` |
+| 远距离窗口 | 用户设的 500ms（没动） | `motionWindowMs` |
+| 遮挡判定门槛 | 人脸丢失 **≥300ms** 才算遮挡 | `FACELOST_OCCLUSION_MIN_MS` |
+| 遮挡时是否清基准线 | 只有 **≥1 秒**才清 | `OCCLUSION_RECALIBRATE_MIN_MS` |
+| 近档点头阈值 | **2.5°**（没动；A 方案经数据验算被否，见 §5） | `NEAR_LOOKDOWN_NOD_BOOST=0.42` |
 
-**四条硬结论（别再试了）**：
+---
 
-1. **绝对阈值分不开"眨眼/半闭"与"单眼闭"**：眨眼时两只眼一起落在 0.5~0.7，真单闭时闭的那只
-   也能停在 0.54。0.70 / 0.65 / 0.55 三条线都试过，要么误触发要么漏触发。
-   能分开的只有**两只眼差多少**（真单闭实测 0.47~0.88，误触发 0.11）。
-2. **`eyeOpenProbability` 的下降快慢不等于眼皮的物理快慢**：ML Kit 是逐帧软分类，真闭眼也会
-   拖几帧甚至一秒多才掉到底（实测真单闭 onset 658/1216/1732ms）。**这条不能当判据。**
-3. 用户提过的「闭一只眼就读不到另一只眼」**不成立**：全部历史日志（v5.10 起 33 个文件）
-   **3153 帧有脸画面里，没有任何一帧只缺一只眼的读数**（ML Kit 有脸就给两只眼的概率）。
-4. 时间域统计（duty）比瞬时快慢稳，但只能挡"**反复**被读低"，挡不住低头**刚开始**那一下。
+## 5. 本轮做了什么（v5.39 → v5.46，每版一句话 + 关键数字）
 
-### 5.2 v5.35：换成歪头（roll）→ 音量
+> 完整版在 `CHANGELOG.md` 的对应小节（都带实机证据）。这里只给"要记住的结论"。
 
-- 关键发现：**`headEulerAngleZ`（滚转）以前从来没采集过**（v5.10~v5.34 的 `AnalyzedFrame`
-  只带 X/Y）。用户 22:38:50 之后"歪头"在日志里只看到副作用：歪头让俯仰串扰几度，
-  被近距离档（阈值 2.5°）当成仰头，**顺带翻了两页**。
-- 新增 `AnalyzedFrame.headEulerAngleZ` + `TiltDetector.kt` + 设置页一整套（方向开关 / 角度 / 保持 / 档位）
-  + 删除 `WinkDetector.kt` 与 `tools/wink-replay`。
-- 同时加了「**歪头期间暂停翻页判定**」（喂 `headPoseDetector` 时跳过）+ 歪头结束时
-  `recalibrate()`。**这个暂停后来成了 v5.37 事故的一半原因**，见 5.4。
+- **v5.39「注视数据采集」**：新增采集器（纯逻辑、可离线回放）+ 每帧原始几何量 + 画面亮度，
+  写入 `files/probe/*.csv`；默认关，不开时逐帧开销与 v5.36 一致。
+- **v5.40**：第一次采集**整场失败**（4 分钟全是 `probe=idle`）→ 根因：**前置摄像头自动曝光会把
+  被手掌盖住的画面提亮**，所以"盖住=画面黑"不成立 → 改成三条独立信号并联（近距离传感器 / 纹理 / 亮度）。
+- **v5.41**：① 近距离传感器会**闩锁**在 NEAR（盖过一次后两分半不回 far）→ 加环境光旁证（`NEAR 且 lux<15`）；
+  ② 用户按"盖 1 秒"分段实测是 **2.1~2.3 秒**，3 秒的结束界线容错只有 800ms → 11 段只录到 5 段 →
+  **结束界线 3000 → 6000ms**。（教训：**给人留的容错必须大于人对秒的感觉误差**。）
+- **v5.42**：第三轮只录到 2 段 → 取证发现用户盖摄像头时**手掌压到屏幕最上方把通知栏拉下来了**
+  （MIUI 日志 `StatusBar1 ACTION_DOWN/UP`，按住 9 秒）→ 抖音失去前台、相机被释放、**那 9 秒一帧都没有**
+  （"盖住"判据没有输入）→ 加两条兜底：**帧流中断 ≥1.5s** 与 **录制中眨一次眼** 也记分段。
+- **v5.43「注视门」**：判据与阈值全部来自四轮实机采集（分位数）。关键发现：头不动时偏航/滚转
+  **完全看不出**（`eY` 中位数 −0.1 vs −2.2，分布重叠），但**睁眼概率从 50cm 的 1.00 掉到 0.01**
+  （眼皮遮住眼球）→ ⑤；30cm 下不可用（0.21 vs 0.03）→ 近距离跳过。默认「观察」。
+- **v5.44**：用户报"仰头失灵"→ 日志抓到 `ignored slow lean: rise 429ms > 300ms`
+  （近距离档窗口 300ms 太紧，一次真实仰头被整段作废；同场这种共 6 次：336/429/429/563/684/839ms）
+  → **放宽到 450ms**；新增 `actWin=` 字段；新回放 `tools/headpose-replay` + A/B 对照
+  （旧常量下 429ms **0 次触发**，新常量下能触发；563ms 以上两边都仍被挡）。
+  **同时否掉了原定的 A 方案**（近档点头阈值 2.5°→3.2°）：那 5 次误触幅度全在 **4.9~8°** 且都是
+  真实头部动作，A 只能挡住 6 次里的 1 次；而阈值得抬到 5° 以上才挡得住，那会把他**有意的轻点头
+  （3.0~4.4°）**一起废掉 —— **两者完全重叠，任何阈值都分不开（这条路不要再试）**。
+- **v5.45**：用户报"仰头好多次都没用"（19:29 那 30 秒）→ 那是一场**遮挡风暴**：
+  30 次 `occlusion detected`，每次都是 **92~214ms 的人脸漏检**（大角度仰头时 ML Kit 会漏 1~2 帧），
+  却换来 **500~1000ms 头部通道熄火 + `recalibrate()`**（再停 ~1.1s）→ 30 秒里零候选零触发；
+  而画面明明没被挡（`luma=80.6 tex=11.6 prox=far`）。→ **人脸丢失要满 300ms 才算遮挡**。
+  用户当时问"能不能照抄 5.36"—— **不能，这毛病在 v5.36 里一模一样**
+  （`v536-anchor-verify.log` 21 次遮挡、20 次 ≤300ms、抑制总时长 14.6 秒），
+  三场日志的丢失时长**双峰无重叠**（抖动 60~218ms vs 真遮挡 335~606ms），300ms 正落空档。
+- **v5.46**：用户又报"50cm 眼睛没看屏幕却触发仰头、30cm 还有一次误触"→ 两次机制不同：
+  - **30cm 那次（已修）**：`handleOcclusion` 里**无条件** `recalibrate()`（该场 11 次）→ 基准线 3 秒内
+    `7.1→13.9→10.4→16.9→19.0→25.5→10.0` → `signed` 翻号到 **−17.6°** → 凑出一次「点头=上一个」。
+    现在只有丢脸 ≥1 秒才清基准线（日志写 `headBaseline=kept(NNNms)|reset`）。
+  - **50cm 那次（修不了，如实记录）**：`ctx` 显示 signed pitch 390ms 内走 **15°**、原始俯仰到 28°、
+    偏航不动、`eyeDuty=1.00`、`gyro=0.00 accel=0.0 phoneMotion=false`（手机没动）
+    —— **就是一次真实的抬头**，与"抬头翻页"完全一致，任何阈值都分不开；只有注视门能碰一点
+    （同场 19:38:33 那次它标了 `head-turned yaw=+10.4°`）。
 
-### 5.3 v5.36：用户认可的锚点（**当前版本**）
+**v5.46 那场（1.5 小时真实使用）的验收数据**：`flicker ignored=22`、`occlusion detected=8`（全部
+`headBaseline=kept`、1 次 `reset`）、`blocked=2 / would-block=6`、触发 仰头 25 / 点头 8 / 扭头 13、
+注入 UP 27 / DOWN 6。
 
-改了三处（都在歪头通道内）：
+---
 
-1. **基准线在歪着时不更新**（防"歪着头停 1~2 秒 → 中位数被带走 → 回正被读成反方向"）。
-2. **全局两秒 + 没有提前量**（用户明确要求）：新增动作时钟，歪头起手必须晚于
-   `上一次任何动作 + 2 秒`，早了整段作废；反向也成立 —— 调音量后 2 秒内不翻页
-   （`GlobalTriggerGate.extendCooldown()`）。
-3. **灵敏度整体调灵一档**：角度 12/15/18/22 → **10/13/16/20**（默认 13）；
-   保持 0.3/0.5/0.8/1.0 → **0.2/0.3/0.5/0.8**（默认 0.3）。
-4. 设置页实时区加了 **两秒动作间隔倒计时 + 最近的作废原因**（用户说"判断不好时间"）。
+## 6. 数据与证据清单（"保留这一版的数据"）
 
-**v5.36 的实机战绩**（`v536-anchor-verify.log`，23:27~23:36）：
-**歪头成功调音量 11 次**、被作废 17 次；翻页 `swipe UP 42 / DOWN 4`；
-被拒原因 Top：`below-threshold 35 / jump-confirm 31 / eyes-unreliable 19 /
-recenter-lock 17 / hold-not-met 12 / slow-rise 11 / no-travel 4`。
+| 文件 | 里面是什么 |
+| --- | --- |
+| `apk\v546-verify.log` | **v5.46 真实使用 1.5 小时**（本轮最重要的一场） |
+| `apk\v545-verify.log` | v5.45 那场（用户报"仰头好多次都没用"的证据：30 次抖动 → 遮挡风暴） |
+| `apk\v544-verify.log` | v5.44 那场（47 次遮挡，43 次 ≤218ms；双峰分布的原始数据） |
+| `apk\v543-verify.log` | v5.43 那场（"前两分钟仰头失灵+误触"、注视门第一份账单） |
+| `apk\v539/v540/v541/v542-verify.log` | 采集功能四轮踩坑的完整过程 |
+| `apk\v536-anchor-verify.log` | **锚点 v5.36 的实测场**（"这毛病 v5.36 也有"的对照证据） |
+| `apk\probe-*.csv`（5 个） | 注视数据：184414=校准场（50cm 盯屏幕 14s）、184722+184832=第一轮 5 段、185631=第三轮 2 段、**190655=第四轮 4 段（注视门阈值的直接来源）** |
+| `tools/headpose-replay/ab-old-300ms.txt` | 300ms vs 450ms 的 A/B 对照（只换一个常量、同一套回放） |
+| `backup\GazeScroll-v5.46\prefs-backup-before-enforce.xml` | 用户设置的备份（§7.1 那次事故靠它恢复） |
+| `apk\v546-prefs-before-enforce.xml` / `-after-enforce.xml` | 那次 prefs 事故的现场（重复键） |
 
-### 5.4 v5.37 → v5.38 → 回退 v5.36：一次完整的事故与复盘
+（本轮全套日志与 CSV 已复制到 `backup\GazeScroll-v5.46\data\`。）
 
-用户报「回正脖子时音量不降反增」（23:00:50）。日志取证（`v536-verify.log`）：
+---
 
+## 7. 坑与教训 ★（用户点名要保留）
+
+### 7.1 手改 SharedPreferences 会把用户设置清空（本轮最严重的事故）
+
+我为了把注视门拨到「拦截」，手改了 `shared_prefs/gaze_scroll_prefs.xml`。那份文件里**本来就有**
+`gazeGateMode` 这一键（`saveConfig` 从 v5.43 起每次都写），我却**"追加"**了一行 →
+**同名键出现两次** →
+
+```xml
+<string  name="gazeGateMode">OBSERVE</string>      <!-- App 写的 -->
+<boolean name="gazeGateMode" value="ENFORCE" />    <!-- 我追加的 -->
 ```
-23:00:19.977  roll=+3.1°  基准线=3.8°   tilt=-0.9°     ← 正常
-23:00:23.042  roll=+0.6°  基准线=32.6°  tilt=-28.5°    ← 基准线突然变成 32.6°
-23:00:26.090  roll=+5.4°  基准线=32.7°  tilt=-22.4° → 触发"左歪头"= 升 ❌
-```
 
-本人真实头姿只有 +1~5°，基准线却被锚在 **+32.6°** → "什么也没做"被读成"往左歪 28°" → 升音量。
-**根因**：45 帧基准线窗口被服务侧 `reset()`（遮挡/静止硬锁定/换应用/重绑都会调）清空后，
-在"用户正歪着头"的那几帧上重建；而 v5.36 的"歪着时冻结"又让它永远错下去。
+→ **XML 解析失败 → SharedPreferences 认为是空配置 → 回落到出厂默认 →
+`setSetupComplete` 把空 map 写回磁盘 → 用户设置全丢**。
+（我的核对只查了"旧键没丢 + 新键在"，**没查重复**。）
 
-v5.37 我加了三条判据去修它，结果**三条都过头了**（用户："真不如上一版灵敏，
-这一版还把我近距离俯视给仰头给弄死了"）：
+**规矩**：① **设置项一律让用户在界面上拨，不要代劳**；
+② 万一必须手改：**替换同名键而不是追加**、写完**查重复**、改前 `cp` 一份到 App 私有目录
+（`run-as <pkg> cp <prefs> files/prefs-backup.xml`）；
+③ **不要以为 `am force-stop` 能长时间停住 App**——它带无障碍服务绑定，系统随时会把它拉起来，
+读-改-写会互相踩。恢复办法：`am force-stop` 后立刻 `run-as <pkg> cp files/prefs-backup.xml <prefs>`。
 
-1. 「连续歪着 >2.5 秒 → 判定为姿势、重锚基准线 + 之后自禁判 2 秒」→ **重锚风暴**：
-   `23:08:42 -29.3° / 23:08:50 -14.2° / 23:09:00 37.0° / 23:09:03 5.7° / 23:09:06 11.0°`
-   —— **25 秒 5 次**，用户"歪住不动"的动作每次都命中，可用时间被吃掉大半。
-2. 「起手前 1.2 秒内必须出现过中位带」→ 基准线一动就自己否自己：
-   `23:09:10 左歪头 起手之前没有中位（距上次中位 从未）→ 这一段不算`。
-3. 它与"歪头期间暂停翻页"叠加：把 `|tilt| > 0.4×阈值(5.2°)` 的**占空比从 v5.36 的 12% 拉到 35%**
-   —— 翻页通道三分之一时间拿不到头部数据（`onHeadPose` 被跳过 + 每次切换还让头部基准线重学），
-   近距离俯视仰头（3.8° 档、依赖轻通道+稳定基准线）因此"死"了。
+### 7.2 PowerShell 不要用来改源码/文档（本轮又踩一次）
 
-**v5.38** 把这三条删干净、并把暂停门槛收回成 `|tilt| ≥ 阈值`；但用户此时已决定
-**以 v5.36 为锚点**（"退回 5.36，我先多体验一下，确认大问题没有再说，小问题慢慢修"），
-所以最终动作是：**工作区回退到 v5.36**（`a55f965`，`tag v5.36-anchor`），
-v5.37/v5.38 的代码与 APK 保留（`tag v5.37/v5.38`）。
+`(Get-Content ... -Raw) -replace ... | Set-Content -Encoding utf8` 会：① 按 ANSI 读无 BOM 的 UTF-8
+→ 中文/破折号变乱码（本轮把 `build.gradle.kts` 里的 `—` 搞坏了）；② 加上 BOM；③ 把 LF 变 CRLF。
+**一律用 `edit` / `write` 工具**。非要用 PowerShell，就用
+`[System.IO.File]::ReadAllText/WriteAllText(..., UTF8Encoding($false))` 并随后核对 BOM/NUL/CR/LF。
+改完 `git diff --stat` 看一眼行数对不对（异常大就是行尾被整体重写了）。
 
-**唯一被验证过"零灵敏度代价"的修复**（还没有装进 v5.36，等用户点头）：
-**让 `TiltDetector.reset()` 不清基准线窗口**（只清手势状态）。它是上面那次"基准线锚到 32.6°"
-的真正根因修复；但 v5.37 同时加的另外两条**不能一起带回来**。
+### 7.3 用 `edit` 工具写 XML 字符串里的 `\n`
 
----
+Android 字符串里的换行是字面 `\n`（反斜杠+n）。在工具参数里写 `\n` 会被当成真换行。
+要写**两个字符**：JSON 里写 `\\n`。本轮第一次改 `strings.xml` 就因为这个匹配失败。
 
-## 6. 经验与教训（用户点名要传下来的）
+### 7.4 日志/正则的坑
 
-### 6.1 方法（这套做法在本项目被证明有效，请照做）
+- Android 给短 tag 补空格：正则要写 `I/Blink\s*\(`、`I/Tilt\s*\(`。
+- 诊断行里缺失值是 `-`，`[double]"-"` 会抛异常 —— 解析前先判。
+- **加了新 log tag，第一件事是把它加进 `tools/capture-loop.ps1` 的 `$tags`**
+  （v5.35/v5.36 漏过 `Tilt:V`，那两场日志没有触发明细；本轮补了 `GazeProbe:V`、`GazeGate:V`）。
+- 抓取用 `powershell`，**不要用 `pwsh`**（这台机器 PATH 里没有）。
 
-1. **先取证再改**：把用户的现象翻译成日志里的计数/分布，并**把数字写进 CHANGELOG**。
-   例："延迟" → `ref-veto-up 89 次 + 连续 4 帧 eyes-unreliable`；"不降反增" →
-   `基准线 3.8° → 32.6°`。
-2. **一次只改一处，且只在用户点名的场景生效**（通常是 `nearDistance` 前置条件或某个通道内部），
-   其他通道一个字不改 —— 变差时回退范围才小。
-3. **每次交付都加可核对字段**（`sep=` / `duty=` / `travel=` / `gapRemain=` / `peak=` / `roll=`）。
-   用户会拿手机试、我读日志核对，这是最快的闭环。
-4. **能用离线回放验证的，就先离线跑**：`tools/tilt-replay/run.ps1` 会把**真实的
-   `TiltDetector.kt`** 用本机 Gradle 缓存里的 kotlinc 编译起来（只把 `android.util.Log`
-   换成打印桩），回放实测序列。**它已经抓出过两个我自己写的 bug**（基准线在窗口没填满时照样被带走；
-   1 档会变成 2 档）。这套做法值得复制到别的纯逻辑检测器上（BlinkDetector 也可以）。
-5. **备份+标签**：`backup\GazeScroll-vX.Y` + `git tag vX.Y`；用户认可的版本要额外标出来
-   （见 `backup\GazeScroll-v5.36\ROLLBACK.txt` 开头）。
-6. **改完立刻实测**：装到手机上跑，别只看代码。
+### 7.5 离线回放：动作形状必须照抄实测
 
-### 6.2 判据设计（血泪）
+`tools/headpose-replay` 第一版我把"仰头"回放成"全程匀速慢爬"，结果所有用例都不触发 ——
+**验证的其实是我自己写错的那道门**。实测形状是"慢起手（onset→阈值 429ms）+ **一帧快越阈值**
+（speed 0.057°/ms）+ 保持"。改成这个形状后才复现出 v5.43 的失败、验证出 v5.44 的修复。
+**回放前先从日志里抄一条真实的 ctx 形状。**
 
-1. **绝对阈值不如相对量**：两只眼的**差**、相对**本人基准线**的角度，比"某只眼 < 0.7"稳得多。
-2. **不要把"软的、有惯性的分类输出"当成物理量**（ML Kit 的 `eyeOpenProbability` 就是这样）。
-   判断"动作快慢"要用几何量（角度、位移），不要用概率。
-3. **冻结某个参考值（基准线）时必须回答两个问题**：
-   ① 它会不会被"动作本身"带走？② `reset()`/丢脸/换应用时该不该清？
-   本会话两次事故都出在这里（v5.36 的清掉、v5.37 的重锚）。
-4. **任何"暂停/冻结另一条通道"的改动，都要量化它的占空比**。
-   我就是用诊断行里 `|tilt| > 0.4×阈值` 的占比（12% → 35%）才找出"仰头变钝"的元凶。
-5. **过严的门会自己打死自己**：本项目反复踩同一个坑（v5.11 加帧数、v5.31 加"睁着 ≥600ms"、
-   v5.33 加 onset、v5.37 加三条）。加严之前先问："它会不会挡住真实动作？"
-6. **判定顺序很敏感**：`HeadPoseDetector.evaluatePitch` 的顺序是
-   `below-onset → yaw-swing-arbitration → recenter-lock → below-threshold → no-travel →
-   ref-veto → eyes-unreliable → shake → phone-motion → slow-rise → jump-confirm →
-   hold-not-met/light-confirm/speed-gate → yaw-dominant-arbitration`。
-   往这个链条里插东西之前，先读 CHANGELOG 里它每一步的来历。
-7. **域混用是经典事故**：轻通道位移是"相对运动起点的位移"，其余是"相对基线量"，
-   两者相减 = 方向整体翻转（v5.17 事故）。位移判据的起点必须与当前值**同域**记录。
+### 7.6 A/B 对照是证明"这处改动真的有用"的最短路径
 
-### 6.3 工具链的坑
+把要验的常量复制一份改回旧值（只改 ASCII 常量、显式 UTF-8 读写），用**同一套回放**跑两遍。
+本轮靠它证明了"旧常量下 429ms 是 0 次触发、新常量下能触发，而 563ms 以上两边都仍被挡"。
 
-1. **抓取标签必须和代码里的 tag 对上**：v5.35/v5.36 我漏了 `Tilt:V`，导致那两场日志里
-   `I/Tilt` 明细**一行都没有**，害我多花很多时间。`tools/capture-loop.ps1` 的 `$tags`
-   现在是 `GazeDiag HeadPose Blink Tilt PhoneMotion RefPoint GazeA11y GazeCameraService
-   GazeSelfCheck AppState A11yBootstrap`。**加新 log tag 时第一件事就是把它加进去。**
-2. **抓日志用 `powershell`，不要用 `pwsh`**（这台机器 PATH 里没有 pwsh，会报
-   "The term 'pwsh' is not recognized"）。
-3. **不要用 PowerShell 的文本替换去改 markdown/源码**：曾注入 NUL/CR 搞坏中文。
-   要用 `edit` 工具，或 `[System.IO.File]::WriteAllText($p,$t,(New-Object System.Text.UTF8Encoding($false)))`
-   并在写完后核对 `BOM`/`NUL`/`CR`。**`.ps1` 文件保持纯 ASCII**（Windows PowerShell 5.1 会把
-   无 BOM 的 .ps1 按 ANSI 读，中文注释会炸）。
-4. **SharedPreferences 以 UI 为准**：用 adb 直接改会被 App 覆盖。读用户设置用
-   `& $adb shell "run-as com.example.gazescroll cat /data/data/com.example.gazescroll/shared_prefs/gaze_scroll_prefs.xml"`。
-5. **adb 无线调试端口每次息屏都会变**；手机上无线调试被关掉时，只要手机还能 ping 通，
-   就让用户去开发者选项打开，别反复重试。
-6. **APK 指纹**：换版本后核对 `& $adb shell dumpsys package com.example.gazescroll | grep versionName`；
-   要确认"装的就是某个源码状态"，可以重新构建后比对 APK 的 SHA256（本会话验证 v5.36 时用过，
-   逐字节一致）。
-7. 离线回放的 kotlinc 调用需要这些 jar（都在本机 Gradle 缓存里）：
-   `kotlin-compiler-embeddable-2.0.21` + `kotlin-stdlib-2.0.21` + `kotlinx-coroutines-core-jvm-1.7.3`
-   + `trove4j` + `org.jetbrains:annotations:23.0.0`；`javac` 要加 `-encoding UTF-8`。
-   完整命令见 `tools/tilt-replay/run.ps1`（照抄就能给别的检测器搭一套）。
+### 7.7 提方案之前先算它能不能解决用户报的那个现象
+
+本轮我按 HANDOVER 的建议准备做 A（近档点头阈值 2.5°→3.2°），动手前用数据一算：用户抱怨的
+5 次误触幅度全在 **4.9~8°**，A 只能挡住 6 次里的 1 次 —— **方案与症状对不上**，于是改成 B。
+**"用户说要 A" 也要先用数据验算 A 是否真的解决他报的问题，然后把结论如实告诉他再动手。**
+
+### 7.8 后台抓日志用 job，不要 `Start-Process`
+
+`Start-Process -WindowStyle Hidden` 起的进程会随本条命令结束被杀掉（本轮白等过）；
+用工具的 `run_in_background: true` 起 `capture-loop.ps1`。
+
+### 7.9 无线调试
+
+端口每次息屏都会变；`mDNS 搜不到 + 能 ping 通` = 手机上无线调试被关了 → 让用户去开发者选项打开。
+本轮因为息屏丢了 4 次连接，每次都浪费一轮。
+
+### 7.10 判据设计（历次血泪，仍然有效）
+
+1. **绝对阈值不如相对量**：两只眼的差、相对本人基线，比"某只眼 <0.7"稳。
+2. **不要把软的、有惯性的分类输出当物理量**（ML Kit 的 `eyeOpenProbability` 的下降快慢 ≠ 眼皮快慢）。
+3. **冻结/清空一个参考值（基准线）前必须回答**：① 它会不会被动作本身带走？② reset/丢脸/换应用时该不该清？
+   —— v5.36/v5.37 和本轮 v5.46 的三次事故全在这里。
+4. **任何"暂停/冻结另一条通道"的改动都要量化占空比**。
+5. **过严的门会自己打死自己**（v5.11 / v5.31 / v5.33 / v5.37 / 本轮的 300ms 窗口与 300ms 遮挡下限）。
+   加严前先问："它会不会挡住真实动作？"
+6. **给人留的容错要大于人的感觉误差**（"盖 1 秒"实测 2.1~2.3 秒）。
+7. **`travel=-`**（位移判据在判定域切换时被跳过）**至今没修**：本场 29 次触发**全部** `travel=-`。
+   是个潜在加固点，但**不是**上面那些误触的原因（那些动作的真实位移都够）。
 
 ---
 
-## 7. 已知问题（用户 2026-09-17 凌晨反馈，都还**没修**）
+## 8. 已知问题与下一步建议
 
-> 用户原话：「大的问题没有，但还是有一些小问题……不过这些触发率都很低」
-> **这两个问题用户明确说"慢慢修"，动之前先问他。**
+### 8.1 待确认（v5.46 装好后还没拿到用户反馈）
 
-### 7.1 从待机状态打开抖音，有时不触发；拉一下通知栏、或提前打开万能翻页就好了
+1. **30cm 那次"点头误触"是否消失**（v5.46 不再让遮挡清基准线）——看日志里
+   `occlusion detected ... headBaseline=kept(NNNms)` 的比例（应几乎全是 kept）。
+2. **注视门拨到「拦截」后的体感**（已在跑：1.5 小时只拦 2 次、判错 8 次，
+   原因 `head-turned ×7 / eyes-away ×1`）——若误伤真实动作，先放宽 ③ 的 10° 或退回「观察」。
 
-- 现象：手机待机 / 在桌面 → 打开抖音 → 动作不触发；**下拉通知栏（或先打开本 App）后恢复**。
-- 机制（日志佐证）：手机离开目标应用后，相机在"warm window"到点会被**主动释放**：
-  `I/GazeCameraService: camera released: warm window elapsed`（23:34:23）、
-  `camera released: screen off`（23:36:23）。回到抖音时靠"前台窗口变化"重新武装：
-  `AppState: window changed: … -> com.ss.android.ugc.aweme (allowed=true)`、
-  `GazeDiag: foreground change: … -> com.ss.android.ugc.aweme (target=true reason=enter)`、
-  `window changed to com.ss.android.ugc.aweme -> detector reactivated (reason=enter)`。
-  **HyperOS 会过滤第三方 App 的无障碍窗口事件**（见 README「当前痛点」），
-  所以"打开抖音"这一下未必产生事件 → 不重新绑定相机 → 不出帧 → 不触发；
-  而"拉通知栏"会产生 SystemUI 的窗口事件 → 顺手把前台判定与流水线唤醒。
-- 排查起点（按顺序看）：
-  `AppStateManager`（`onForegroundPackage` / `pollNow` / `forceActive` / 目标列表判定）、
-  `GazeCameraService.onTargetEntered` / `ensurePipelineForActive` / `onTargetLeft` /
-  warm window 的释放策略（搜 `warm`、`camera released`、`FRAME_TIMEOUT_MS`）、
-  `AccessibilityBootstrap.repairIfNeeded`（`enabled but not bound — forcing a rebind`）、
-  以及 `GazeSelfCheck` 行里的 `framesAgoMs / stale / targetActive / cameraBound / rebindings`。
-- 候选方向（**未验证**）：① 在前台判定为"目标 App"但 `framesAgoMs > 阈值` 时
-  **强制走一次完整重绑**（看门狗现在只在"应该分析"时武装，被主动释放的相机不在它的射程内）；
-  ② 提高前台轮询频率 / 让轮询结果也能触达"重新武装"；③ 缩短 warm window / 目标 App 前台时不释放。
+### 8.2 本轮发现、还没动手的线索
 
-### 7.2 近距离俯视：有时灵、有时误触、有时延迟（频率都不高）
+1. **`baseline cleared` 在无脸期间每帧一次**：v5.46 那场共 231 次，其中 **185 次集中在
+   19:53~19:56（约 1 次/秒，正是 1fps 待机时）**，之后零星。调用点没有日志，
+   候选是 `onFrame` 里 `if (tiltGateWasActive && !tilting) recalibrate()`（若 `tilting` 逐帧翻转）
+   或 `resetDetectorStateForFreshStart()`；`checkFrames()` 那条**没触发**（`no frame for` 0 行）。
+   影响：无脸期间基准线永远攒不满 → 回到手机后头部通道要等 ~1.1 秒（`baselineSettling`）
+   才能工作，严重时头部通道长时间不可用。**建议先加一行带调用来源的日志**再决定怎么修。
+2. **"抬头看别处"误触（v5.46 §5 里那个 50cm 的例子）**：物理上与"抬头翻页"重合，
+   当前无法用阈值区分。可选方向（都有代价，**动之前先问用户**）：
+   ① 要求抬头动作必须**回到基线**才算（延迟换准确率）；② 用注视门的③④兜住"头转开/躺下"的；
+   ③ 接受现状（用户当前 `distMode=far` 时的阈值是 6.0°）。
+3. **`travel=-`**（见 §7.10 第 7 条）：可以顺手修的加固项，但要先离线确认它不会挡真实动作。
 
-- 这一档（`distMode=near` + `posture=down`）阈值最低、最灵敏，天生难调：
-  点头 2.5° / 仰头 3.8°（`NEAR_DOWN_NOD_BOOST=0.42` / `NEAR_LOOKUP_BOOST=0.63`）。
-- **延迟**来自判定链上的多道门（v5.36 场统计）：
-  `slow-rise 11 次`、`hold-not-met 12 次`、`jump-confirm 31 次`、`recenter-lock 17 次`、
-  `eyes-unreliable 19 次` —— 这些是真实动作被"等/拦"的地方，日志里逐条可查。
-- **误触**的候选来源：轻通道（`signedLight = signedPitch − settledPitch`）的"运动起点"过期
-  （v5.36 曾实测原始俯仰只动 0.7° 却报出 5.1° 位移）；`travel=-` 残留（判定域两帧之间切换时
-  位移判据被跳过，v5.28 引入、至今没修）。
-- 可用旋钮（**都要先让用户知情**）：`NEAR_DOWN_NOD_BOOST` 0.42 → 0.53（2.5° → 3.2°）；
-  给轻通道加"原始位移下限"（v5.36 CHANGELOG 里记过这个方案）；修 `travel=-`。
+### 8.3 早就记录、仍然有效的候选旋钮（都在 HANDOVER-v5.36 的老文档里，未动）
 
-### 7.3 其它已记录的残留
-
-- 歪头方向万一和实际相反：设置页两个开关各拨一下（日志 `roll=` / `tilt=` 可核对）。
-- 隐藏坑：`baselineSettling`（v5.31 加的"基准线重建期禁触发"）会在丢脸回来后约 1.1 秒内
-  停掉头部触发；这是有意为之，别误判成 bug。
-
----
-
-## 8. 下一步建议（等用户点头再动）
-
-1. **先让用户把 v5.36 用熟**（他正在做这件事）。期间不要改任何行为。
-2. 用户回来抱怨具体某一条时，按 §6.1 的流程走：
-   抓日志 → 量化 → 选**最小**改动 → 离线回放 → 装机 → 留可核对字段 → 让用户复测。
-3. 如果用户回头说"回正脖子偶尔音量方向反了"（§5.4 那条），
-   **只带一条修复**：`TiltDetector.reset()` 不清基准线窗口（其余两条别带）。
-4. 如果用户说"近距离俯视仰头不够灵"，**先量**：诊断行里 `|tilt| > 0.4×阈值` 的占比
-   （v5.36 基线是 12%）。偏高就把暂停门槛改成 `|tilt| ≥ 阈值`（v5.38 已经这么做过，
-   只删自己的东西、不动阈值表）。
+- `NEAR_DOWN_NOD_BOOST` 0.42 → 0.53（2.5°→3.2°）：**注意这条已被本轮数据否掉**（见 §5 的 v5.44）。
+- 近距离"轻通道"加"原始位移下限"；修 `travel=-`。
+- §7.1（老文档）"从待机打开抖音有时不触发"：本轮又遇到一次（v5.42 那轮，
+  `foreground change` 里根本没有抖音的事件）——**HyperOS 过滤第三方无障碍窗口事件**是根因，
+  变通办法：把 App 自己的设置页放在前台（相机被 `forceActive` 强制打开），或让用户拉一下通知栏。
 
 ---
 
@@ -407,7 +373,7 @@ v5.37/v5.38 的代码与 APK 保留（`tag v5.37/v5.38`）。
 
 ```powershell
 $adb='D:\ruanjian\deepseek harness\.android-build\android-sdk\platform-tools\adb.exe'
-$log='D:\ruanjian\deepseek harness\apk\v536-anchor-verify.log'
+$log='D:\ruanjian\deepseek harness\apk\v546-verify.log'
 
 # 版本 / 服务状态
 & $adb shell "dumpsys package com.example.gazescroll | grep versionName"
@@ -416,24 +382,48 @@ $log='D:\ruanjian\deepseek harness\apk\v536-anchor-verify.log'
 # 触发与注入真值
 & $adb logcat -d -v time | Select-String "triggered|GazeA11y.*swipe"
 
-# 歪头（当前版本的可核对行）
-(Get-Content $log -Encoding UTF8) | Select-String 'I/Tilt'
+# 注视门（拦了什么、为什么）
+& $adb logcat -d -s GazeGate:V -v time
+(Get-Content $log -Encoding UTF8) | Select-String 'gate blocked|would-block'
 
-# 被拒原因统计
-(Get-Content $log -Encoding UTF8) | Select-String 'candidate rejected' |
-  ForEach-Object { if ($_.Line -match 'reason=(\S+)') { $Matches[1] } } |
-  Group-Object | Sort-Object Count -Descending
+# 遮挡与抖动（v5.45/v5.46 的效果）
+(Get-Content $log -Encoding UTF8) | Select-String 'occlusion detected|flicker ignored|headBaseline='
 
-# 用户设置
+# 基准线漂移（排查"回正/回到手机"类误触的第一现场）
+(Get-Content $log -Encoding UTF8) | Select-String 'I/GazeDiag' |
+  ForEach-Object { if ($_.Line -match '^\S+ (\S+).*? pitch=([-\d\.]+) base=([-\d\.]+).*?(pitchTh=[\d\.]+° pitchThUp=[\d\.]+°).*?(distMode=\w+)') {
+      "$($Matches[1])  raw=$($Matches[2]) base=$($Matches[3]) $($Matches[4]) $($Matches[5])" } } | Select-Object -Last 40
+
+# 用户设置（只读！不要改，见 §7.1）
 & $adb shell "run-as com.example.gazescroll cat /data/data/com.example.gazescroll/shared_prefs/gaze_scroll_prefs.xml"
 
-# 离线回放（歪头判据，15 组 25 项；末尾会打印「=== 结果：全部通过 ===」）
-powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\ruanjian\deepseek harness\GazeScroll\tools\tilt-replay\run.ps1'
+# 离线回放（三个）
+powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\ruanjian\deepseek harness\GazeScroll\tools\probe-replay\run.ps1'
+powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\ruanjian\deepseek harness\GazeScroll\tools\headpose-replay\run.ps1'
 
-# 装回锚点版本（含自动重连 + 重启抓取）
+# 采集数据分析
+powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\ruanjian\deepseek harness\GazeScroll\tools\probe-analyze\analyze.ps1' -Csv 'D:\ruanjian\deepseek harness\apk\probe-20260917-190655.csv'
+powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\ruanjian\deepseek harness\GazeScroll\tools\probe-analyze\timeline.ps1' -Csv 'D:\ruanjian\deepseek harness\apk\probe-20260917-185631.csv'
+
+# 装回锚点 / 各版
 powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\ruanjian\deepseek harness\GazeScroll\tools\install-v536.ps1'
 ```
 
-**git 速查**：`git log --oneline -8`、`git tag`；回退到锚点：
+**git 速查**：`git log --oneline -10`、`git tag`；回退到锚点：
 `git checkout v5.36 -- app/src/main/java/com/example/gazescroll app/src/main/res app/src/main/AndroidManifest.xml app/build.gradle.kts tools`
-（然后重新构建 + `adb install -r -d`）。
+（然后 `--offline assembleDebug` + `adb install -r -d`）。
+
+---
+
+## 附：v5.36 锚点时代仍然有效的结论（原文档 §5 的压缩版）
+
+- **v5.30~v5.34「单眼闭眼控音量」四轮全废，别再走这条路**：绝对阈值分不开"眨眼/半闭"与"单眼闭"；
+  `eyeOpenProbability` 的下降快慢不等于眼皮物理快慢；能分开的只有**两只眼的读数差**；
+  时间域 duty 只能挡"反复被读低"。（v5.35 换成歪头控音量后稳定，v5.36 是锚点。）
+- **v5.37 的三条新判据（重锚风暴 / 起手前必须有中位 / 暂停门槛）全部过头**，被用户整版退回；
+  唯一被验证"零灵敏度代价"的修复是 `TiltDetector.reset()` **不清基准线窗口**
+  （与 v5.46 修的是同一类问题）。
+- **判定顺序很敏感**（`evaluatePitch`：below-onset → yaw-swing → recenter-lock → below-threshold →
+  no-travel → ref-veto → eyes-unreliable → shake → phone-motion → slow-rise → jump-confirm →
+  hold-not-met/light-confirm/speed-gate → yaw-dominant-arbitration）；往里插东西前先读 CHANGELOG。
+- **域混用是经典事故**：轻通道位移是"相对运动起点的位移"，其余是"相对基线量"，两者相减 = 方向整体翻转（v5.17）。

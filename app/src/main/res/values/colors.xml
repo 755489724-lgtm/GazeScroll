@@ -1,16 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      v5.47 亮色（默认）配色。纯色背景，不加渐变 / 不加纹理。
+      暗色那一套在 values-night/colors.xml，同名覆盖；主题三档由
+      AppCompatDelegate.setDefaultNightMode 切换（见 UiPrefs.kt）。
+    -->
     <color name="ic_launcher_background">#0F5132</color>
 
-    <color name="bg">#FF101418</color>
-    <color name="surface">#FF1B2027</color>
-    <color name="on_surface">#FFE6EAF0</color>
-    <color name="on_surface_dim">#FF9AA6B2</color>
-    <color name="accent">#FF34D399</color>
+    <color name="bg">#FFFFFFFF</color>
+    <color name="surface">#FFF6F7F9</color>
+    <color name="surface_alt">#FFEDEFF3</color>
+    <color name="on_surface">#FF15181D</color>
+    <color name="on_surface_dim">#FF6B7280</color>
+    <color name="accent">#FF0E9F6E</color>
+    <color name="divider">#FFE6E8EC</color>
 
-    <color name="state_idle">#FF9AA6B2</color>
-    <color name="state_ready">#FF34D399</color>
-    <color name="state_cooldown">#FFFBBF24</color>
+    <color name="state_idle">#FF98A2B3</color>
+    <color name="state_ready">#FF0E9F6E</color>
+    <color name="state_cooldown">#FFB45309</color>
 
     <!-- Overlay zone colours (translucent so the app underneath stays readable). -->
     <color name="zone_trigger_fill">#33EF4444</color>

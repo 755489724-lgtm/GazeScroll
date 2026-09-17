@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 状态胶囊（首页右上角「运行中 / 待机 / 未启动」）与卡片右上角的小标签。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface_alt" />
+    <corners android:radius="999dp" />
+</shape>

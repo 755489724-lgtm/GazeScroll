@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--
-      v5.47：界面改成「首页卡片 + 右侧设置页」以后，主题仍然是 DayNight，
-      但两套配色的分工清楚了 —— 这个文件是亮色（默认），values-night 是深色。
-      切换方式是 AppCompatDelegate.setDefaultNightMode（见 UiPrefs.kt / GazeApp.kt）。
-    -->
+    <!-- 深色主题：状态栏 / 导航栏用浅色图标。其余属性与亮色版一致。 -->
     <style name="Theme.GazeScroll" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="colorPrimary">@color/accent</item>
@@ -13,8 +9,7 @@
         <item name="android:textColorSecondary">@color/on_surface_dim</item>
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>
-        <!-- 白底要配深色状态栏图标，否则时间/电量看不见。 -->
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>

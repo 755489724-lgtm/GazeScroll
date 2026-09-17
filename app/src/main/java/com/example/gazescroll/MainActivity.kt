@@ -1,14 +1,20 @@
 package com.example.gazescroll
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
+import android.provider.Settings
+import android.view.View
 import android.widget.CheckBox
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import com.example.gazescroll.databinding.ActivityMainBinding
 import rikka.shizuku.Shizuku
@@ -29,6 +35,9 @@ class MainActivity : AppCompatActivity() {
     companion object {
         /** Make the activity stay visible instead of auto-backgrounding. */
         const val EXTRA_OPEN_SETTINGS = "com.example.gazescroll.OPEN_SETTINGS"
+
+        /** 主题切换会让 Activity 重建，用这个把「设置页开着」这件事带过去。 */
+        private const val STATE_DRAWER_OPEN = "drawerOpen"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -36,8 +45,8 @@ class MainActivity : AppCompatActivity() {
     /** True when this launch is explicitly about changing settings. */
     private var showSettings = false
 
-    /** Guards against backgrounding more than once per activity instance. */
-    private var autoBackgrounded = false
+    /** Shizuku 授权只自动问一次（和旧版「每次启动问一次」的行为一致）。 */
+    private var shizukuPermissionAsked = false
 
     private val cameraPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -88,20 +97,33 @@ class MainActivity : AppCompatActivity() {
         setupGlobalPagingUi()
         setupSensitivityUi()
         setupTargetApps()
+        setupThemeUi()
+        setupFeatureCards()
+        setupSettingsPanel()
+
         binding.tvHint.setOnClickListener { onHintClicked() }
-        binding.btnRestartService.setOnClickListener {
-            runCatching { GazeCameraService.restart(this) }
-            toast(getString(R.string.restart_requested))
-            binding.root.postDelayed({
-                if (!isFinishing && !isDestroyed) {
-                    render()
-                    renderLive(GazeRuntime.snapshot)
-                }
-            }, 2500L)
+        binding.btnRestartService.setOnClickListener { restartDetectionService() }
+        binding.btnOpenSettings.setOnClickListener { openSettingsPanel() }
+        binding.btnCloseSettings.setOnClickListener { closeSettingsPanel() }
+        // 「首页任意位置向左滑一下」呼出设置（DrawerLayout 自带的边缘手势只认最右边那条边）。
+        binding.homeRoot.onSwipeLeft = { openSettingsPanel() }
+        binding.tvVersion.text = getString(R.string.about_version, BuildConfig.VERSION_NAME)
+
+        // 从通知点进来的（或主题切换重建前的）直接展开设置页。
+        if (showSettings || savedInstanceState?.getBoolean(STATE_DRAWER_OPEN) == true) {
+            openSettingsPanel()
         }
 
         render()
         requestCameraPermissionIfNeeded()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(
+            STATE_DRAWER_OPEN,
+            binding.drawerLayout.isDrawerOpen(binding.settingsPanel),
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -109,7 +131,7 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         if (shouldShowSettings(intent)) {
             showSettings = true
-            autoBackgrounded = true
+            openSettingsPanel()
             render()
         }
     }
@@ -124,16 +146,19 @@ class MainActivity : AppCompatActivity() {
         val ready = permissionsReady()
         android.util.Log.i(
             "MainActivity",
-            "onResume ready=$ready showSettings=$showSettings autoBackgrounded=$autoBackgrounded",
+            "onResume ready=$ready showSettings=$showSettings",
         )
 
         if (ready) {
             // Remember it, so we never prompt or show onboarding again.
             AppPrefs.setSetupComplete(this, true)
             maybeStartService()
-            maybeAutoBackground()
+            // 旧版是在「自动退到后台」之前问这一次；现在不退后台了，但这一问保留。
+            if (!shizukuPermissionAsked) {
+                shizukuPermissionAsked = true
+                requestShizukuPermissionIfNeeded()
+            }
         } else {
-            autoBackgrounded = false
             requestMissingPermissions()
         }
     }
@@ -289,12 +314,71 @@ class MainActivity : AppCompatActivity() {
             if (s.standby) append("（省电 1fps）")
         }
         binding.tvLiveValues.text = text
+        // v5.47：每张功能卡展开后只显示跟自己有关的那几行读数（一级界面保持干净）。
+        binding.tvLiveBlink.text = blinkLiveText(s, cfg)
+        binding.tvLiveHead.text = headLiveText(s, cfg)
+        binding.tvLiveYaw.text = yawLiveText(s, cfg)
+        binding.tvLiveMouth.text = mouthLiveText(s, cfg)
+        binding.tvLiveTilt.text = tiltLiveText(s, cfg)
         renderCooldownLive(s)
         renderAdaptiveSwipeUi(s)
         renderProbeUi(s)
         renderGazeGateUi(s)
         binding.tvGlobalPagingState.text =
             globalPagingStateText(GazeRuntime.config.globalPagingEnabled, this)
+    }
+
+    // ------------------------------------------- v5.47 卡片里的分项实时读数 --
+
+    /** 眨眼卡：左右眼睁开度 + 逐帧判定。 */
+    private fun blinkLiveText(s: GazeRuntime.Snapshot, cfg: GazeConfig): String {
+        val left = s.leftEyeOpen
+        val right = s.rightEyeOpen
+        if (left == null && right == null) return getString(R.string.settings_live_empty)
+        val closedNow = (left != null && left < cfg.blinkClosedBelow) ||
+            (right != null && right < cfg.blinkClosedBelow)
+        return "左眼 ${fmt(left)}    右眼 ${fmt(right)}    " +
+            (if (closedNow) "闭眼" else "睁眼") +
+            "    闭眼阈值 ${fmt(cfg.blinkClosedBelow)}"
+    }
+
+    /** 点头卡：俯仰角 / 基准线 / 阈值。 */
+    private fun headLiveText(s: GazeRuntime.Snapshot, cfg: GazeConfig): String {
+        val pitch = s.headAngleDeg ?: return getString(R.string.settings_live_empty)
+        val base = s.headBaselineDeg?.let { "    基准 ${fmt(it)}°" }.orEmpty()
+        return "俯仰 ${fmt(pitch)}°$base    阈值 ±${cfg.headPoseAngleThreshold.toInt()}°"
+    }
+
+    /** 扭头卡：偏航角 / 方向 / 阈值。 */
+    private fun yawLiveText(s: GazeRuntime.Snapshot, cfg: GazeConfig): String {
+        val yaw = s.headYawDeg ?: return getString(R.string.settings_live_empty)
+        val dir = when {
+            yaw < 0f -> "正在向左"
+            yaw > 0f -> "正在向右"
+            else -> "在中间"
+        }
+        return "偏航 ${fmt(yaw)}°    $dir    阈值 ±${cfg.horizontalSwipeAngleThreshold.toInt()}°" +
+            "    已扭头 ${s.turnCount} 次"
+    }
+
+    /** 张嘴卡：张嘴量 / 本人闭嘴基准 / 阈值。 */
+    private fun mouthLiveText(s: GazeRuntime.Snapshot, cfg: GazeConfig): String {
+        val now = s.mouthRatio ?: return getString(R.string.settings_live_empty)
+        val base = s.mouthBaseline
+            ?: return "张嘴比例 ${fmt3(now)}（正在学你的闭嘴基准…）"
+        val open = now - base
+        val pct = "%.1f".format(java.util.Locale.US, open * 100)
+        val thr = "%.0f".format(java.util.Locale.US, cfg.mouthSensitivity.fraction * 100)
+        return "张嘴量 $pct% 脸高    阈值 $thr%    " +
+            (if (s.mouthOpen) "张嘴" else "闭嘴") +
+            "    已点击 ${s.mouthTapCount} 次"
+    }
+
+    /** 歪头卡：当前倾斜角 / 已保持多久 / 目标时长。 */
+    private fun tiltLiveText(s: GazeRuntime.Snapshot, cfg: GazeConfig): String {
+        val tilt = s.tiltDeg?.let { String.format(java.util.Locale.US, "%+.1f", it) } ?: "--"
+        return "当前 $tilt°    已保持 ${s.tiltHeldMs}ms / 需要 ${cfg.tiltThresholdDeg.toInt()}° 且保持 " +
+            "${cfg.tiltHoldMs}ms    已调 ${s.tiltVolumeSteps} 档"
     }
 
     private fun fmt(v: Float?): String = v?.let { String.format(java.util.Locale.US, "%.2f", it) } ?: "--"
@@ -997,23 +1081,251 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Setup is done: get out of the user's way. Skipped when the screen was
-     * opened on purpose to change settings, and only ever done once per instance
-     * so that a second launcher tap reveals the settings.
+     * v5.47：**不再「打开就自动退到后台」**。
+     *
+     * 旧行为是权限一齐就 `moveTaskToBack`，好处是点图标不挡着抖音；但新首页做出来以后，
+     * 那等于每次打开都看不到界面。现在打开就停在首页，用户按返回键自己退到后台 ——
+     * 前台服务和翻页完全不受影响（用户 v5.47 明确选的就是这个行为）。
+     *
+     * 重启相机那段逻辑抽出来，是因为设置页里的「前台检测服务」那一行也要用它。
      */
-    private fun maybeAutoBackground() {
-        if (showSettings || autoBackgrounded) {
-            android.util.Log.i(
-                "MainActivity",
-                "auto-background skipped (showSettings=$showSettings already=$autoBackgrounded)",
-            )
+    private fun restartDetectionService() {
+        runCatching { GazeCameraService.restart(this) }
+        toast(getString(R.string.restart_requested))
+        binding.root.postDelayed({
+            if (!isFinishing && !isDestroyed) {
+                render()
+                renderLive(GazeRuntime.snapshot)
+            }
+        }, 2500L)
+    }
+
+    // ---------------------------------------------------------- v5.47 主题 --
+
+    /**
+     * 主题三档：白色（默认）/ 黑夜 / 跟随系统。
+     *
+     * 存进 [UiPrefs] 自己的文件（`ui_prefs.xml`），**与用户的检测设置完全隔离** ——
+     * v5.46 那次「手改 prefs 把设置清空」的事故在结构上不会再发生（HANDOVER §7.1）。
+     * 真正换肤交给 AppCompatDelegate：它会在需要时重建 Activity，所以这里只是声明。
+     */
+    private fun setupThemeUi() {
+        binding.rgTheme.check(
+            when (UiPrefs.themeMode(this)) {
+                UiPrefs.THEME_DARK -> R.id.rbThemeDark
+                UiPrefs.THEME_SYSTEM -> R.id.rbThemeSystem
+                else -> R.id.rbThemeLight
+            },
+        )
+        binding.rgTheme.setOnCheckedChangeListener { _, checkedId ->
+            val next = when (checkedId) {
+                R.id.rbThemeDark -> UiPrefs.THEME_DARK
+                R.id.rbThemeSystem -> UiPrefs.THEME_SYSTEM
+                else -> UiPrefs.THEME_LIGHT
+            }
+            if (next == UiPrefs.themeMode(this)) return@setOnCheckedChangeListener
+            UiPrefs.setThemeMode(this, next)
+            AppCompatDelegate.setDefaultNightMode(UiPrefs.nightModeOf(next))
+        }
+    }
+
+    // ------------------------------------------------------ v5.47 首页卡片 --
+
+    /**
+     * 功能卡：一级只留「标题 + 一句话说明 + 开关」，详细设置与长解释全在三角里。
+     *
+     * 卡片顺序 = 布局里 [ActivityMainBinding.llCards] 子 View 的物理顺序，
+     * v5.48 的自由排序就是重排这些子 View，不需要另建一套数据。
+     */
+    private fun setupFeatureCards() {
+        val cards = listOf(
+            Triple(R.id.headerHeadPose, R.id.detailHeadPose, R.id.ivChevHeadPose),
+            Triple(R.id.headerTurn, R.id.detailTurn, R.id.ivChevTurn),
+            Triple(R.id.headerTilt, R.id.detailTilt, R.id.ivChevTilt),
+            Triple(R.id.headerBlink, R.id.detailBlink, R.id.ivChevBlink),
+            Triple(R.id.headerMouth, R.id.detailMouth, R.id.ivChevMouth),
+            Triple(R.id.headerGate, R.id.detailGate, R.id.ivChevGate),
+            Triple(R.id.headerGuard, R.id.detailGuard, R.id.ivChevGuard),
+            Triple(R.id.headerSwipe, R.id.detailSwipe, R.id.ivChevSwipe),
+            Triple(R.id.headerTargets, R.id.detailTargets, R.id.ivChevTargets),
+            Triple(R.id.headerGlobal, R.id.detailGlobal, R.id.ivChevGlobal),
+        )
+        // 三角本身不设监听：它不 clickable，点它会落到整行标题上，展开行为就统一了。
+        for ((headerId, detailId, chevronId) in cards) {
+            binding.root.findViewById<View>(headerId)?.setOnClickListener {
+                toggleCard(detailId, chevronId)
+            }
+        }
+    }
+
+    /** 展开 / 收起一张卡的二级详情，顺带把三角转 180°。 */
+    private fun toggleCard(detailId: Int, chevronId: Int) {
+        val detail = binding.root.findViewById<View>(detailId) ?: return
+        val chevron = binding.root.findViewById<View>(chevronId)
+        val expand = detail.visibility != View.VISIBLE
+        detail.visibility = if (expand) View.VISIBLE else View.GONE
+        chevron?.animate()?.rotation(if (expand) 180f else 0f)?.setDuration(160L)?.start()
+    }
+
+    // ---------------------------------------------------- v5.47 右侧设置页 --
+
+    /**
+     * 设置页（左滑呼出）：权限与状态 → 外观 → 测试与诊断 → 关于。
+     *
+     * 权限行点一下就去处理对应权限，用的还是原来那几个入口，没有新增任何权限申请路径。
+     */
+    private fun setupSettingsPanel() {
+        binding.rowPermCamera.setOnClickListener {
+            if (hasCameraPermission()) {
+                toast(getString(R.string.perm_granted))
+            } else {
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+        }
+        binding.rowPermNotif.setOnClickListener {
+            if (hasNotificationPermission()) {
+                toast(getString(R.string.perm_granted))
+            } else {
+                requestNotificationPermissionIfNeeded()
+            }
+        }
+        // Shizuku 那一行复用原来的「没有就打开 / 有就申请」流程。
+        binding.rowPermShizuku.setOnClickListener { onHintClicked() }
+        binding.rowPermA11y.setOnClickListener {
+            SwipeInjector.bootstrap(this)
+            render()
+            toast(getString(R.string.bootstrap_tried, SwipeInjector.activeBackend(this)))
+        }
+        binding.rowPermUsage.setOnClickListener {
+            runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+        }
+        binding.rowPermService.setOnClickListener { restartDetectionService() }
+    }
+
+    private fun openSettingsPanel() {
+        if (!binding.drawerLayout.isDrawerOpen(binding.settingsPanel)) {
+            binding.drawerLayout.openDrawer(binding.settingsPanel)
+        }
+    }
+
+    private fun closeSettingsPanel() {
+        if (binding.drawerLayout.isDrawerOpen(binding.settingsPanel)) {
+            binding.drawerLayout.closeDrawer(binding.settingsPanel)
+        }
+    }
+
+    /** 返回键：设置页开着就先收设置页，否则照旧（退到后台，服务继续跑）。 */
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun onBackPressed() {
+        if (binding.drawerLayout.isDrawerOpen(binding.settingsPanel)) {
+            closeSettingsPanel()
             return
         }
-        autoBackgrounded = true
-        requestShizukuPermissionIfNeeded()
-        val moved = moveTaskToBack(true)
-        android.util.Log.i("MainActivity", "moveTaskToBack -> $moved")
+        super.onBackPressed()
     }
+
+    // ------------------------------------------------ v5.47 首页状态与摘要 --
+
+    /** 顶部那颗胶囊：运行中 / 待机 / 未启动。 */
+    private fun renderStatusPill() {
+        val (textRes, colorRes) = when {
+            !GazeCameraService.isRunning() -> R.string.home_status_stopped to R.color.state_idle
+            AppStateManager.targetActive -> R.string.home_status_running to R.color.state_ready
+            else -> R.string.home_status_standby to R.color.state_cooldown
+        }
+        binding.tvStatusPill.text = getString(textRes)
+        binding.tvStatusPill.setTextColor(ContextCompat.getColor(this, colorRes))
+    }
+
+    /** 设置页里的一排权限状态（只读展示，点行才动作）。 */
+    private fun renderPermissionRows() {
+        setPermState(
+            binding.tvPermCameraState,
+            getString(if (hasCameraPermission()) R.string.perm_granted else R.string.perm_denied),
+            hasCameraPermission(),
+        )
+        setPermState(
+            binding.tvPermNotifState,
+            getString(if (hasNotificationPermission()) R.string.perm_granted else R.string.perm_denied),
+            hasNotificationPermission(),
+        )
+        // Shizuku 自己的状态文案就是人话（未安装 / 未运行 / 待授权 / 已授权），直接用。
+        val shizuku = ShizukuSwipeDispatcher.statusText(this)
+        setPermState(binding.tvPermShizukuState, shizuku, shizuku == "已授权")
+
+        val a11yOn = GazeAccessibilityService.isConnected() || AccessibilityBootstrap.isServiceEnabled(this)
+        val a11yText = when {
+            GazeAccessibilityService.isConnected() -> getString(R.string.perm_connected)
+            AccessibilityBootstrap.isServiceEnabled(this) -> getString(R.string.perm_on)
+            else -> getString(R.string.perm_off)
+        }
+        setPermState(binding.tvPermA11yState, a11yText, a11yOn)
+
+        setPermState(
+            binding.tvPermUsageState,
+            getString(if (hasUsageAccess()) R.string.perm_allowed else R.string.perm_not_allowed),
+            hasUsageAccess(),
+        )
+        setPermState(
+            binding.tvPermServiceState,
+            getString(if (GazeCameraService.isRunning()) R.string.perm_running else R.string.perm_stopped),
+            GazeCameraService.isRunning(),
+        )
+    }
+
+    private fun setPermState(view: android.widget.TextView, text: String, ok: Boolean) {
+        view.text = text
+        view.setTextColor(
+            ContextCompat.getColor(this, if (ok) R.color.state_ready else R.color.state_idle),
+        )
+    }
+
+    /** 卡片右上角的小标签 + 标题前那个状态圆点。 */
+    private fun renderCardSummaries() {
+        val cfg = GazeRuntime.config
+        binding.tvChipBlink.text = getString(R.string.card_blink_chip, cfg.blinkTriggerCount)
+        binding.tvChipGate.text = when (cfg.gazeGateMode) {
+            GateMode.ENFORCE -> getString(R.string.card_gate_chip_enforce)
+            GateMode.OFF -> getString(R.string.card_gate_chip_off)
+            else -> getString(R.string.card_gate_chip_observe)
+        }
+        val targets = AppPrefs.targetPackages(this).size
+        binding.tvChipTargets.text = if (cfg.globalPagingEnabled) {
+            getString(R.string.card_targets_chip_all)
+        } else {
+            getString(R.string.card_targets_chip, targets)
+        }
+
+        setDot(binding.dotHeadPose, cfg.headPoseEnabled)
+        setDot(binding.dotTurn, cfg.horizontalSwipeEnabled)
+        setDot(binding.dotTilt, cfg.tiltVolumeEnabled)
+        // 眨眼通道没有开关（一直是开着的），所以点永远是绿的。
+        setDot(binding.dotBlink, true)
+        setDot(binding.dotMouth, cfg.mouthTapEnabled)
+        setDot(binding.dotGate, cfg.gazeGateMode != GateMode.OFF)
+        setDot(binding.dotGuard, cfg.globalCooldownEnabled || cfg.staticLockEnabled)
+        setDot(binding.dotSwipe, cfg.adaptiveSwipeEnabled)
+        setDot(binding.dotTargets, cfg.globalPagingEnabled || targets > 0)
+        setDot(binding.dotGlobal, cfg.globalPagingEnabled)
+    }
+
+    private fun setDot(view: View, on: Boolean) {
+        view.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            ContextCompat.getColor(this, if (on) R.color.state_ready else R.color.state_idle),
+        )
+    }
+
+    /** 「使用情况访问」是否已允许（前台应用检测靠它）。 */
+    @Suppress("DEPRECATION")
+    private fun hasUsageAccess(): Boolean = runCatching {
+        val ops = getSystemService(AppOpsManager::class.java)
+        ops != null &&
+            ops.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                packageName,
+            ) == AppOpsManager.MODE_ALLOWED
+    }.getOrDefault(false)
 
     // ------------------------------------------------------------------ render --
 
@@ -1043,6 +1355,11 @@ class MainActivity : AppCompatActivity() {
                 service,
             )
         }
+
+        // v5.47：首页胶囊 + 卡片摘要，以及设置页里那一排权限状态。
+        renderStatusPill()
+        renderPermissionRows()
+        renderCardSummaries()
     }
 
     private fun permissionsReady(): Boolean = hasCameraPermission() && hasNotificationPermission()

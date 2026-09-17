@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      v5.47 暗色配色 = v5.46 及以前那一套（用户已经看惯的深色），原样搬过来，
+      只多了一个 divider（原来是布局里写死的 #33FFFFFF）。
+      只在「黑夜」和「跟随系统（系统是深色）」时生效。
+    -->
+    <color name="bg">#FF101418</color>
+    <color name="surface">#FF1B2027</color>
+    <color name="surface_alt">#FF232A33</color>
+    <color name="on_surface">#FFE6EAF0</color>
+    <color name="on_surface_dim">#FF9AA6B2</color>
+    <color name="accent">#FF34D399</color>
+    <color name="divider">#FF2B333D</color>
+
+    <color name="state_idle">#FF9AA6B2</color>
+    <color name="state_ready">#FF34D399</color>
+    <color name="state_cooldown">#FFFBBF24</color>
+</resources>

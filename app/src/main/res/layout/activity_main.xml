@@ -1,1011 +1,2173 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  v5.47 界面重排：毛坯房 → 首页卡片 + 右侧设置页。
+
+  结构：
+    DrawerLayout
+      ├─ SwipeToOpenLayout  首页（任意位置向左滑 = 呼出设置）
+      │    ├─ 顶栏（标题 / 状态胶囊 / 设置按钮）
+      │    ├─ ScrollView → 功能卡片列表（每张卡：一级标题行 + 三角折叠的二级详情）
+      │    └─ 底部提示
+      └─ LinearLayout(gravity=end)  设置页（权限与状态 / 外观 / 测试与诊断 / 关于）
+
+  约定（很重要，改这个文件时别破坏）：
+    · 所有控件的 id 与 v5.46 保持一致，MainActivity 的绑定代码才不用大改。
+    · 每张卡片的三个 id：headerXxx（点它展开）/ detailXxx（二级容器）/ ivChevXxx（三角）。
+    · 长解释文本一律放进 detailXxx 里（用户要的「注释缩成三角」）。
+    · 颜色只用 @color/*，不要在布局里写死色值（亮/暗两套要能一起变）。
+-->
+<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/drawerLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/bg"
-    android:fillViewport="true">
+    android:background="@color/bg">
+
+    <!-- ==================================================================== -->
+    <!-- ============================== 首 页 ============================== -->
+    <!-- ==================================================================== -->
+
+    <com.example.gazescroll.SwipeToOpenLayout
+        android:id="@+id/homeRoot"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/bg"
+            android:orientation="vertical">
+
+            <!-- 顶栏 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="16dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="10dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/app_name"
+                        android:textColor="@color/on_surface"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="1dp"
+                        android:text="@string/home_subtitle"
+                        android:textColor="@color/on_surface_dim"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvStatusPill"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/pill_bg"
+                    android:paddingStart="10dp"
+                    android:paddingTop="5dp"
+                    android:paddingEnd="10dp"
+                    android:paddingBottom="5dp"
+                    android:text="@string/home_status_stopped"
+                    android:textColor="@color/state_idle"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/btnOpenSettings"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:padding="4dp"
+                    android:text="@string/home_btn_settings"
+                    android:textColor="@color/accent"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <!-- 功能卡片列表 -->
+            <ScrollView
+                android:id="@+id/homeScroll"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:scrollbarStyle="outsideOverlay">
+
+                <LinearLayout
+                    android:id="@+id/llCards"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="14dp"
+                    android:paddingTop="2dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="18dp">
+
+                    <!-- ============ 1. 点头 / 仰头翻页 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardHeadPose"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerHeadPose"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotHeadPose"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_head_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_head_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchHeadPose"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevHeadPose"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailHeadPose"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchHeadInvert"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_head_invert"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_head_sensitivity"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgHeadSensitivity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbHeadHigh"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_head_high"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbHeadMedium"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_head_medium"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbHeadLow"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_head_low"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:id="@+id/tvLiveHead"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.25"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 2. 左右扭头滑动 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardTurn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerTurn"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotTurn"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_turn_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_turn_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchHorizontalSwipe"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevTurn"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailTurn"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:id="@+id/tvHorizThreshold"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_horiz_threshold"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgHorizSensitivity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbHorizHigh"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_horiz_high"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbHorizMedium"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_horiz_medium"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbHorizLow"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_horiz_low"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchHorizInvert"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_horiz_invert"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_horiz_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:id="@+id/tvLiveYaw"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.25"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 3. 歪头调音量 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardTilt"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerTilt"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotTilt"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_tilt_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_tilt_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchTiltVolume"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevTilt"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailTilt"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchTiltLeftUp"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_tilt_left_up"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchTiltRightUp"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_tilt_right_up"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:id="@+id/tvTiltThreshold"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_tilt_threshold"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgTiltThreshold"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltThr10"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_thr_10"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltThr13"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_thr_13"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltThr16"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_thr_16"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltThr20"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_thr_20"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:id="@+id/tvTiltHold"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_tilt_hold"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgTiltHold"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltHold200"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_hold_200"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltHold300"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_hold_300"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltHold500"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_hold_500"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltHold800"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_hold_800"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:id="@+id/tvTiltStep"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_tilt_step"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgTiltStep"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltStep1"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_step_1"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltStep2"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_step_2"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltStep3"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_step_3"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbTiltStep5"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_tilt_step_5"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_tilt_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:id="@+id/tvLiveTilt"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.25"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 4. 眨眼翻页（没有总开关，这个通道一直开着） ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardBlink"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerBlink"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotBlink"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_ready" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_blink_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_blink_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/tvChipBlink"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:background="@drawable/pill_bg"
+                                android:paddingStart="10dp"
+                                android:paddingTop="4dp"
+                                android:paddingEnd="10dp"
+                                android:paddingBottom="4dp"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevBlink"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailBlink"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_blink_count"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgBlinkCount"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbBlink1"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_blink_1"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbBlink2"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_blink_2"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbBlink3"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_blink_3"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbBlink4"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_blink_4"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_blink_sensitivity"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgBlinkSensitivity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbBlinkHigh"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_blink_high"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbBlinkMedium"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_blink_medium"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbBlinkLow"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_blink_low"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:id="@+id/tvLiveBlink"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.25"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 5. 张嘴点击 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardMouth"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerMouth"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotMouth"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_mouth_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_mouth_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchMouthTap"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevMouth"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailMouth"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:id="@+id/tvMouthThreshold"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_mouth_sensitivity"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgMouthSensitivity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbMouthHigh"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_mouth_high"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbMouthMedium"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_mouth_medium"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbMouthLow"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_mouth_low"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_mouth_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:id="@+id/tvLiveMouth"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.25"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 6. 注视门 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardGate"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerGate"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotGate"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_gate_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_gate_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/tvChipGate"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:background="@drawable/pill_bg"
+                                android:paddingStart="10dp"
+                                android:paddingTop="4dp"
+                                android:paddingEnd="10dp"
+                                android:paddingBottom="4dp"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevGate"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailGate"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:id="@+id/tvGateMode"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:text="@string/settings_gate_mode"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <RadioGroup
+                                android:id="@+id/rgGateMode"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="vertical">
+
+                                <RadioButton
+                                    android:id="@+id/rbGateOff"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_gate_off"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbGateObserve"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_gate_observe"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+
+                                <RadioButton
+                                    android:id="@+id/rbGateEnforce"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/settings_gate_enforce"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="14sp" />
+                            </RadioGroup>
+
+                            <TextView
+                                android:id="@+id/tvGateState"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.3"
+                                android:textColor="@color/on_surface"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_gate_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 7. 防误触（冷却 + 静止锁定） ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardGuard"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerGuard"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotGuard"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_guard_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_guard_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchGlobalCooldown"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevGuard"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailGuard"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:id="@+id/tvCooldownValue"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:textColor="@color/accent"
+                                android:textSize="14sp" />
+
+                            <!-- max = GazeConfig.GLOBAL_COOLDOWN_STEPS（500ms~5000ms，每档 250ms）。 -->
+                            <SeekBar
+                                android:id="@+id/seekCooldown"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:max="18" />
+
+                            <TextView
+                                android:id="@+id/tvCooldownRange"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_cooldown_range"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:id="@+id/tvCooldownLive"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="@string/settings_cooldown_live_off"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchStaticLock"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:text="@string/settings_static_lock"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_cooldown_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 8. 自适应滑动幅度 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardSwipe"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerSwipe"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotSwipe"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_swipe_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_swipe_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchAdaptiveSwipe"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevSwipe"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailSwipe"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:id="@+id/tvSwipeProfile"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/settings_adaptive_current_empty"
+                                android:textColor="@color/on_surface"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="10dp"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="@string/settings_softness_title"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="13sp" />
+
+                                <Button
+                                    android:id="@+id/btnResetListDistance"
+                                    style="?android:attr/borderlessButtonStyle"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:minWidth="0dp"
+                                    android:paddingStart="8dp"
+                                    android:paddingEnd="8dp"
+                                    android:text="@string/settings_softness_reset"
+                                    android:textColor="@color/accent"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/tvListDistanceValue"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:textColor="@color/accent"
+                                android:textSize="14sp" />
+
+                            <!-- max = AdaptiveSwipe.LIST_DISTANCE_STEPS（10%~50%，每档 2%）。 -->
+                            <SeekBar
+                                android:id="@+id/seekListDistance"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:max="20" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_softness_range"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_adaptive_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 9. 生效的应用 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardTargets"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerTargets"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotTargets"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_targets_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_targets_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/tvChipTargets"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:background="@drawable/pill_bg"
+                                android:paddingStart="10dp"
+                                android:paddingTop="4dp"
+                                android:paddingEnd="10dp"
+                                android:paddingBottom="4dp"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevTargets"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailTargets"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_targets_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <!-- Populated in code so uninstalled apps can be greyed out. -->
+                            <LinearLayout
+                                android:id="@+id/llTargetApps"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:orientation="vertical" />
+
+                            <TextView
+                                android:id="@+id/tvTargetsNone"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:paddingTop="4dp"
+                                android:text="@string/settings_targets_none"
+                                android:textColor="@color/state_cooldown"
+                                android:textSize="12sp"
+                                android:visibility="gone" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- ============ 10. 全局使用翻页 ============ -->
+
+                    <LinearLayout
+                        android:id="@+id/cardGlobal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="10dp"
+                        android:background="@drawable/card_bg"
+                        android:orientation="vertical"
+                        android:paddingStart="14dp"
+                        android:paddingTop="12dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="12dp">
+
+                        <LinearLayout
+                            android:id="@+id/headerGlobal"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?android:attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/dotGlobal"
+                                android:layout_width="9dp"
+                                android:layout_height="9dp"
+                                android:background="@drawable/dot"
+                                android:backgroundTint="@color/state_idle" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="10dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/card_global_title"
+                                    android:textColor="@color/on_surface"
+                                    android:textSize="15sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/card_global_desc"
+                                    android:textColor="@color/on_surface_dim"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchGlobalPaging"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp" />
+
+                            <ImageView
+                                android:id="@+id/ivChevGlobal"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:layout_marginStart="4dp"
+                                android:background="?android:attr/selectableItemBackgroundBorderless"
+                                android:contentDescription="@string/card_expand"
+                                android:padding="2dp"
+                                android:src="@drawable/ic_chevron"
+                                android:tint="@color/on_surface_dim" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailGlobal"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="12dp"
+                                android:layout_marginBottom="2dp"
+                                android:background="@color/divider" />
+
+                            <TextView
+                                android:id="@+id/tvGlobalPagingState"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:lineSpacingMultiplier="1.3"
+                                android:text="@string/settings_global_paging_state_empty"
+                                android:textColor="@color/on_surface"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_global_paging_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
+            </ScrollView>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="10dp"
+                android:text="@string/home_swipe_hint"
+                android:textColor="@color/on_surface_dim"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </com.example.gazescroll.SwipeToOpenLayout>
+
+    <!-- ==================================================================== -->
+    <!-- =========================== 设 置 页 ============================== -->
+    <!-- ==================================================================== -->
 
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="20dp">
+        android:id="@+id/settingsPanel"
+        android:layout_width="320dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="@color/bg"
+        android:elevation="12dp"
+        android:orientation="vertical">
 
-        <!-- Status / onboarding. Only meaningful while something is still missing. -->
-        <TextView
-            android:id="@+id/tvHint"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:clickable="true"
-            android:focusable="true"
-            android:lineSpacingMultiplier="1.35"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
-
-        <Button
-            android:id="@+id/btnRestartService"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/btn_restart_service"
-            android:textSize="12sp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/settings_blink_count"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <RadioGroup
-            android:id="@+id/rgBlinkCount"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <RadioButton
-                android:id="@+id/rbBlink1"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_blink_1"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbBlink2"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_blink_2"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbBlink3"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_blink_3"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbBlink4"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_blink_4"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchHeadPose"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:text="@string/settings_head_pose"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchHeadInvert"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_head_invert"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <!-- v4.8：静止锁定，压掉「一动不动也误触」。 -->
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchStaticLock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_static_lock"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_cooldown_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <!-- 开关与实时数值同一行：数值右对齐，拖动滑块时立刻变化。 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:baselineAligned="true"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:paddingStart="18dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="10dp">
 
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchGlobalCooldown"
+            <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="@string/settings_cooldown_switch"
+                android:text="@string/settings_panel_title"
                 android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                android:textSize="18sp"
+                android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/tvCooldownValue"
+                android:id="@+id/btnCloseSettings"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:fontFamily="monospace"
-                android:textColor="@color/accent"
-                android:textSize="14sp" />
-        </LinearLayout>
-
-        <!-- max = GazeConfig.GLOBAL_COOLDOWN_STEPS（500ms~5000ms，每档 250ms）。 -->
-        <SeekBar
-            android:id="@+id/seekCooldown"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:max="18" />
-        <TextView
-            android:id="@+id/tvCooldownRange"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="@string/settings_cooldown_range"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_cooldown_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/tvCooldownLive"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/settings_cooldown_live_off"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <!-- ================= v4.4 左右扭头滑动 ================= -->
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_horiz_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchHorizontalSwipe"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_horiz_switch"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_horiz_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/tvHorizThreshold"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_horiz_threshold"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <RadioGroup
-            android:id="@+id/rgHorizSensitivity"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <RadioButton
-                android:id="@+id/rbHorizHigh"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_horiz_high"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbHorizMedium"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_horiz_medium"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbHorizLow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_horiz_low"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchHorizInvert"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_horiz_invert"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <!-- ================= v4.5 张嘴暂停 / 恢复 ================= -->
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_mouth_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchMouthTap"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_mouth_switch"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_mouth_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/tvMouthThreshold"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_mouth_sensitivity"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <RadioGroup
-            android:id="@+id/rgMouthSensitivity"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <RadioButton
-                android:id="@+id/rbMouthHigh"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_mouth_high"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbMouthMedium"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_mouth_medium"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbMouthLow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_mouth_low"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <!-- ================= v4.5 自适应滑动幅度 + v4.6 柔度调节 ================= -->
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_adaptive_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchAdaptiveSwipe"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_adaptive_switch"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_adaptive_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/tvSwipeProfile"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:fontFamily="monospace"
-            android:lineSpacingMultiplier="1.3"
-            android:text="@string/settings_adaptive_current_empty"
-            android:textColor="@color/on_surface"
-            android:textSize="12sp" />
-
-        <!-- v4.6 自定义滑动柔度：只影响列表类应用的滑动幅度。 -->
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:baselineAligned="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/settings_softness_title"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="@string/settings_panel_close"
+                android:focusable="true"
+                android:padding="8dp"
+                android:text="✕"
                 android:textColor="@color/on_surface_dim"
-                android:textSize="13sp" />
-
-            <Button
-                android:id="@+id/btnResetListDistance"
-                style="?android:attr/borderlessButtonStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:minWidth="0dp"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:text="@string/settings_softness_reset"
-                android:textColor="@color/accent"
-                android:textSize="12sp" />
+                android:textSize="16sp" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvListDistanceValue"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textColor="@color/accent"
-            android:textSize="14sp" />
-
-        <!-- max = AdaptiveSwipe.LIST_DISTANCE_STEPS（10%~50%，每档 2%）。 -->
-        <SeekBar
-            android:id="@+id/seekListDistance"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:max="20" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="@string/settings_softness_range"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
+            android:background="@color/divider" />
 
-        <View
+        <ScrollView
             android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
+            android:layout_height="0dp"
+            android:layout_weight="1">
 
-        <!-- ================= v4.7 全局使用翻页 ================= -->
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_global_paging_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchGlobalPaging"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_global_paging_switch"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_global_paging_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/tvGlobalPagingState"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:fontFamily="monospace"
-            android:lineSpacingMultiplier="1.3"
-            android:text="@string/settings_global_paging_state_empty"
-            android:textColor="@color/on_surface"
-            android:textSize="12sp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_targets_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_targets_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
-
-        <!-- Populated in code so uninstalled apps can be greyed out. -->
-        <LinearLayout
-            android:id="@+id/llTargetApps"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="vertical" />
-
-        <TextView
-            android:id="@+id/tvTargetsNone"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="4dp"
-            android:text="@string/settings_targets_none"
-            android:textColor="@color/state_cooldown"
-            android:textSize="12sp"
-            android:visibility="gone" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_sensitivity_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_blink_sensitivity"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <RadioGroup
-            android:id="@+id/rgBlinkSensitivity"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <RadioButton
-                android:id="@+id/rbBlinkHigh"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/settings_blink_high"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                android:orientation="vertical"
+                android:paddingStart="18dp"
+                android:paddingTop="14dp"
+                android:paddingEnd="18dp"
+                android:paddingBottom="24dp">
 
-            <RadioButton
-                android:id="@+id/rbBlinkMedium"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_blink_medium"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                <!-- ===== 权限与状态 ===== -->
 
-            <RadioButton
-                android:id="@+id/rbBlinkLow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_blink_low"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_permissions"
+                    android:textColor="@color/accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_head_sensitivity"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
+                <LinearLayout
+                    android:id="@+id/rowPermCamera"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp">
 
-        <RadioGroup
-            android:id="@+id/rgHeadSensitivity"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/perm_camera"
+                        android:textColor="@color/on_surface"
+                        android:textSize="15sp" />
 
-            <RadioButton
-                android:id="@+id/rbHeadHigh"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_head_high"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                    <TextView
+                        android:id="@+id/tvPermCameraState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/state_idle"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
-            <RadioButton
-                android:id="@+id/rbHeadMedium"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_head_medium"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                <LinearLayout
+                    android:id="@+id/rowPermNotif"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp">
 
-            <RadioButton
-                android:id="@+id/rbHeadLow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_head_low"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/perm_notification"
+                        android:textColor="@color/on_surface"
+                        android:textSize="15sp" />
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
+                    <TextView
+                        android:id="@+id/tvPermNotifState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/state_idle"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
-        <!-- ================= v5.35 歪头控音量（取代 v5.30 的单眼闭眼） ================= -->
+                <LinearLayout
+                    android:id="@+id/rowPermShizuku"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_tilt_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/perm_shizuku"
+                        android:textColor="@color/on_surface"
+                        android:textSize="15sp" />
 
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchTiltVolume"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_tilt_switch"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
+                    <TextView
+                        android:id="@+id/tvPermShizukuState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/state_idle"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchTiltLeftUp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/settings_tilt_left_up"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
+                <LinearLayout
+                    android:id="@+id/rowPermA11y"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp">
 
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchTiltRightUp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/settings_tilt_right_up"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/perm_a11y"
+                        android:textColor="@color/on_surface"
+                        android:textSize="15sp" />
 
-        <TextView
-            android:id="@+id/tvTiltThreshold"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_tilt_threshold"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
+                    <TextView
+                        android:id="@+id/tvPermA11yState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/state_idle"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
-        <RadioGroup
-            android:id="@+id/rgTiltThreshold"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+                <LinearLayout
+                    android:id="@+id/rowPermUsage"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp">
 
-            <RadioButton
-                android:id="@+id/rbTiltThr10"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_10"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/perm_usage"
+                        android:textColor="@color/on_surface"
+                        android:textSize="15sp" />
 
-            <RadioButton
-                android:id="@+id/rbTiltThr13"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_13"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                    <TextView
+                        android:id="@+id/tvPermUsageState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/state_idle"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
-            <RadioButton
-                android:id="@+id/rbTiltThr16"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_16"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                <LinearLayout
+                    android:id="@+id/rowPermService"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="12dp">
 
-            <RadioButton
-                android:id="@+id/rbTiltThr20"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_thr_20"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/perm_service"
+                        android:textColor="@color/on_surface"
+                        android:textSize="15sp" />
 
-        <TextView
-            android:id="@+id/tvTiltHold"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_tilt_hold"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
+                    <TextView
+                        android:id="@+id/tvPermServiceState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/state_idle"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
-        <RadioGroup
-            android:id="@+id/rgTiltHold"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingMultiplier="1.3"
+                    android:text="@string/perm_hint"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
 
-            <RadioButton
-                android:id="@+id/rbTiltHold200"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_hold_200"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                <TextView
+                    android:id="@+id/tvHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:lineSpacingMultiplier="1.35"
+                    android:textColor="@color/on_surface"
+                    android:textSize="13sp" />
 
-            <RadioButton
-                android:id="@+id/rbTiltHold300"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_hold_300"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="@color/divider" />
 
-            <RadioButton
-                android:id="@+id/rbTiltHold500"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_hold_500"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                <!-- ===== 外观 ===== -->
 
-            <RadioButton
-                android:id="@+id/rbTiltHold800"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_hold_800"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_appearance"
+                    android:textColor="@color/accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/tvTiltStep"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_tilt_step"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/theme_title"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="13sp" />
 
-        <RadioGroup
-            android:id="@+id/rgTiltStep"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+                <RadioGroup
+                    android:id="@+id/rgTheme"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
 
-            <RadioButton
-                android:id="@+id/rbTiltStep1"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_step_1"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                    <RadioButton
+                        android:id="@+id/rbThemeLight"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/theme_light"
+                        android:textColor="@color/on_surface"
+                        android:textSize="14sp" />
 
-            <RadioButton
-                android:id="@+id/rbTiltStep2"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_step_2"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                    <RadioButton
+                        android:id="@+id/rbThemeDark"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/theme_dark"
+                        android:textColor="@color/on_surface"
+                        android:textSize="14sp" />
 
-            <RadioButton
-                android:id="@+id/rbTiltStep3"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_step_3"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
+                    <RadioButton
+                        android:id="@+id/rbThemeSystem"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/theme_system"
+                        android:textColor="@color/on_surface"
+                        android:textSize="14sp" />
+                </RadioGroup>
 
-            <RadioButton
-                android:id="@+id/rbTiltStep5"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_tilt_step_5"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingMultiplier="1.35"
+                    android:text="@string/theme_hint"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_tilt_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="@color/divider" />
 
+                <!-- ===== 测试与诊断 ===== -->
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_diagnostics"
+                    android:textColor="@color/accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:text="@string/settings_live_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchGazeProbe"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/settings_probe_switch"
+                    android:textColor="@color/on_surface"
+                    android:textSize="14sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:lineSpacingMultiplier="1.3"
-            android:text="@string/settings_live_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
+                <TextView
+                    android:id="@+id/tvProbeState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingMultiplier="1.3"
+                    android:text="@string/settings_probe_state_off"
+                    android:textColor="@color/on_surface"
+                    android:textSize="13sp" />
 
-        <TextView
-            android:id="@+id/tvLiveValues"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:fontFamily="monospace"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_live_empty"
-            android:textColor="@color/on_surface"
-            android:textSize="13sp" />
+                <TextView
+                    android:id="@+id/tvProbeLast"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingMultiplier="1.3"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_footer"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingMultiplier="1.35"
+                    android:text="@string/settings_probe_hint"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
 
-        <!-- ================= v5.39：注视数据采集（测试功能） ================= -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/settings_live_title"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="13sp" />
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingMultiplier="1.3"
+                    android:text="@string/settings_live_hint"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_probe_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+                <TextView
+                    android:id="@+id/tvLiveValues"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingMultiplier="1.35"
+                    android:text="@string/settings_live_empty"
+                    android:textColor="@color/on_surface"
+                    android:textSize="13sp" />
 
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/switchGazeProbe"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/settings_probe_switch"
-            android:textColor="@color/on_surface"
-            android:textSize="14sp" />
+                <Button
+                    android:id="@+id/btnRestartService"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/btn_restart_service"
+                    android:textSize="12sp" />
 
-        <TextView
-            android:id="@+id/tvProbeState"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.3"
-            android:text="@string/settings_probe_state_off"
-            android:textColor="@color/on_surface"
-            android:textSize="13sp" />
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="14dp"
+                    android:background="@color/divider" />
 
-        <TextView
-            android:id="@+id/tvProbeLast"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:lineSpacingMultiplier="1.3"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
+                <!-- ===== 关于 ===== -->
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_probe_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_about"
+                    android:textColor="@color/accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-        <!-- ================= v5.43：注视门（眼睛得盯着屏幕） ================= -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingMultiplier="1.35"
+                    android:text="@string/settings_footer"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:layout_marginTop="18dp"
-            android:layout_marginBottom="14dp"
-            android:background="#33FFFFFF" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_gate_title"
-            android:textColor="@color/accent"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tvGateMode"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/settings_gate_mode"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="13sp" />
-
-        <RadioGroup
-            android:id="@+id/rgGateMode"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <RadioButton
-                android:id="@+id/rbGateOff"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_gate_off"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbGateObserve"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_gate_observe"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-
-            <RadioButton
-                android:id="@+id/rbGateEnforce"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_gate_enforce"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp" />
-        </RadioGroup>
-
-        <TextView
-            android:id="@+id/tvGateState"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.3"
-            android:textColor="@color/on_surface"
-            android:textSize="13sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:lineSpacingMultiplier="1.35"
-            android:text="@string/settings_gate_hint"
-            android:textColor="@color/on_surface_dim"
-            android:textSize="12sp" />
+                <TextView
+                    android:id="@+id/tvVersion"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:textColor="@color/on_surface_dim"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </ScrollView>
     </LinearLayout>
-</ScrollView>
+</androidx.drawerlayout.widget.DrawerLayout>

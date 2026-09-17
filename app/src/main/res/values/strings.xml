@@ -146,6 +146,80 @@
     <string name="settings_probe_last">上次：%1$s</string>
     <string name="settings_probe_hint">这是给「眼睛必须盯着屏幕才触发翻页」这个新功能做数据准备用的**测试功能**：打开后，前置摄像头的每一帧都会把「人脸框位置、十个关键点、画面亮度」写进手机里的 CSV 文件；本版**不做任何判定、也不改变任何一条现有触发规则**。\n用法（盖住前置摄像头就是开关）：\n1) 打开这个开关；\n2) 切到抖音、正常举着手机；\n3) 用整只手盖住前置摄像头 **3 秒** → 松手露脸，看到「录制中」就是已开始；\n4) 按测试脚本一段一段做动作，每换一段先盖住摄像头 **1 秒**（分段）；\n5) 全部做完，盖住摄像头 **3 秒以上** → 结束。\n录制中不会因为「转头看别处」而误判结束：只有画面真的变黑（被手盖住）才算盖住。文件在 App 私有目录 files/probe/ 下，用 adb 取，你不用管。</string>
 
+    <!-- ================= v5.47：首页卡片 / 右侧设置页 / 主题三档 ================= -->
+
+    <string name="home_subtitle">前置摄像头 · 免手翻页</string>
+    <string name="home_btn_settings">设置</string>
+    <string name="home_swipe_hint">往左滑打开设置 · 按返回键退到后台，翻页照常运行</string>
+
+    <string name="home_status_running">运行中</string>
+    <string name="home_status_standby">待机</string>
+    <string name="home_status_stopped">未启动</string>
+
+    <!-- 卡片一级：一句标题 + 一句话说明（详细解释全部收进三角里） -->
+    <string name="card_head_title">点头 / 仰头翻页</string>
+    <string name="card_head_desc">低头 = 上一个，抬头 = 下一个</string>
+    <string name="card_turn_title">左右扭头滑动</string>
+    <string name="card_turn_desc">向左 / 向右扭头 = 左右滑一次</string>
+    <string name="card_tilt_title">歪头调音量</string>
+    <string name="card_tilt_desc">头歪向一边 = 音量加 / 减</string>
+    <string name="card_blink_title">眨眼翻页</string>
+    <string name="card_blink_desc">连眨两下 = 下一个视频</string>
+    <string name="card_mouth_title">张嘴点击</string>
+    <string name="card_mouth_desc">张嘴一次 = 点一下屏幕中央（暂停 / 播放）</string>
+    <string name="card_gate_title">注视门</string>
+    <string name="card_gate_desc">眼睛盯着屏幕时才允许触发</string>
+    <string name="card_guard_title">防误触</string>
+    <string name="card_guard_desc">冷却时间 + 静止锁定</string>
+    <string name="card_swipe_title">自适应滑动幅度</string>
+    <string name="card_swipe_desc">按当前 App 自动调整滑动距离</string>
+    <string name="card_targets_title">生效的应用</string>
+    <string name="card_targets_desc">只在勾选的 App 里翻页（省电）</string>
+    <string name="card_global_title">全局使用翻页</string>
+    <string name="card_global_desc">任何界面都能翻页（含桌面）</string>
+    <string name="card_expand">展开或收起详情</string>
+
+    <string name="card_blink_chip">%1$d 连眨</string>
+    <string name="card_targets_chip">%1$d 个</string>
+    <string name="card_targets_chip_all">全部界面</string>
+    <string name="card_gate_chip_enforce">拦截中</string>
+    <string name="card_gate_chip_observe">观察中</string>
+    <string name="card_gate_chip_off">已关闭</string>
+
+    <!-- 右侧设置页 -->
+    <string name="settings_panel_title">设置</string>
+    <string name="settings_panel_close">关闭设置</string>
+    <string name="section_permissions">权限与状态</string>
+    <string name="section_appearance">外观</string>
+    <string name="section_diagnostics">测试与诊断</string>
+    <string name="section_about">关于</string>
+
+    <string name="perm_camera">相机</string>
+    <string name="perm_notification">通知</string>
+    <string name="perm_shizuku">手势注入（Shizuku）</string>
+    <string name="perm_a11y">无障碍备用通道</string>
+    <string name="perm_usage">使用情况访问</string>
+    <string name="perm_service">前台检测服务</string>
+    <string name="perm_hint">点任意一行去处理对应权限；下面那一块是完整状态，点它可一键补齐。</string>
+
+    <string name="perm_granted">已授予</string>
+    <string name="perm_denied">未授予</string>
+    <string name="perm_on">已启用</string>
+    <string name="perm_off">未启用</string>
+    <string name="perm_connected">已连接</string>
+    <string name="perm_allowed">已允许</string>
+    <string name="perm_not_allowed">未允许</string>
+    <string name="perm_running">运行中</string>
+    <string name="perm_stopped">未启动</string>
+
+    <string name="theme_title">主题</string>
+    <string name="theme_hint">只影响界面外观，不影响任何检测行为。背景是纯色，字体用系统自带字体。</string>
+    <string name="theme_light">白色</string>
+    <string name="theme_dark">黑夜</string>
+    <string name="theme_system">跟随系统</string>
+
+    <string name="about_version">版本 %1$s</string>
+
     <string name="shizuku_missing">未检测到 Shizuku，已改用无障碍服务方式翻页</string>
     <string name="shizuku_opened">已打开 Shizuku，请在其中启动服务后回来申请权限</string>
     <string name="shizuku_launch_failed">无法打开 Shizuku</string>

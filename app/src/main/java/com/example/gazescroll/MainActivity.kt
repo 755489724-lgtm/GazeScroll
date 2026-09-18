@@ -48,6 +48,16 @@ class MainActivity : AppCompatActivity() {
          */
         private const val ACTION_A11Y_DETAILS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"
 
+        /**
+         * v5.64：小米自己的权限编辑页 action。
+         *
+         * 这是**非标准 action**（MIUI 私有），所以只用 best-effort 方式调用：
+         * 成功就落在「权限管理」页（右上角 ⋮ 里就是「允许应用获取权限」），
+         * 失败（非小米 / MIUI 改了实现）就退回标准「应用信息」页。
+         */
+        private const val MIUI_ACTION_APP_PERM_EDITOR = "miui.intent.action.APP_PERM_EDITOR"
+        private const val MIUI_EXTRA_PKGNAME = "extra_pkgname"
+
         /** 主题切换会让 Activity 重建，用这个把「设置页开着」这件事带过去。 */
         private const val STATE_DRAWER_OPEN = "drawerOpen"
     }
@@ -1672,13 +1682,37 @@ class MainActivity : AppCompatActivity() {
         return openAccessibilitySettings()
     }
 
-    /** 直达本应用的「应用信息」页 —— 用户要在那里点右上角 ⋮。 */
-    private fun openAppInfo(): Boolean = runCatching {
+    /**
+     * 直达「能解锁受限制设置」的那一页（v5.64）。
+     *
+     * 小米/HyperOS 上**两条路都能解锁，措辞还不一样**（用户实拍截图存档在
+     * `backup\GazeScroll-v5.63\data\user-01/02-*.jpg`）：
+     *
+     *   · 手机管家 → 应用管理 → 万能翻页 → 应用信息 → ⋮ → 「允许受限制的设置」
+     *   · 设置 → 应用设置 → 应用管理 → 万能翻页 → **权限管理** → ⋮ → 「允许应用获取权限」
+     *
+     * 后者正是 `miui.intent.action.APP_PERM_EDITOR` 落地的页面（实测跳到
+     * `com.miui.permcenter.permissions.PermissionsEditorActivity`），
+     * 所以小米上优先走它：用户少找两层菜单。这正是用户那句「这样很不明显啊」的直接解法
+     * —— 我们**不能替他解锁**（系统规定必须本人在系统页里确认），但可以把他直接送到那一页。
+     * 非小米、或该 action 不存在（ActivityNotFoundException）时，退回标准的「应用信息」页。
+     */
+    private fun openAppInfo(): Boolean {
+        if (isXiaomiBrand() && openMiuiPermissionEditor()) return true
+        return runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.isSuccess
+    }
+
+    /** 小米权限编辑页（非标准 action，纯 best-effort，失败由调用方兜底）。 */
+    private fun openMiuiPermissionEditor(): Boolean = runCatching {
         startActivity(
-            Intent(
-                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:$packageName"),
-            ),
+            Intent(MIUI_ACTION_APP_PERM_EDITOR).putExtra(MIUI_EXTRA_PKGNAME, packageName),
         )
     }.isSuccess
 

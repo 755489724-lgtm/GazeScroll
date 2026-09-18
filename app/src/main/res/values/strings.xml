@@ -267,18 +267,18 @@
     <string name="guide_title">还差一步：让万能翻页能用</string>
     <string name="guide_button">去处理这一步</string>
 
-    <string name="guide_xiaomi">&lt;b&gt;1.&lt;/b&gt; 「设置 → 无障碍 → 万能翻页」→ 点一下开关：会弹出「&lt;b&gt;受限制的设置&lt;/b&gt;」→ 点「知道了」&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 「手机管家 → 应用管理 → 万能翻页 → 应用信息」→ 右上角 &lt;b&gt;⋮&lt;/b&gt; → 「&lt;b&gt;允许受限制的设置&lt;/b&gt;」（要指纹或密码）&lt;br&gt;&lt;b&gt;3.&lt;/b&gt; 回「设置 → 无障碍 → 万能翻页」→ 这一回开关能真正打开&lt;br&gt;&lt;b&gt;4.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
+    <string name="guide_xiaomi">&lt;b&gt;1.&lt;/b&gt; 「设置 → 无障碍 → 万能翻页」→ 点一下开关：会弹出「&lt;b&gt;受限制的设置&lt;/b&gt;」或「&lt;b&gt;了解如何获取权限&lt;/b&gt;」→ 点「知道了」&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 去解锁，下面两条路任选一条（页面不一样，能到的那个就行）：&lt;br&gt;　· &lt;b&gt;手机管家 → 应用管理 → 万能翻页 → 应用信息 → 右上角 ⋮ → 「允许受限制的设置」&lt;/b&gt;&lt;br&gt;　· &lt;b&gt;设置 → 应用设置 → 应用管理 → 万能翻页 → 权限管理 → 右上角 ⋮ → 「允许应用获取权限」&lt;/b&gt;&lt;br&gt;（两条都会要指纹或密码，输完才算解锁）&lt;br&gt;&lt;b&gt;3.&lt;/b&gt; 回「设置 → 无障碍 → 万能翻页」→ 这一回开关能真正打开&lt;br&gt;&lt;b&gt;4.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
     <string name="guide_other">&lt;b&gt;1.&lt;/b&gt; 「设置 → 无障碍 → 万能翻页」→ 点一下开关：会弹出「&lt;b&gt;受限制的设置&lt;/b&gt;」→ 点「知道了」&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 「设置 → 应用 → 万能翻页」→ 右上角 &lt;b&gt;⋮&lt;/b&gt; → 「&lt;b&gt;允许受限制的设置&lt;/b&gt;」（要指纹或密码）&lt;br&gt;&lt;b&gt;3.&lt;/b&gt; 回「设置 → 无障碍 → 万能翻页」→ 这一回开关能真正打开&lt;br&gt;&lt;b&gt;4.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
     <string name="guide_old_android">&lt;b&gt;1.&lt;/b&gt; 「设置 → 无障碍 → 万能翻页」→ 打开开关&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
 
     <!-- 高亮「现在该做哪一步」，按 AppPrefs.setupGuideStep 切换 -->
-    <string name="guide_now_1">&lt;b&gt;现在做第 1 步&lt;/b&gt;：点下面的按钮去无障碍，把开关点一下。弹出「受限制的设置」&lt;b&gt;是正常的&lt;/b&gt; —— 点「知道了」这一步就完成了。</string>
-    <string name="guide_now_2">&lt;b&gt;现在做第 2 步&lt;/b&gt;：点下面的按钮去「应用信息」，右上角 &lt;b&gt;⋮&lt;/b&gt; → 允许受限制的设置。&lt;br&gt;如果 ⋮ 里&lt;b&gt;没有这一项&lt;/b&gt;，说明第 1 步没触发成功 —— 点最下面的「重来一遍」。</string>
+    <string name="guide_now_1">&lt;b&gt;现在做第 1 步&lt;/b&gt;：点下面的按钮去无障碍，把「万能翻页」的开关点一下。弹出「受限制的设置」或「了解如何获取权限」&lt;b&gt;都是正常的&lt;/b&gt; —— 点「知道了」这一步就完成了。</string>
+    <string name="guide_now_2">&lt;b&gt;现在做第 2 步&lt;/b&gt;：点下面的按钮会直接跳到「权限管理」页，&lt;b&gt;右上角 ⋮&lt;/b&gt; → 「允许应用获取权限」（要指纹或密码）。&lt;br&gt;如果那个页面没有 ⋮ 或没有这一项，也可以走另一条：手机管家 → 应用管理 → 万能翻页 → 应用信息 → ⋮ → 「允许受限制的设置」。&lt;br&gt;两个地方都&lt;b&gt;没有&lt;/b&gt;？说明第 1 步没触发成功 —— 点最下面的「重来一遍」。</string>
     <string name="guide_now_3">&lt;b&gt;现在做第 3 步&lt;/b&gt;：再点一次按钮回无障碍。这一次开关是能真正打开的。</string>
-    <string name="guide_now_4">&lt;b&gt;三步都走完还没通？&lt;/b&gt;点最下面的「重来一遍」，从第 1 步严格按顺序再走一次 —— 顺序错一步，「允许受限制的设置」就不会出现。</string>
+    <string name="guide_now_4">&lt;b&gt;三步都走完还没通？&lt;/b&gt;点最下面的「重来一遍」，从第 1 步严格按顺序再走一次 —— 顺序错一步，那个解锁入口就不会出现。</string>
 
     <string name="guide_btn_a11y">① 去无障碍点一下开关</string>
-    <string name="guide_btn_appinfo">② 去应用信息找右上角 ⋮</string>
+    <string name="guide_btn_appinfo">② 去权限管理页找右上角 ⋮</string>
     <string name="guide_btn_a11y_again">③ 回无障碍打开开关</string>
     <string name="guide_btn_restart">重来一遍</string>
 
@@ -292,7 +292,7 @@
 
     <!-- 悬浮指引气泡里的单行提示（跳到系统设置时显示） -->
     <string name="overlay_hint_1">第 1 步：把「万能翻页」的开关点一下 → 弹出「受限制的设置」就点「知道了」</string>
-    <string name="overlay_hint_2">第 2 步：应用信息 → 右上角 ⋮ → 允许受限制的设置</string>
+    <string name="overlay_hint_2">第 2 步：右上角 ⋮ → 「允许应用获取权限」（或「允许受限制的设置」），要指纹或密码</string>
     <string name="overlay_hint_3">第 3 步：回到无障碍，把开关真正打开</string>
     <string name="overlay_hint_4">还是不行？回 App 点「重来一遍」，严格按顺序走</string>
     <string name="overlay_title">万能翻页 · 免 ADB 引导</string>

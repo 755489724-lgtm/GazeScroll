@@ -149,6 +149,63 @@
 > 需要 signature 级权限 `OPEN_ACCESSIBILITY_DETAILS_SETTINGS`**，连 adb shell 都被拒 —— 在我们的
 > 代码里有兜底（会退回无障碍总列表），所以只是少省一层，不会出错。
 
+> **v5.64（2026-09-18）用户亲手走完四步后的两处修正**：① **顺序验证成立**（用户走完四步、
+> 全程没有 adb，`enabled_accessibility_services` 里出现了我们的服务、而 `WRITE_SECURE_SETTINGS`
+> 仍是撤掉的 —— 也就是**无障碍确实是他用手点开的**）；② **文案与小米真实措辞对齐**：用户拍下的
+> 系统提示页写的是「**了解如何获取权限**」，而那条路径上的菜单项叫「**允许应用获取权限**」
+> （不是我们写的「允许受限制的设置」，那是另一条路径的词）→ 引导现在把**两条路径、两种措辞**都写上；
+> ③ **② 号按钮改成直跳小米「权限管理」页**（`miui.intent.action.APP_PERM_EDITOR`，
+> 实测落到 `com.miui.permcenter.permissions.PermissionsEditorActivity`，就是有 ⋮ 的那一页），
+> 非小米/失败时退回标准「应用信息」页 —— 这是用户那句「这样很不明显啊」的直接解法。
+> 顺带回答用户的问题：**App 不能替他解锁**（系统规定必须本人在系统页确认），但可以把他送到那一页。
+
+---
+
+## [5.64] - 2026-09-18
+
+用户实走之后原话：「我点这一步没用，点允许应用获取权限没用……我还输入了密码，然后我再回到应用，
+这个之前黑的，就能打开了，但是这样很不明显啊，能在权限里面，直接添加无障碍服务的设置权限吗？」
+
+### ① 顺序验证：成立（这是本轮最重要的结论）
+
+用户在**没有 adb** 的情况下按四步走完，实测：
+
+```
+enabled_accessibility_services = com.example.gazescroll/…GazeAccessibilityService
+accessibility_enabled          = 1
+WRITE_SECURE_SETTINGS          = granted=false   ← 全程没恢复过 adb 授权
+```
+
+→ **无障碍是用户用手点开的**，不是 App 自己开的。加上他把「显示悬浮窗」也授了
+（`SYSTEM_ALERT_WINDOW: allow`），"给别人手机用"这条路**在真机上完整跑通**。
+用户拍下的两张系统截图存档在 `backup\GazeScroll-v5.63\data\user-01/02-*.jpg`。
+
+### ② 文案错配（用户截图暴露的）
+
+- 系统在他点开关时弹的是「**了解如何获取权限**」（不是我们写的「受限制的设置」）；
+- 那条路径的步骤是：设置 → 应用设置 → 选应用 → **权限管理** → ⋮ → 「**允许应用获取权限**」；
+- 而我们/墨痕写的是另一条路径的措辞：手机管家 → 应用管理 → 应用信息 → ⋮ → 「允许受限制的设置」。
+
+**两条路都真实存在、措辞不同。** 现在 `guide_xiaomi` 把两条都写上（用户走通的是「权限管理」那条），
+第 1 步的提示也写成「受限制的设置」**或**「了解如何获取权限」。
+
+### ③ ② 号按钮改成直跳那一页（回答「能不能直接加权限」）
+
+- **App 不能替用户解锁**：Android 13+ 要求受限设置的解锁必须**本人在系统页面里确认**
+  （AOSP CDD 明确禁止提供一键解除的入口），所以没有"直接添加"这条路。
+- **但可以把他直接送到那一页**：新增 `miui.intent.action.APP_PERM_EDITOR`（小米私有 action，
+  best-effort + 兜底），实测落到 `com.miui.permcenter.permissions.PermissionsEditorActivity`
+  —— 正是用户截图里那个有 ⋮ 的「权限管理」页。非小米或该 action 不存在时退回标准「应用信息」页。
+- 按钮文案相应改成「② 去权限管理页找右上角 ⋮」。
+
+### 验证证据
+
+- 构建：`versionCode=106 / versionName=5.64`；装机 `adb install -r -d` 成功。
+- 新引导渲染（`backup\GazeScroll-v5.64\data\v564-01-guide-two-paths.png`）：两条路径 + 两种措辞
+  + 「现在做第 1 步」高亮 + ② 新文案 + 「悬浮指引已开启」（用户已自行开启该开关）。
+- ② 号按钮实测：`mCurrentFocus = com.miui.securitycenter/com.miui.permcenter.permissions.PermissionsEditorActivity` ✓
+- 验完已恢复用户状态：无障碍已连接、`WRITE_SECURE_SETTINGS` 重新 grant 回去（自动修复能力）。
+
 ---
 
 ## [5.63] - 2026-09-18

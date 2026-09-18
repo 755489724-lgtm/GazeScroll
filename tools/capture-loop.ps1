@@ -8,12 +8,12 @@
 #
 # Usage: powershell -NoProfile -File tools\capture-loop.ps1 -Out apk\v59.log -Minutes 40
 param(
-    [string]$Out = 'D:\ruanjian\deepseek harness\apk\capture-loop.log',
+    [string]$Out = 'D:\ruanjian\wannengfanye\GazeScroll-v5.65\evidence\日志与数据\capture-loop.log',
     [int]$Minutes = 30
 )
 
 $ErrorActionPreference = 'Continue'
-$adb = 'D:\ruanjian\deepseek harness\.android-build\android-sdk\platform-tools\adb.exe'
+$adb = 'D:\ruanjian\wannengfanye\GazeScroll-v5.65\toolchain\android-sdk\platform-tools\adb.exe'
 $tags = 'GazeDiag:V HeadPose:V Blink:V Tilt:V PhoneMotion:V RefPoint:V GazeA11y:V GazeCameraService:V GazeSelfCheck:V AppState:V A11yBootstrap:V GazeProbe:V GazeGate:V'
 
 function Find-Serial {

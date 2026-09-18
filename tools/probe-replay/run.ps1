@@ -10,8 +10,8 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$proj = 'D:\ruanjian\deepseek harness\GazeScroll'
-$jdk  = 'D:\ruanjian\deepseek harness\.android-build\jdk\jdk-17.0.20.1+1'
+$proj = 'D:\ruanjian\wannengfanye\GazeScroll-v5.65\source'
+$jdk  = 'D:\ruanjian\wannengfanye\GazeScroll-v5.65\toolchain\jdk\jdk-17.0.20.1+1'
 $cache = "$env:USERPROFILE\.gradle\caches\modules-2\files-2.1\org.jetbrains.kotlin"
 $cachex = "$env:USERPROFILE\.gradle\caches\modules-2\files-2.1\org.jetbrains.kotlinx"
 

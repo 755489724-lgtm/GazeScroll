@@ -2,13 +2,13 @@
 # because that port changes every time wireless debugging is re-enabled.
 # Usage: powershell -NoProfile -File tools\capture.ps1 -Out apk\v58-turn.log -Minutes 20
 param(
-    [string]$Out = 'D:\ruanjian\deepseek harness\apk\capture.log',
+    [string]$Out = 'D:\ruanjian\wannengfanye\GazeScroll-v5.65\evidence\日志与数据\capture.log',
     [int]$Minutes = 15,
     [int]$RowLimit = 200000
 )
 
 $ErrorActionPreference = 'Continue'
-$adb = 'D:\ruanjian\deepseek harness\.android-build\android-sdk\platform-tools\adb.exe'
+$adb = 'D:\ruanjian\wannengfanye\GazeScroll-v5.65\toolchain\android-sdk\platform-tools\adb.exe'
 # Our log lines contain the degree sign and Chinese text, so the capture file MUST be read
 # back with -Encoding UTF8. Reading it as ANSI turns them into mojibake and makes the
 # diagnostics unreadable, which cost a debugging round once already.

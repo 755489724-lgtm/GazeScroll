@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Continue'
-$adb = "D:\ruanjian\deepseek harness\.android-build\android-sdk\platform-tools\adb.exe"
+$adb = "D:\ruanjian\wannengfanye\GazeScroll-v5.65\toolchain\android-sdk\platform-tools\adb.exe"
 $d = "192.168.3.32:37875"
-$tmp = "D:\ruanjian\deepseek harness\apk\gesturetest"
+$tmp = "D:\ruanjian\wannengfanye\GazeScroll-v5.65\evidence\日志与数据\gesturetest"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 function Shot([string]$name) {

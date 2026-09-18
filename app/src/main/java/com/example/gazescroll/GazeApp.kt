@@ -28,6 +28,9 @@ class GazeApp : Application(), CameraXConfig.Provider {
     override fun onCreate() {
         super.onCreate()
         AppCompatDelegate.setDefaultNightMode(UiPrefs.nightModeOf(UiPrefs.themeMode(this)))
+        // v5.66：闪退时把原因显示在屏幕上（远程排障用，见 CrashReport 的注释）。
+        // 只多接一个异常处理器，不改变任何正常路径的行为。
+        CrashReport.install(this)
     }
 
     override fun getCameraXConfig(): CameraXConfig =

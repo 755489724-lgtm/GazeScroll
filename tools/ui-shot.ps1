@@ -14,7 +14,7 @@
 # NOTE: keep this file ASCII-only - Windows PowerShell 5.1 reads BOM-less .ps1 as ANSI.
 
 param(
-    [string]$Root = 'D:\ruanjian\deepseek harness',
+    [string]$Root = 'D:\ruanjian\wannengfanye\GazeScroll-v5.65',
     [Parameter(Mandatory = $true)][string]$Out,
     [switch]$NoLaunch,
     [switch]$SwipeLeft,
@@ -26,7 +26,7 @@ param(
     [int]$SleepMs = 900
 )
 
-$adb = Join-Path $Root '.android-build\android-sdk\platform-tools\adb.exe'
+$adb = Join-Path $Root 'toolchain\android-sdk\platform-tools\adb.exe'
 $pkg = 'com.example.gazescroll'
 
 function Find-Serial {

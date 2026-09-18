@@ -290,6 +290,15 @@
     <string name="home_setup_banner">还差一步才能用：点这里看怎么开无障碍 →</string>
     <string name="guide_state_ok">无障碍已连接</string>
 
+    <!-- ================= v5.66：崩溃现场页（远程排障用） ================= -->
+
+    <string name="crash_title">万能翻页启动失败了</string>
+    <string name="crash_hint">把这一屏截图发给开发者就能定位原因（也可以点「复制全部」把文字发过去）。\n下面是从上到下的完整报错信息，不用看懂，整屏截下来就行。</string>
+    <string name="crash_copy">复制全部</string>
+    <string name="crash_close">关闭</string>
+    <string name="crash_copied">已复制到剪贴板</string>
+    <string name="crash_none">没有找到崩溃记录。\n（这一页也可以手动打开：adb shell am start -n com.example.gazescroll/.CrashActivity）</string>
+
     <!-- 悬浮指引气泡里的单行提示（跳到系统设置时显示） -->
     <string name="overlay_hint_1">第 1 步：把「万能翻页」的开关点一下 → 弹出「受限制的设置」就点「知道了」</string>
     <string name="overlay_hint_2">第 2 步：右上角 ⋮ → 「允许应用获取权限」（或「允许受限制的设置」），要指纹或密码</string>

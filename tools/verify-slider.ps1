@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Continue'
-$adb = "D:\ruanjian\deepseek harness\.android-build\android-sdk\platform-tools\adb.exe"
+$adb = "D:\ruanjian\wannengfanye\GazeScroll-v5.65\toolchain\android-sdk\platform-tools\adb.exe"
 $d = "192.168.3.32:40689"
 $prefs = "/data/data/com.example.gazescroll/shared_prefs/gaze_scroll_prefs.xml"
-$tmp = "D:\ruanjian\deepseek harness\GazeScroll\tools\gz_prefs_slider.xml"
+$tmp = "D:\ruanjian\wannengfanye\GazeScroll-v5.65\source\tools\gz_prefs_slider.xml"
 
 function Apply-Distance([string]$value, [string]$label) {
     $xml = "<?xml version=`"1.0`" encoding=`"utf-8`" standalone=`"yes`" ?>`n" +

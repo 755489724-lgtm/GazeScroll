@@ -99,6 +99,20 @@
             </intent-filter>
         </activity>
 
+        <!--
+          v5.66：崩溃现场页。闪退时由 CrashReport 拉起来，把原因直接显示在屏幕上，
+          用户截一张图就能发出来（远程排障唯一可行的办法）。
+          exported=false：只有本 App 能拉起它。
+          **独立进程 :crash**：崩溃的那一刻主进程马上就会被系统收掉，
+          同进程的页面会跟着一起死 —— 那样用户根本看不到东西。
+        -->
+        <activity
+            android:name=".CrashActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:process=":crash"
+            android:screenOrientation="portrait" />
+
         <!-- Owns the CameraX pipeline and the blink detector; type=camera is required on API 34. -->
         <service
             android:name=".GazeCameraService"

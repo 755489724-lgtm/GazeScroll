@@ -218,7 +218,28 @@
   已确认**没有造成任何破坏**（只是导出了一个 0 字节的临时文件，迁移根本没开始）。
   步骤见 `backup\GazeScroll-v5.65\ROLLBACK.txt` 的"迁移"一节。
 
+### ✅ 迁移已完成（同日稍后，无线调试恢复后做的）
+
+1. **先拿到铁证**：直接覆盖安装被系统拒绝 ——
+   `INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package com.example.gazescroll signatures
+   do not match newer version; ignoring!` —— 这就是"签名不同就得卸载"的现场。
+2. 导出设置（字节安全：`exec-out` + cmd 重定向；**用 `Out-File` 会加 BOM**，
+   而且掉线时会导出 0 字节空文件 —— 两次都踩过，脚本里已加"文件小于 100 字节就中止"）。
+3. `adb uninstall` → `adb install`（固定签名包）→ **启动前**把两份 prefs `run-as cp` 回
+   `shared_prefs/` → 重新授权（`WRITE_SECURE_SETTINGS` / 无障碍服务 / 悬浮窗 appop）。
+4. **核对结果**：
+
+| 项 | 结果 |
+| --- | --- |
+| `versionName` | 5.65 ✅ |
+| 签名 | `711ae3d5…`（= 固定 keystore 指纹）✅ |
+| 无障碍备用通道 | **已连接** ✅（引导块自动消失） |
+| 用户设置 | 点头 8.0 / 仰头 7.0 / 触发速度 450 / 扭头 25 / 歪头 14 / 眨眼 3 **一条没丢** ✅ |
+| 主题 | 跟随系统（`ui_prefs.xml` 也导回了）✅ |
+| 悬浮窗 appop | allow ✅ |
+
 ---
+
 
 ## [5.64] - 2026-09-18
 

@@ -11,16 +11,58 @@ android {
         applicationId = "com.example.gazescroll"
         minSdk = 26
         targetSdk = 34
-        versionCode = 106
-        versionName = "5.64"
+        versionCode = 107
+        versionName = "5.65"
     }
+
+    /**
+     * v5.65：固定签名。
+     *
+     * ## 为什么
+     *
+     * Android 规定「同包名只有签名相同才能覆盖安装」。debug 构建默认用**每台电脑各自
+     * 随机生成**的 debug keystore —— 我这台、朋友那台、任何一台新电脑打出来的包
+     * **互相装不上**（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），换台机器就得先卸载，
+     * 用户的设置会一起没。换成一个固定 keystore 之后，任何电脑、任何一次构建的产物
+     * 都能互相覆盖升级，别人拿到 APK 也能直接点安装。
+     *
+     * ## 放在哪
+     *
+     * `keystore/gazescroll-release.jks`（项目根目录下）。口令与注意事项见
+     * `keystore/README.txt`；**文件丢了就永远无法再覆盖升级同一个包名**。
+     * 该文件已被 `.gitignore` 的 `*.jks` 规则排除，不会进仓库 —— 要给别人"能覆盖你的包"
+     * 的编译能力，得单独把这个 jks 发给他，放到同样的路径即可。
+     *
+     * ## 找不到时怎么办
+     *
+     * **不报错、回退成默认签名**：这样别人 clone 下来、手上没有这个 jks 时，
+     * `assembleDebug` 仍然能跑通（只是打出来的包跟我们的不能互相覆盖）。
+     */
+    signingConfigs {
+        create("fixed") {
+            val store = rootProject.file("keystore/gazescroll-release.jks")
+            if (store.exists()) {
+                storeFile = store
+                storePassword = "gazescroll2026"
+                keyAlias = "gazescroll"
+                keyPassword = "gazescroll2026"
+            }
+        }
+    }
+
+    /** 有没有固定 keystore —— 没有就什么都不设，走各自机器的默认签名。 */
+    val hasFixedKeystore = rootProject.file("keystore/gazescroll-release.jks").exists()
 
     buildTypes {
         debug {
             isMinifyEnabled = false
+            // v5.65：debug 包也用固定签名。我们整套工具链（install-*.ps1、ui-shot.ps1、
+            // capture-loop.ps1）跑的都是 assembleDebug，这样发出去的包天然可以互相覆盖升级。
+            if (hasFixedKeystore) signingConfig = signingConfigs.getByName("fixed")
         }
         release {
             isMinifyEnabled = false
+            if (hasFixedKeystore) signingConfig = signingConfigs.getByName("fixed")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

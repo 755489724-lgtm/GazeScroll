@@ -78,6 +78,24 @@ class GazeCameraService : LifecycleService() {
         private const val CHANNEL_ID = "blink_scroll"
         private const val NOTIF_ID = 1001
 
+        /**
+         * v5.62：无障碍掉线时的提醒（和状态通知分开通道、分开 id）。
+         *
+         * 为什么必须是**另一个通道 + IMPORTANCE_DEFAULT**：状态通知是 IMPORTANCE_LOW 的
+         * 常驻条，用户早就习惯它在那儿，改文案根本不会注意到。而「无障碍掉线」意味着
+         * **翻页已经彻底不工作了**，必须真的弹出来一次。
+         */
+        private const val CHANNEL_ALERT_ID = "blink_scroll_alert"
+        private const val NOTIF_ALERT_ID = 1002
+
+        /**
+         * 两次掉线提醒之间的最小间隔。
+         *
+         * 探针是持续跑的，不节流会每秒弹一条。10 分钟是「发现了会去看一眼」和
+         * 「不烦人」之间的折中；期间状态通知仍然常驻，用户随时能看到当前状态。
+         */
+        private const val A11Y_ALERT_THROTTLE_MS = 10 * 60 * 1000L
+
         /** Analysis resolution (spec: low, to keep the sensor and ML Kit cheap). */
         private val ANALYSIS_SIZE = Size(480, 360)
 
@@ -2242,6 +2260,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
     @Volatile
     private var a11yForceRebinds = 0
 
+    /** 上一次弹「无障碍掉线」提醒的时刻（v5.62），用于节流。 */
+    private var lastA11yAlertAtMs = 0L
+
     /**
      * 「持续没有画面」的起始时刻（v5.7）。
      *
@@ -2616,6 +2637,12 @@ private const val REF_LOG_INTERVAL_MS = 400L
             )
             runCatching { AccessibilityBootstrap.forceRebind(this, "$trigger: missing for ${missingFor}ms") }
                 .onFailure { Log.w("GazeCameraService", "a11y force rebind failed: ${it.message}") }
+            // v5.62：没有 adb 授权时上面那次 forceRebind 是**空操作**（它第一句就是
+            // canWriteSecureSettings，不通过直接 return），于是"一直在重试"看起来像
+            // "已经好了"，而用户那边手势早就到不了目标 App。这里把它挑明。
+            if (AccessibilityBootstrap.needsManualRepair(this)) {
+                alertAccessibilityLost("$trigger: missing for ${missingFor}ms")
+            }
             return
         }
 
@@ -2734,6 +2761,7 @@ private const val REF_LOG_INTERVAL_MS = 400L
 
     private fun createChannel() {
         val nm = getSystemService(NotificationManager::class.java) ?: return
+        createAlertChannel(nm)
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -2744,6 +2772,72 @@ private const val REF_LOG_INTERVAL_MS = 400L
             setShowBadge(false)
         }
         nm.createNotificationChannel(channel)
+    }
+
+    /**
+     * v5.62：掉线提醒的通道。
+     *
+     * 单独一个通道、IMPORTANCE_DEFAULT，是为了让这条提醒**真的会弹出来**：
+     * 常驻的低优先级状态条用户早就看习惯了，藏在里面的警告等于没发。
+     * 用户如果不想要，可以在系统里单独关掉这个通道，而不影响常驻状态条。
+     */
+    private fun createAlertChannel(nm: NotificationManager) {
+        if (nm.getNotificationChannel(CHANNEL_ALERT_ID) != null) return
+        val channel = NotificationChannel(
+            CHANNEL_ALERT_ID,
+            getString(R.string.notif_channel_alert_name),
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            description = getString(R.string.notif_channel_alert_desc)
+            setShowBadge(true)
+        }
+        nm.createNotificationChannel(channel)
+    }
+
+    /**
+     * 「无障碍掉线了，而且这次 App 自己修不了」——弹一次，10 分钟内不重复。
+     *
+     * 为什么值得打扰用户：没有 adb 授权时 [AccessibilityBootstrap] 的两条自愈路径
+     * 全都是空操作，这个状态**不会自己好**。以前它只有一行 logcat，用户只会觉得
+     * 「用着用着突然就不翻页了」，然后来提 issue 说"没反应"。
+     *
+     * 点击进的是 App 设置页（`EXTRA_OPEN_SETTINGS`），那里正好显示着无障碍那一行和
+     * 重新打开的引导。
+     */
+    private fun alertAccessibilityLost(reason: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastA11yAlertAtMs < A11Y_ALERT_THROTTLE_MS) return
+        lastA11yAlertAtMs = now
+
+        Log.w("GazeCameraService", "a11y lost and no WRITE_SECURE_SETTINGS ($reason) — alerting user")
+
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        createAlertChannel(nm)
+
+        val openIntent = PendingIntent.getActivity(
+            this,
+            3,
+            Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_OPEN_SETTINGS, true),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_ALERT_ID)
+            .setSmallIcon(R.drawable.ic_stat_gaze)
+            .setContentTitle(getString(R.string.notif_a11y_lost_title))
+            .setContentText(getString(R.string.notif_a11y_lost_text))
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(getString(R.string.notif_a11y_lost_text)),
+            )
+            .setAutoCancel(true)
+            .setShowWhen(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(openIntent)
+            .addAction(0, getString(R.string.notif_action_fix), openIntent)
+            .build()
+
+        runCatching { nm.notify(NOTIF_ALERT_ID, notification) }
+            .onFailure { Log.w("GazeCameraService", "a11y alert notify failed: ${it.message}") }
     }
 
     /**

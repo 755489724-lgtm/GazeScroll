@@ -13,6 +13,17 @@
     <string name="notif_action_stop">停止</string>
     <string name="notif_action_restart">重启</string>
 
+    <!--
+      v5.62：无障碍掉线时的提醒通道（IMPORTANCE_DEFAULT，会真的弹出来）。
+      为什么需要它：没有 adb 授权时 App 无法自己重绑，服务会「看着在跑、
+      手势却到不了目标 App」，过去这种情况只有一行日志，用户只会觉得"突然坏了"。
+    -->
+    <string name="notif_channel_alert_name">万能翻页 · 需要处理</string>
+    <string name="notif_channel_alert_desc">无障碍服务掉线等需要你手动处理一次的情况</string>
+    <string name="notif_a11y_lost_title">翻页已失效：无障碍服务掉线了</string>
+    <string name="notif_a11y_lost_text">点这里去重新打开 —— 到无障碍里把它「关掉再打开」一次即可</string>
+    <string name="notif_action_fix">去修复</string>
+
     <string name="btn_restart_service">手动重启服务（检测不到人脸 / 画面卡住时点这里）</string>
     <string name="restart_requested">已请求重建相机，约 2 秒后恢复</string>
 
@@ -244,16 +255,49 @@
     <string name="param_tilt_hint">数值越大越不容易误触（要歪得更明显才算）；保持时间在下面单独调。</string>
     <string name="param_tune_tip">调坏了点右边的「默认」就能回到你原来那套值。</string>
 
-    <!-- ================= v5.61：给"别人的手机"的分步引导 ================= -->
+    <!-- ================= v5.62：免 ADB 的四步引导（顺序本身就是关键） ================= -->
+
+    <!--
+      ⚠️ 这一段的顺序不能改。
+      系统要求用户**先撞一次「受限制的设置」拦截**，应用信息页里的
+      「允许受限制的设置」才会出现。v5.61 写的是「先去开允许受限制的设置」，
+      顺序反了 —— 用户在第 1 步就找不到那个入口，只能退回去用 adb。
+    -->
 
     <string name="guide_title">还差一步：让万能翻页能用</string>
-    <string name="guide_button">去打开无障碍</string>
-    <string name="guide_xiaomi">&lt;b&gt;1.&lt;/b&gt; 打开「&lt;b&gt;手机管家&lt;/b&gt;」→ 应用管理 → 万能翻页 → 应用信息 → 打开「&lt;b&gt;允许受限制的设置&lt;/b&gt;」&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 回到「设置」→ 无障碍 → 万能翻页 → 打开开关&lt;br&gt;&lt;b&gt;3.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
-    <string name="guide_other">&lt;b&gt;1.&lt;/b&gt; 打开「设置」→ 应用 → 万能翻页 → 右上角 &lt;b&gt;⋮&lt;/b&gt; → 打开「&lt;b&gt;允许受限制的设置&lt;/b&gt;」&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 再进「设置」→ 无障碍 → 万能翻页 → 打开开关&lt;br&gt;&lt;b&gt;3.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
-    <string name="guide_old_android">&lt;b&gt;1.&lt;/b&gt; 打开「设置」→ 无障碍 → 万能翻页 → 打开开关&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
-    <string name="guide_note">为什么要点「允许受限制的设置」：APK 是侧载安装的，Android 13 起系统会默认锁住它的无障碍开关（提示「受限制的设置」），解锁一次即可，重启不丢。&lt;br&gt;打开后还是不能翻页？去无障碍里把它&lt;b&gt;关掉再打开&lt;/b&gt;一次 —— 系统强杀过 App 之后需要这样重绑一次。&lt;br&gt;只有一条腿也能用：&lt;b&gt;无障碍这条腿足够了&lt;/b&gt;，不需要 adb、也不需要电脑。装了 Shizuku 会更稳，但它每次重启手机都要重新启动一次。</string>
+    <string name="guide_button">去处理这一步</string>
+
+    <string name="guide_xiaomi">&lt;b&gt;1.&lt;/b&gt; 「设置 → 无障碍 → 万能翻页」→ 点一下开关：会弹出「&lt;b&gt;受限制的设置&lt;/b&gt;」→ 点「知道了」&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 「手机管家 → 应用管理 → 万能翻页 → 应用信息」→ 右上角 &lt;b&gt;⋮&lt;/b&gt; → 「&lt;b&gt;允许受限制的设置&lt;/b&gt;」（要指纹或密码）&lt;br&gt;&lt;b&gt;3.&lt;/b&gt; 回「设置 → 无障碍 → 万能翻页」→ 这一回开关能真正打开&lt;br&gt;&lt;b&gt;4.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
+    <string name="guide_other">&lt;b&gt;1.&lt;/b&gt; 「设置 → 无障碍 → 万能翻页」→ 点一下开关：会弹出「&lt;b&gt;受限制的设置&lt;/b&gt;」→ 点「知道了」&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 「设置 → 应用 → 万能翻页」→ 右上角 &lt;b&gt;⋮&lt;/b&gt; → 「&lt;b&gt;允许受限制的设置&lt;/b&gt;」（要指纹或密码）&lt;br&gt;&lt;b&gt;3.&lt;/b&gt; 回「设置 → 无障碍 → 万能翻页」→ 这一回开关能真正打开&lt;br&gt;&lt;b&gt;4.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
+    <string name="guide_old_android">&lt;b&gt;1.&lt;/b&gt; 「设置 → 无障碍 → 万能翻页」→ 打开开关&lt;br&gt;&lt;b&gt;2.&lt;/b&gt; 回到这里，上面「无障碍备用通道」变成「已连接」就能用了</string>
+
+    <!-- 高亮「现在该做哪一步」，按 AppPrefs.setupGuideStep 切换 -->
+    <string name="guide_now_1">&lt;b&gt;现在做第 1 步&lt;/b&gt;：点下面的按钮去无障碍，把开关点一下。弹出「受限制的设置」&lt;b&gt;是正常的&lt;/b&gt; —— 点「知道了」这一步就完成了。</string>
+    <string name="guide_now_2">&lt;b&gt;现在做第 2 步&lt;/b&gt;：点下面的按钮去「应用信息」，右上角 &lt;b&gt;⋮&lt;/b&gt; → 允许受限制的设置。&lt;br&gt;如果 ⋮ 里&lt;b&gt;没有这一项&lt;/b&gt;，说明第 1 步没触发成功 —— 点最下面的「重来一遍」。</string>
+    <string name="guide_now_3">&lt;b&gt;现在做第 3 步&lt;/b&gt;：再点一次按钮回无障碍。这一次开关是能真正打开的。</string>
+    <string name="guide_now_4">&lt;b&gt;三步都走完还没通？&lt;/b&gt;点最下面的「重来一遍」，从第 1 步严格按顺序再走一次 —— 顺序错一步，「允许受限制的设置」就不会出现。</string>
+
+    <string name="guide_btn_a11y">① 去无障碍点一下开关</string>
+    <string name="guide_btn_appinfo">② 去应用信息找右上角 ⋮</string>
+    <string name="guide_btn_a11y_again">③ 回无障碍打开开关</string>
+    <string name="guide_btn_restart">重来一遍</string>
+
+    <string name="guide_overlay_btn">开启悬浮指引（可选）</string>
+    <string name="guide_overlay_on">悬浮指引已开启 · 点这里关闭</string>
+
+    <string name="guide_note">为什么要先点一下开关：APK 是侧载安装的，Android 13 起系统会默认锁住它的无障碍开关。而那个解锁入口（允许受限制的设置）&lt;b&gt;必须先撞一次拦截才会出现&lt;/b&gt;，所以第 1 步不能跳过。&lt;br&gt;打开后还是不能翻页？去无障碍里把它&lt;b&gt;关掉再打开&lt;/b&gt;一次 —— 系统强杀过 App 之后需要这样重绑一次。&lt;br&gt;只有一条腿也能用：&lt;b&gt;无障碍这条腿足够了&lt;/b&gt;，不需要 adb、也不需要电脑。装了 Shizuku 会更稳，但它每次重启手机都要重新启动一次。</string>
+
     <string name="home_setup_banner">还差一步才能用：点这里看怎么开无障碍 →</string>
     <string name="guide_state_ok">无障碍已连接</string>
+
+    <!-- 悬浮指引气泡里的单行提示（跳到系统设置时显示） -->
+    <string name="overlay_hint_1">第 1 步：把「万能翻页」的开关点一下 → 弹出「受限制的设置」就点「知道了」</string>
+    <string name="overlay_hint_2">第 2 步：应用信息 → 右上角 ⋮ → 允许受限制的设置</string>
+    <string name="overlay_hint_3">第 3 步：回到无障碍，把开关真正打开</string>
+    <string name="overlay_hint_4">还是不行？回 App 点「重来一遍」，严格按顺序走</string>
+    <string name="overlay_title">万能翻页 · 免 ADB 引导</string>
+    <string name="overlay_drag_hint">按住可以拖走</string>
+    <string name="overlay_close">关闭悬浮指引</string>
 
     <string name="shizuku_missing">未检测到 Shizuku，已改用无障碍服务方式翻页</string>
     <string name="shizuku_opened">已打开 Shizuku，请在其中启动服务后回来申请权限</string>

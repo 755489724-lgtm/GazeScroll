@@ -45,6 +45,27 @@ object AccessibilityBootstrap {
                 PackageManager.PERMISSION_GRANTED
         }.getOrDefault(false)
 
+    /**
+     * 这个状态下 App **自己修不了**，只能请用户手动来一下（v5.62）。
+     *
+     * 判据是「设置里开着 + 实例不在 + 没有 WRITE_SECURE_SETTINGS」：
+     *
+     *  - 设置里开着、实例也在 → 一切正常，不用管；
+     *  - 设置里开着、实例不在 → 上面两条自愈路径都走不了（[forceRebind] /
+     *    [repairIfNeeded] 的第一句就是 `canWriteSecureSettings` 检查，没有就直接 return）。
+     *    过去这种状态只剩一行日志，服务「看着在跑、手势却到不了目标 App」，
+     *    用户体感就是「突然坏了」。现在 [GazeCameraService] 用它来决定要不要弹提醒。
+     *  - 设置里没开 → 那是从没配好，属于首次引导的事（见 MainActivity 的引导卡片），
+     *    不算"掉线"，这里返回 false。
+     *
+     * 有 WRITE_SECURE_SETTINGS 时返回 false：那种情况下自愈会真的发生，
+     * 弹提醒只会变成噪音。
+     */
+    fun needsManualRepair(ctx: Context): Boolean =
+        canWriteSecureSettings(ctx).not() &&
+            isServiceEnabled(ctx) &&
+            !GazeAccessibilityService.isConnected()
+
     /** Reads the system setting, so it is correct even before the service binds. */
     fun isServiceEnabled(ctx: Context): Boolean {
         val expected = componentId(ctx)

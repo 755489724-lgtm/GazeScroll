@@ -98,6 +98,15 @@ object AppPrefs {
     /** Last learned head-pose baseline, reused so nodding works instantly on re-entry. */
     private const val K_HEAD_BASELINE = "headBaselineDeg"
 
+    /**
+     * v5.62：免 ADB 引导走到第几步（0 = 还没开始，3 = 三步都试完了）。
+     *
+     * 为什么必须持久化：用户按引导跳去系统设置时本 Activity 会走 onStop，
+     * 系统也可能顺手把它回收掉。这一步的进度如果只在内存里，回来就归零，
+     * 引导会一直把用户按在第 1 步 —— 而第 1 步和第 2 步是**两个不同**的页面。
+     */
+    private const val K_SETUP_GUIDE_STEP = "setupGuideStep"
+
     private fun sp(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -327,5 +336,15 @@ object AppPrefs {
 
     fun setHeadBaseline(ctx: Context, degrees: Float) {
         sp(ctx).edit().putFloat(K_HEAD_BASELINE, degrees).apply()
+    }
+
+    // ------------------------------------------------------- setup guide --
+
+    /** 0..3，见 [K_SETUP_GUIDE_STEP]。读出越界值一律夹回合法区间。 */
+    fun setupGuideStep(ctx: Context): Int =
+        sp(ctx).getInt(K_SETUP_GUIDE_STEP, 0).coerceIn(0, 3)
+
+    fun setSetupGuideStep(ctx: Context, step: Int) {
+        sp(ctx).edit().putInt(K_SETUP_GUIDE_STEP, step.coerceIn(0, 3)).apply()
     }
 }

@@ -2,6 +2,7 @@ package com.example.gazescroll
 
 import android.Manifest
 import android.app.AppOpsManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -35,6 +36,17 @@ class MainActivity : AppCompatActivity() {
     companion object {
         /** Make the activity stay visible instead of auto-backgrounding. */
         const val EXTRA_OPEN_SETTINGS = "com.example.gazescroll.OPEN_SETTINGS"
+
+        /**
+         * v5.62：直达「本服务的无障碍开关页」的 action。
+         *
+         * 为什么写字面量而不是 `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS`：
+         * 那个常量在 AOSP 里是 `@hide` 的，公开 SDK 编译拿不到（javap android-34
+         * 里能查到 `ACTION_ACCESSIBILITY_DETAILS_SETTINGS` 根本不在）。
+         * 但系统 Settings 确实注册了它，配合 [Intent.EXTRA_COMPONENT_NAME] 用就能
+         * 一次跳到开关本身；个别 ROM 没实现，[openAccessibilityDetail] 会退回总列表。
+         */
+        private const val ACTION_A11Y_DETAILS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"
 
         /** 主题切换会让 Activity 重建，用这个把「设置页开着」这件事带过去。 */
         private const val STATE_DRAWER_OPEN = "drawerOpen"
@@ -106,8 +118,11 @@ class MainActivity : AppCompatActivity() {
         binding.btnRestartService.setOnClickListener { restartDetectionService() }
         binding.btnOpenSettings.setOnClickListener { openSettingsPanel() }
         binding.btnCloseSettings.setOnClickListener { closeSettingsPanel() }
-        // v5.61：给别人手机用时的分步引导 —— 点按钮直接跳系统无障碍页，首页那条提示打开设置页。
-        binding.btnOpenA11ySettings.setOnClickListener { openAccessibilitySettings() }
+        // v5.62：免 ADB 引导的两个按钮。主按钮的文案与动作由 AppPrefs.setupGuideStep
+        // 驱动 —— 它同时也是「重来一遍」（step 3 那一档），所以没有第三个按钮。
+        binding.btnOpenA11ySettings.setOnClickListener { guidePrimaryAction() }
+        binding.btnGuideAppInfo.setOnClickListener { openAppInfo() }
+        binding.btnGuideOverlay.setOnClickListener { toggleGuideOverlay() }
         binding.homeSetupBanner.setOnClickListener { openSettingsPanel() }
         // 「首页任意位置向左滑一下」呼出设置（DrawerLayout 自带的边缘手势只认最右边那条边）。
         binding.homeRoot.onSwipeLeft = { openSettingsPanel() }
@@ -142,9 +157,16 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // v5.62：回到 App 就把悬浮气泡收起来 —— 它只在用户待在系统设置里时有用，
+        // 而我们自己的界面里已经有同一套引导，留着只会挡视线。
+        GuideOverlay.hide()
         // Fully automatic fallback: if Shizuku is not usable but the app holds
         // WRITE_SECURE_SETTINGS, turn the accessibility service on ourselves.
         SwipeInjector.bootstrap(this)
+        // v5.62：无障碍一旦真的连上，引导进度就归零。
+        // 为什么放在这里而不是点击回调里：用户是**去系统设置**把它打开的，
+        // 回来时没有任何回调会触发，只有 onResume 知道"他现在回来了"。
+        if (SwipeInjector.isReady(this)) AppPrefs.setSetupGuideStep(this, 0)
         render()
 
         val ready = permissionsReady()
@@ -177,6 +199,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        // v5.62：用户点「去无障碍 / 去应用信息」离开本 App 之后，把当前该做哪一步
+        // 浮在系统设置界面上。没有悬浮权限就什么都不做（引导卡片本身照常有效）。
+        if (!SwipeInjector.isReady(this) && GuideOverlay.canDraw(this)) {
+            GuideOverlay.show(this, getString(overlayHintRes()))
+        }
         GazeRuntime.removeListener(liveListener)
         AppStateManager.forceActive = false
         GazeCameraService.instance?.refreshAnalysisState()
@@ -184,6 +211,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // 用户是按返回键离开的（而不是点引导按钮跳去系统设置）——那就不该继续
+        // 拿气泡挡着他的屏幕。跳去设置时 isFinishing 是 false，气泡会留着。
+        if (isFinishing) GuideOverlay.hide()
         Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
         Shizuku.removeBinderReceivedListener(shizukuBinderListener)
         Shizuku.removeBinderDeadListener(shizukuDeadListener)
@@ -1441,12 +1471,10 @@ class MainActivity : AppCompatActivity() {
         }
         // Shizuku 那一行复用原来的「没有就打开 / 有就申请」流程。
         binding.rowPermShizuku.setOnClickListener { onHintClicked() }
-        // v5.61：无障碍那一行**直接跳系统无障碍页** —— 以前是"静默尝试自己开"，
-        // 在没有 adb 授权（别人的手机）上等于什么都没发生，用户完全不知道该去哪。
-        binding.rowPermA11y.setOnClickListener { openAccessibilitySettings() }
-        binding.rowPermUsage.setOnClickListener {
-            runCatching { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
-        }
+        // v5.62：无障碍那一行**直达本服务的开关页**（ACTION_ACCESSIBILITY_DETAILS_SETTINGS
+        // + EXTRA_COMPONENT_NAME）。v5.61 跳的是无障碍总列表，用户还得自己在一堆条目里找；
+        // 而这一步恰好是最容易走错的一步。
+        binding.rowPermA11y.setOnClickListener { openAccessibilityDetail() }
         binding.rowPermService.setOnClickListener { restartDetectionService() }
         // v5.48：首页卡片顺序随时可以一键回到默认。
         binding.btnResetCardOrder.setOnClickListener { resetCardOrder() }
@@ -1474,17 +1502,26 @@ class MainActivity : AppCompatActivity() {
         super.onBackPressed()
     }
 
-    // ------------------------------------------ v5.61 给别人手机用的分步引导 --
+    // ------------------------------------------ v5.62 免 ADB 的四步引导 --
 
     /**
      * 「装上就能用」的那一步：无障碍还没开起来时，把怎么开讲清楚。
      *
-     * 为什么需要它：APK 是侧载安装的，Android 13 起系统默认锁住它的无障碍开关
-     * （「受限制的设置：出于安全考虑，此设置目前不可用」）。**adb 并不是必须的** ——
-     * 用户手动解锁一次、把无障碍打开，这条腿就通了；难的是那个开关藏得深：
-     * 小米/红米把它放在「手机管家 → 应用管理 → 应用信息 → 允许受限制的设置」里，
-     * 别的品牌一般在「设置 → 应用 → 右上角 ⋮」。所以这里按品牌给路径，并且把
-     * 「允许受限制的设置」这个关键词直接写出来（用户也能拿它去搜）。
+     * ## 为什么这一版把顺序重排了（v5.61 → v5.62 的关键修正）
+     *
+     * v5.61 的文案是「1. 去打开『允许受限制的设置』→ 2. 去无障碍打开开关」。
+     * **这个顺序是反的**：Android 13 的受限制设置要求用户**先尝试开启一次、被系统
+     * 拦下一回**，应用信息页里的「允许受限制的设置」才会出现。所以照 v5.61 的文案走，
+     * 用户在第 1 步就找不到那个入口 —— 这正是「只能用 adb」的直接原因。
+     *
+     * v5.62 的三步（各步的文案见 `guide_now_*` / `guide_btn_*`）：
+     *   ① 去无障碍点一下开关，被「受限制的设置」拦下（**这一步不能跳**）
+     *   ② 去应用信息，右上角 ⋮ → 允许受限制的设置
+     *   ③ 回无障碍，这次开关能真正打开
+     *
+     * 进度存在 [AppPrefs.setupGuideStep]：用户跳去系统设置时本 Activity 会 onStop
+     * 甚至被系统回收，进度只放内存里会归零，引导就会一直把用户按在第 ① 步。
+     * 无障碍一旦连上，[onResume] 会把进度清零、这一整块自动消失。
      */
     private fun renderSetupGuide() {
         // 只有"一条腿都没有"时才打扰用户；无障碍或 Shizuku 任一条通了这个块就消失。
@@ -1493,20 +1530,119 @@ class MainActivity : AppCompatActivity() {
         binding.homeSetupBanner.visibility = if (show) View.VISIBLE else View.GONE
         if (!show) return
 
-        binding.tvSetupGuideSteps.text = android.text.Html.fromHtml(
+        // Android 13 以下没有"受限制的设置"这一关，只有一步。
+        val restrictedSettingsApply = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        binding.tvSetupGuideSteps.text = html(
             when {
-                // Android 13 以下没有"受限制的设置"这一关，少一步。
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU -> getString(R.string.guide_old_android)
+                !restrictedSettingsApply -> getString(R.string.guide_old_android)
                 isXiaomiBrand() -> getString(R.string.guide_xiaomi)
                 else -> getString(R.string.guide_other)
             },
-            android.text.Html.FROM_HTML_MODE_LEGACY,
         )
-        binding.tvSetupGuideNote.text = android.text.Html.fromHtml(
-            getString(R.string.guide_note),
-            android.text.Html.FROM_HTML_MODE_LEGACY,
+        binding.tvSetupGuideNote.text = html(getString(R.string.guide_note))
+
+        // Android 12 及以下没有第 ② 步，进度直接在 ① 和 ③ 之间来回。
+        val step = if (restrictedSettingsApply) AppPrefs.setupGuideStep(this) else {
+            AppPrefs.setupGuideStep(this).let { if (it == 1) 2 else if (it >= 2) 3 else 0 }
+        }
+
+        binding.tvGuideNow.text = html(getString(guideNowRes(step, restrictedSettingsApply)))
+        binding.btnOpenA11ySettings.text = getString(guideButtonRes(step, restrictedSettingsApply))
+        // 没有第 ② 步时，"去应用信息"那个按钮只会误导人。
+        binding.btnGuideAppInfo.visibility =
+            if (restrictedSettingsApply) View.VISIBLE else View.GONE
+        binding.btnGuideOverlay.text = getString(
+            if (GuideOverlay.canDraw(this)) R.string.guide_overlay_on else R.string.guide_overlay_btn,
         )
     }
+
+    private fun guideNowRes(step: Int, restricted: Boolean): Int = when {
+        !restricted -> if (step >= 3) R.string.guide_now_4 else R.string.guide_now_1
+        step <= 0 -> R.string.guide_now_1
+        step == 1 -> R.string.guide_now_2
+        step == 2 -> R.string.guide_now_3
+        else -> R.string.guide_now_4
+    }
+
+    private fun guideButtonRes(step: Int, restricted: Boolean): Int = when {
+        !restricted -> if (step >= 3) R.string.guide_btn_restart else R.string.guide_btn_a11y
+        step <= 0 -> R.string.guide_btn_a11y
+        step == 1 -> R.string.guide_btn_appinfo
+        step == 2 -> R.string.guide_btn_a11y_again
+        else -> R.string.guide_btn_restart
+    }
+
+    /** 悬浮气泡要显示的那一行，跟着当前 step 走。 */
+    private fun overlayHintRes(): Int {
+        val restricted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        return when {
+            !restricted -> if (AppPrefs.setupGuideStep(this) >= 3) {
+                R.string.overlay_hint_4
+            } else {
+                R.string.overlay_hint_1
+            }
+
+            else -> when (AppPrefs.setupGuideStep(this)) {
+                1 -> R.string.overlay_hint_2
+                2 -> R.string.overlay_hint_3
+                3 -> R.string.overlay_hint_4
+                else -> R.string.overlay_hint_1
+            }
+        }
+    }
+
+    /**
+     * 主按钮：按当前 step 跳到对应页面，并把进度推进一格。
+     *
+     * 只有在**真的跳出去了**（startActivity 成功）才推进 —— 否则用户会看到一个
+     * 自己没做过的步骤被打勾。
+     */
+    private fun guidePrimaryAction() {
+        val restricted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        val step = AppPrefs.setupGuideStep(this)
+
+        val next = when {
+            // Android 12 及以下：① ⇄ ③，没有第 ② 步。
+            !restricted -> if (step >= 3) 0 else 3
+            step <= 0 -> 1
+            step == 1 -> 2
+            step == 2 -> 3
+            else -> 0
+        }
+
+        val navigated = when {
+            !restricted -> openAccessibilityDetail()
+            step <= 0 || step == 2 -> openAccessibilityDetail()
+            step == 1 -> openAppInfo()
+            else -> true // "重来一遍" 不跳页面，只重置进度
+        }
+
+        if (!navigated) {
+            toast(getString(R.string.guide_button))
+            return
+        }
+        AppPrefs.setSetupGuideStep(this, next)
+        render()
+    }
+
+    /**
+     * 悬浮指引开关。
+     *
+     * 拿到权限之后**故意不做任何自动跳转**，也不提示"已开启"就结束：下一次
+     * 点「去无障碍 / 去应用信息」离开 App 时，[onStop] 自己会把气泡挂上去。
+     */
+    private fun toggleGuideOverlay() {
+        if (GuideOverlay.canDraw(this)) {
+            GuideOverlay.hide()
+            GuideOverlay.requestPermission(this)
+            toast(getString(R.string.guide_overlay_btn))
+            return
+        }
+        GuideOverlay.requestPermission(this)
+    }
+
+    private fun html(text: String): CharSequence =
+        android.text.Html.fromHtml(text, android.text.Html.FROM_HTML_MODE_LEGACY)
 
     /** 小米/红米/POCO 都把「允许受限制的设置」藏在手机管家里，文案要给对路径。 */
     private fun isXiaomiBrand(): Boolean {
@@ -1516,12 +1652,38 @@ class MainActivity : AppCompatActivity() {
             maker.contains("poco", ignoreCase = true)
     }
 
-    private fun openAccessibilitySettings() {
-        val opened = runCatching {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }.isSuccess
-        if (!opened) toast(getString(R.string.guide_button))
+    /**
+     * 直达**本服务**的无障碍开关页（API 30+）。
+     *
+     * 比 [openAccessibilitySettings] 少两层：系统无障碍列表里条目很多，而用户要点的
+     * 就是这一个开关。个别 ROM 不认这个 action，失败就退回总列表。
+     */
+    private fun openAccessibilityDetail(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val component = ComponentName(this, GazeAccessibilityService::class.java)
+            val ok = runCatching {
+                startActivity(
+                    Intent(ACTION_A11Y_DETAILS)
+                        .putExtra(Intent.EXTRA_COMPONENT_NAME, component.flattenToString()),
+                )
+            }.isSuccess
+            if (ok) return true
+        }
+        return openAccessibilitySettings()
     }
+
+    /** 直达本应用的「应用信息」页 —— 用户要在那里点右上角 ⋮。 */
+    private fun openAppInfo(): Boolean = runCatching {
+        startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName"),
+            ),
+        )
+    }.isSuccess
+
+    private fun openAccessibilitySettings(): Boolean =
+        runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }.isSuccess
 
     // ------------------------------------------------ v5.47 首页状态与摘要 --
 
@@ -1560,17 +1722,33 @@ class MainActivity : AppCompatActivity() {
         }
         setPermState(binding.tvPermA11yState, a11yText, a11yOn)
 
+        // v5.63：这一行**保留**（墨痕的 v5.62 把它删掉了）。取舍：小米/HyperOS 上这个 appop
+        // 会被系统直接拒绝，但在**别的机型上它是能给的**，前台应用检测会更准；留着最坏的代价
+        // 只是多一行灰字，而文案已写明它可选、不给也能用（会退化成无障碍窗口事件）。
         setPermState(
             binding.tvPermUsageState,
             getString(if (hasUsageAccess()) R.string.perm_allowed else R.string.perm_not_allowed),
             hasUsageAccess(),
         )
+
         setPermState(
             binding.tvPermServiceState,
             getString(if (GazeCameraService.isRunning()) R.string.perm_running else R.string.perm_stopped),
             GazeCameraService.isRunning(),
         )
     }
+
+    /** 「使用情况访问」是否已允许（前台应用检测的可选加分项，不是必需项）。 */
+    @Suppress("DEPRECATION")
+    private fun hasUsageAccess(): Boolean = runCatching {
+        val ops = getSystemService(AppOpsManager::class.java)
+        ops != null &&
+            ops.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                packageName,
+            ) == AppOpsManager.MODE_ALLOWED
+    }.getOrDefault(false)
 
     private fun setPermState(view: android.widget.TextView, text: String, ok: Boolean) {
         view.text = text
@@ -1613,18 +1791,6 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.getColor(this, if (on) R.color.state_ready else R.color.state_idle),
         )
     }
-
-    /** 「使用情况访问」是否已允许（前台应用检测靠它）。 */
-    @Suppress("DEPRECATION")
-    private fun hasUsageAccess(): Boolean = runCatching {
-        val ops = getSystemService(AppOpsManager::class.java)
-        ops != null &&
-            ops.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                Process.myUid(),
-                packageName,
-            ) == AppOpsManager.MODE_ALLOWED
-    }.getOrDefault(false)
 
     // ------------------------------------------------------------------ render --
 

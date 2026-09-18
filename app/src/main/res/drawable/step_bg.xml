@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v5.62：引导卡片里「现在该做哪一步」那一块的底。
+  单独做一个而不是复用 pill_bg（那个是 999dp 全圆角，套在三四行文字上会变成胶囊形），
+  也不用 card_bg（那是外层的底，嵌一层会变成盒子套盒子）。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface_alt" />
+    <corners android:radius="10dp" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/accent" />
+</shape>

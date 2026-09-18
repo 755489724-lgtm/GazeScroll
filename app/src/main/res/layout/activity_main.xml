@@ -1984,11 +1984,26 @@
                         android:textColor="@color/on_surface"
                         android:textSize="13sp" />
 
+                    <!-- v5.62：只把「现在该做哪一步」单独拎出来，跟着 step 变 -->
+                    <TextView
+                        android:id="@+id/tvGuideNow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/step_bg"
+                        android:lineSpacingMultiplier="1.4"
+                        android:paddingStart="10dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="10dp"
+                        android:paddingBottom="8dp"
+                        android:textColor="@color/accent"
+                        android:textSize="13sp" />
+
                     <TextView
                         android:id="@+id/btnOpenA11ySettings"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
+                        android:layout_marginTop="12dp"
                         android:background="?android:attr/selectableItemBackground"
                         android:clickable="true"
                         android:focusable="true"
@@ -1998,6 +2013,32 @@
                         android:textColor="@color/accent"
                         android:textSize="14sp"
                         android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnGuideAppInfo"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?android:attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:text="@string/guide_btn_appinfo"
+                        android:textColor="@color/on_surface_dim"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/btnGuideOverlay"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?android:attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:text="@string/guide_overlay_btn"
+                        android:textColor="@color/on_surface_dim"
+                        android:textSize="13sp" />
 
                     <TextView
                         android:id="@+id/tvSetupGuideNote"
@@ -2131,6 +2172,13 @@
                         android:textColor="@color/state_idle"
                         android:textSize="13sp" />
                 </LinearLayout>
+
+                <!--
+                  v5.63：墨痕的 v5.62 把这一行整行删掉了（理由是 HyperOS 上这个 appop 会被
+                  系统直接拒绝）。本版**保留它、但降级为可选** —— 小米拒绝不等于别的手机拒绝：
+                  在非小米机型上「使用情况访问」是能给的，前台应用检测会更准。删掉等于在那些
+                  机型上白丢一条腿，而留着的代价只是多一行灰字（文案已写明它可选、不给也能用）。
+                -->
 
                 <LinearLayout
                     android:id="@+id/rowPermUsage"

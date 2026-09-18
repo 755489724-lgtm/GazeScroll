@@ -20,17 +20,37 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!--
-      Development permission, granted over adb (`pm grant`). It lets the app
-      write `enabled_accessibility_services` itself, which is how the
-      accessibility fallback gets enabled without the user fighting the
-      "restricted settings" block in HyperOS.
+      v5.62: an optional accelerator, not a requirement.
+
+      It lets the app write `enabled_accessibility_services` itself, so it can
+      turn the accessibility service on (and rebind it after a system kill)
+      without the user walking through the system settings at all.
+
+      It is a development permission and only obtainable over adb
+      (`pm grant ... WRITE_SECURE_SETTINGS`), so every code path that needs it
+      checks AccessibilityBootstrap.canWriteSecureSettings() first and falls
+      back to the guided manual flow when it is missing.
     -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
     <!--
-      Special permission, granted over adb (`appops set <pkg> GET_USAGE_STATS allow`).
-      This is the primary foreground-app detector: HyperOS never delivers
-      accessibility window events for third-party packages such as Douyin.
+      v5.62: the optional floating step guide. It is drawn while the user is
+      navigating the system settings, and it only ever contains text we wrote —
+      no screen content is read. The permission is asked for but never required:
+      without it the in-app guide still works, the bubble just does not appear.
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!--
+      v5.62：降级为「纯加分项」，App 不再向用户索取、也不再展示它的状态。
+
+      v5.62 之前它是前台检测的主路径；实测在 HyperOS 上这个 appop 会被系统直接
+      拒绝（`ignore; rejectTime=…`），拿不到任何数据，却让权限清单多出一项要用户
+      处理的东西。现在前台检测以无障碍窗口列表为唯一必需来源（见 AppStateManager），
+      usage-stats 只在用户**碰巧**给过权限时作为额外信号使用。
+
+      声明保留，是为了那些已经授权过的用户（以及以后想重新授权的用户）不丢功能；
+      但代码里没有任何一条路径会因为它缺失而报错或提示。
     -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"

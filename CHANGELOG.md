@@ -2,6 +2,80 @@
 
 ---
 
+## v5.68（2026-09-20）诊断日志落盘 —— **App 自己的记录，终于留得住了**
+
+> v5.67 是空版本（只动版本号），它留下的是一份「此路不通」的实测记录。
+> **v5.68 才是把「诊断看不见」这件事真正解决掉的版本。**
+
+### 做了什么
+
+新增 `DiagLog.kt`：把 App 原本只打给 `logcat` 的关键记录，**同时写进 App 自己的文件**。
+
+- 路径：`Android/data/com.example.gazescroll/files/diag/diag.log`
+  （`getExternalFilesDir`，卸载 App 一起删，不污染相册/文档）
+- 轮转：单文件上限 4 MiB，满了整体挪成 `diag.log.1`，最多占 8 MiB。**绝不会写满手机存储。**
+- 取法：`adb pull /sdcard/Android/data/com.example.gazescroll/files/diag/diag.log`
+- 界面：设置页「测试与诊断」区新增开关 + 「清空诊断日志」按钮，**默认开**
+  （默认关掉等于这功能白做，见下）
+
+### 记录了哪几类（每行格式：`MM-dd HH:mm:ss.SSS/elapsedRealtime 分类 内容`）
+
+| 分类 | 内容 | 为什么关键 |
+| --- | --- | --- |
+| `heartbeat` | 每 10 秒一行：targetActive / 前台包 / 窗口读数 | **判定「轮询还活着吗」的唯一可靠判据** |
+| `target` | `targetActive` 每次变化 | 整条恢复链的总闸，它错成 false 就全线失效 |
+| `state` | App 状态回调（active/reason/pkg/from） | 「醒来成没成、是哪种 reason」 |
+| `window` | 无障碍读到的活动窗口包名**变化时** | 抖音在前台时到底读成什么 |
+| `switch` | 前台包名切换 | 「这次切换有没有被看到」 |
+| `selfcheck` | 每 3 秒的完整自检行 | 相机 / 无障碍 / 帧 / 看门狗全景 |
+| `diag` | 每 15 秒的完整诊断快照 | 防止"什么都没发生"时文件空白 |
+| `trigger` | 每次真正翻页 | 事后核对误触 |
+| `blind` | 8 秒无观测 → fail-open | 兜底有没有生效 |
+| `contradiction` | 「窗口是目标应用却判成待机」被强制纠正 | 就是「老毛病」那条路径 |
+| `enter` | 进入目标应用、检测器重新武装 | |
+
+### 为什么落盘按 15 秒节流（而 logcat 那一路还是 3 秒）
+
+完整的 `diag` 快照一行约 1.5 KB。3 秒一行的话 4 MiB 只够 40 分钟；
+15 秒一行能留 3 小时以上。而排查真正需要的是**状态变化**（`state`/`target`/`window`
+那几路是**逐次**落盘的），`diag` 只是防止「什么都没发生」时文件里一片空白。
+
+### 行为约定（写在 `DiagLog.kt` 的类注释里，改它之前先读）
+
+- **只记录、不参与任何判定**：不读也不写任何判定状态，调用点全在「已经算完、
+  已经打过 log」之后，纯粹一次 append。
+- **写不进去也不能影响主流程**：全程 `runCatching`，异常吞掉。
+- **不常驻内存、不自己起线程**：调用方在哪个线程就在哪个线程写。
+- **有上限**：见上面的轮转。
+
+### 装机实测（2026-09-20，小米 13 / Android 16）
+
+- App 正常启动、设置页正常渲染、进程不崩（v5.68，versionCode 110）
+- 文件正常生成，4 分钟内 42 行，10 个分类全部有记录
+- 心跳间隔实测 10.4 秒（轮询本身 800ms，属于正常抖动）
+- **实测立刻抓到「待机」现场的完整因果链**（这是这个功能价值的第一份证据）：
+
+```
+15:38:41.192 target active=false reason=leave pkg=com.example.gazescroll prev=null
+15:38:48.858 blind no observation for 8s -> fail-open, commit pending=com.example.gazescroll
+15:38:48.860 target active=true reason=enter pkg=null prev=com.example.gazescroll prevActive=false
+```
+
+### 顺带确认的一件事（对「老毛病」重要）
+
+`AppStateManager` 里那条 `checkBlind`（8 秒无观测 → fail-open）**实测是会触发的**，
+不是死代码。所以「待机醒不过来」的根因**不在这一条兜底上**，
+而在它触发**之前**那 8 秒里发生了什么 —— 下一版就照这份日志去查。
+
+### 回退点
+
+- tag `v5.68`；上一个稳定点 `v5.66-logspam-base`（= v5.66 原样）
+- APK + 源码快照：`evidence\备份\v5.68-diaglog-20260920-154219\`
+
+---
+
+---
+
 ## v5.67（2026-09-20）**空版本：代码与 v5.66 逐字节等价，只动了版本号**
 
 ### 这一版干了什么（以及为什么最后什么都没改）

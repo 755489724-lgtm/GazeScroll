@@ -110,6 +110,7 @@ class MainActivity : AppCompatActivity() {
 
         setupSettingsUi()
         setupCooldownUi()
+        setupIdleThrottleUi()
         setupHorizontalSwipeUi()
         setupMouthTapUi()
         setupTiltVolumeUi()
@@ -502,6 +503,45 @@ class MainActivity : AppCompatActivity() {
         renderCooldownUi()
     }
 
+    /**
+     * v5.73：「无动作自动降档」开关 + 等待时长滑块。
+     *
+     * 和冷却滑块分开写，但渲染统一收在 [renderCooldownUi] 里 ——
+     * 两者都属于「省电冷静期」这一段，一起刷新才不会出现一个更新了另一个没更新的错位。
+     */
+    private fun setupIdleThrottleUi() {
+        // 滑块档数来自 GazeConfig 常量，不写在 XML 里（避免两处各写一个数字而对不上）。
+        binding.seekIdleAfter.max = GazeConfig.IDLE_AFTER_STEPS
+        binding.switchIdleThrottle.isChecked = GazeRuntime.config.idleThrottleEnabled
+        binding.switchIdleThrottle.setOnCheckedChangeListener { _, checked ->
+            updateConfig { it.copy(idleThrottleEnabled = checked) }
+            renderCooldownUi()
+        }
+        binding.seekIdleAfter.setOnSeekBarChangeListener(
+            object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: android.widget.SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
+                    if (fromUser) {
+                        updateConfig { it.copy(idleAfterMs = GazeConfig.idleAfterMsForStep(progress)) }
+                    }
+                    renderCooldownUi()
+                }
+
+                override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                    updateConfig {
+                        it.copy(idleAfterMs = GazeConfig.idleAfterMsForStep(seekBar?.progress ?: 0))
+                    }
+                    renderCooldownUi()
+                }
+            },
+        )
+    }
+
     /** 把滑块档位换算成毫秒（并夹进合法区间）。 */
     private fun progressToCooldownMs(progress: Int): Long = GazeConfig.cooldownMsForStep(progress)
 
@@ -523,6 +563,23 @@ class MainActivity : AppCompatActivity() {
         binding.tvCooldownRange.isEnabled = enabled
         binding.tvCooldownValue.setAlpha(if (enabled) 1f else 0.45f)
         binding.tvCooldownRange.setAlpha(if (enabled) 1f else 0.45f)
+
+        // v5.73：无动作自动降档。开关关闭时把滑块灰掉，避免"能拖但不生效"的困惑。
+        val idleOn = cfg.idleThrottleEnabled
+        val idleMs = GazeConfig.snapIdleAfter(cfg.idleAfterMs)
+        val idleProgress = GazeConfig.idleAfterStepForMs(idleMs)
+        if (binding.seekIdleAfter.progress != idleProgress) {
+            binding.seekIdleAfter.progress = idleProgress
+        }
+        binding.tvIdleAfterValue.text = getString(
+            R.string.settings_idle_after_value,
+            GazeConfig.formatCooldown(idleMs),
+        )
+        binding.seekIdleAfter.isEnabled = idleOn
+        binding.tvIdleAfterRange.isEnabled = idleOn
+        binding.seekIdleAfter.setAlpha(if (idleOn) 1f else 0.45f)
+        binding.tvIdleAfterValue.setAlpha(if (idleOn) 1f else 0.45f)
+        binding.tvIdleAfterRange.setAlpha(if (idleOn) 1f else 0.45f)
         renderCooldownLive(GazeRuntime.snapshot)
     }
 

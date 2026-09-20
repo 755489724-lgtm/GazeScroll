@@ -291,6 +291,22 @@ data class GazeConfig(
      */
     val cooldownThrottleEnabled: Boolean = true,
 
+    /**
+     * **v5.73：无动作自动降档**（省电，**默认关**）。
+     *
+     * 打开后，只要**连续 [idleAfterMs] 没有翻过页**，分析频率就从约 15fps
+     * 降到约 4fps（见 [FaceGazeAnalyzer.IDLE_MIN_INTERVAL_MS]）；
+     * 一旦翻页立刻回到满帧率。覆盖的是"一直看、没操作"的那段时间，
+     * 也就是刷视频时占比最大的部分。
+     *
+     * **默认关是刻意的**：降到 4fps 会直接让眨眼变难（眨眼判据要求连续几帧闭眼），
+     * 属于"拿响应换电"，必须由用户自己权衡，不能替他决定。
+     */
+    val idleThrottleEnabled: Boolean = false,
+
+    /** 无动作多久后进入低档（毫秒），范围 5000~10000。 */
+    val idleAfterMs: Long = 5_000L,
+
     // ------------------------------------------- v5.39：注视数据采集（测试功能） --
 
     /**
@@ -366,6 +382,8 @@ data class GazeConfig(
                 AdaptiveSwipe.MAX_LIST_DISTANCE,
             ),
             globalCooldownMs = globalCooldownMs.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS),
+            // v5.73：无动作自动降档的等待时长。
+            idleAfterMs = idleAfterMs.coerceIn(MIN_IDLE_AFTER_MS, MAX_IDLE_AFTER_MS),
             // v5.35：歪头控音量的角度 / 保持时长 / 档位。
             tiltThresholdDeg = tiltThresholdDeg.coerceIn(8f, 40f),
             tiltHoldMs = tiltHoldMs.coerceIn(200L, 2000L),
@@ -374,11 +392,48 @@ data class GazeConfig(
     }
 
     companion object {
-        /** 全局冷却可调节下限：0.5 秒。 */
-        const val MIN_GLOBAL_COOLDOWN_MS = 500L
+        /**
+         * 全局冷却可调节下限：2 秒（v5.73 起）。
+         *
+         * 原来是 0.5 秒。提到 2 秒是因为用户要求把它做成**省电**旋钮 ——
+         * 冷却期内判定结果一律被丢弃，摄像头却照跑，所以冷却越长越省电
+         * （见 [FaceGazeAnalyzer.COOLDOWN_MIN_INTERVAL_MS]）。
+         * 2 秒也正好是他自己一直用的值，作为下限不会比现状更灵敏。
+         */
+        const val MIN_GLOBAL_COOLDOWN_MS = 2000L
 
-        /** 全局冷却可调节上限：5 秒。 */
-        const val MAX_GLOBAL_COOLDOWN_MS = 5000L
+        /** 全局冷却可调节上限：10 秒（v5.73 起，原为 5 秒）。见 [MIN_GLOBAL_COOLDOWN_MS]。 */
+        const val MAX_GLOBAL_COOLDOWN_MS = 10_000L
+
+        // ============ v5.73：无动作自动降档（省电） ============
+
+        /** 无动作多久后降档的下限：5 秒。 */
+        const val MIN_IDLE_AFTER_MS = 5_000L
+
+        /** 无动作多久后降档的上限：10 秒。 */
+        const val MAX_IDLE_AFTER_MS = 10_000L
+
+        /** 无动作降档滑块的步长：1 秒（6 档，够用且好对准）。 */
+        const val IDLE_AFTER_STEP_MS = 1_000L
+
+        /** 无动作降档滑块的档数。 */
+        const val IDLE_AFTER_STEPS =
+            ((MAX_IDLE_AFTER_MS - MIN_IDLE_AFTER_MS) / IDLE_AFTER_STEP_MS).toInt()
+
+        /** 档位 -> 毫秒。 */
+        fun idleAfterMsForStep(step: Int): Long =
+            (MIN_IDLE_AFTER_MS + step.coerceIn(0, IDLE_AFTER_STEPS) * IDLE_AFTER_STEP_MS)
+                .coerceIn(MIN_IDLE_AFTER_MS, MAX_IDLE_AFTER_MS)
+
+        /** 毫秒 -> 最接近的档位。 */
+        fun idleAfterStepForMs(ms: Long): Int {
+            val clamped = ms.coerceIn(MIN_IDLE_AFTER_MS, MAX_IDLE_AFTER_MS)
+            return ((clamped - MIN_IDLE_AFTER_MS) / IDLE_AFTER_STEP_MS).toInt()
+                .coerceIn(0, IDLE_AFTER_STEPS)
+        }
+
+        /** 把任意毫秒值吸附到步长。 */
+        fun snapIdleAfter(ms: Long): Long = idleAfterMsForStep(idleAfterStepForMs(ms))
 
         // ============ v5.60：交给用户自己调的四个参数（滑块范围与步长） ============
 
@@ -416,25 +471,55 @@ data class GazeConfig(
         const val RESET_MOTION_WINDOW_MS = 500L
 
         /**
-         * 滑块步长：250 ms。0.5s~5s 正好切成 18 档，既够细也不会像 1ms 步进
-         * 那样在小米 13 的窄条上难以对准。
+         * 滑块步长（v5.73 起）：250 ms，但 5 秒以上按 500 ms 一档。
+         *
+         * ## 为什么分段
+         *
+         * 2~5 秒是日常会用的区间，250 ms 的细度有意义（用户原来就定在 2000 ms）。
+         * 5~10 秒是"省电档"，多 250ms 体感上没差别，却会让滑块档数从 16 涨到 32，
+         * 在小米 13 的窄条上很难对准。所以 5 秒以上粗一档。
          */
         const val GLOBAL_COOLDOWN_STEP_MS = 250L
 
-        /** 滑块档数：[MIN_GLOBAL_COOLDOWN_MS] + 档位 × [GLOBAL_COOLDOWN_STEP_MS]。 */
+        /** 细档的上界：到这里为止每档 [GLOBAL_COOLDOWN_STEP_MS]。 */
+        const val GLOBAL_COOLDOWN_FINE_MAX_MS = 5000L
+
+        /** 5 秒以上的粗档步长。 */
+        const val GLOBAL_COOLDOWN_COARSE_STEP_MS = 500L
+
+        /**
+         * 滑块档数（v5.73 改成分段步长后不再是简单的整除）。
+         *
+         * 细区 2~5 秒：12 档；粗区 5~10 秒：10 档；合计 22 档。
+         */
         const val GLOBAL_COOLDOWN_STEPS =
-            ((MAX_GLOBAL_COOLDOWN_MS - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt()
+            ((GLOBAL_COOLDOWN_FINE_MAX_MS - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt() +
+                ((MAX_GLOBAL_COOLDOWN_MS - GLOBAL_COOLDOWN_FINE_MAX_MS) / GLOBAL_COOLDOWN_COARSE_STEP_MS).toInt()
 
         /** 滑块档位（0 对应下限，[GLOBAL_COOLDOWN_STEPS] 对应上限）-> 毫秒。 */
-        fun cooldownMsForStep(step: Int): Long =
-            (MIN_GLOBAL_COOLDOWN_MS + step.coerceIn(0, GLOBAL_COOLDOWN_STEPS) * GLOBAL_COOLDOWN_STEP_MS)
-                .coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS)
+        fun cooldownMsForStep(step: Int): Long {
+            val s = step.coerceIn(0, GLOBAL_COOLDOWN_STEPS)
+            val fineSteps =
+                ((GLOBAL_COOLDOWN_FINE_MAX_MS - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt()
+            return if (s <= fineSteps) {
+                MIN_GLOBAL_COOLDOWN_MS + s * GLOBAL_COOLDOWN_STEP_MS
+            } else {
+                GLOBAL_COOLDOWN_FINE_MAX_MS +
+                    (s - fineSteps) * GLOBAL_COOLDOWN_COARSE_STEP_MS
+            }.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS)
+        }
 
         /** 毫秒 -> 最接近的滑块档位。 */
         fun cooldownStepForMs(ms: Long): Int {
             val clamped = ms.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS)
-            return ((clamped - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt()
-                .coerceIn(0, GLOBAL_COOLDOWN_STEPS)
+            val fineSteps =
+                ((GLOBAL_COOLDOWN_FINE_MAX_MS - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt()
+            return if (clamped <= GLOBAL_COOLDOWN_FINE_MAX_MS) {
+                ((clamped - MIN_GLOBAL_COOLDOWN_MS) / GLOBAL_COOLDOWN_STEP_MS).toInt()
+            } else {
+                fineSteps +
+                    ((clamped - GLOBAL_COOLDOWN_FINE_MAX_MS) / GLOBAL_COOLDOWN_COARSE_STEP_MS).toInt()
+            }.coerceIn(0, GLOBAL_COOLDOWN_STEPS)
         }
 
         /** 把任意毫秒值吸附到滑块步长，并夹到合法区间。 */

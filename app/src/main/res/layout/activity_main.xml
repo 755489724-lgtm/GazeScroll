@@ -1434,6 +1434,16 @@
                                 android:layout_marginBottom="2dp"
                                 android:background="@color/divider" />
 
+                            <!-- ===== v5.73：省电冷静期 ===== -->
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:text="@string/section_power_saver"
+                                android:textColor="@color/accent"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
                             <TextView
                                 android:id="@+id/tvCooldownValue"
                                 android:layout_width="match_parent"
@@ -1442,7 +1452,7 @@
                                 android:textColor="@color/accent"
                                 android:textSize="14sp" />
 
-                            <!-- max = GazeConfig.GLOBAL_COOLDOWN_STEPS（500ms~5000ms，每档 250ms）。 -->
+                            <!-- max = GazeConfig.GLOBAL_COOLDOWN_STEPS（v5.73 起 2s~10s，分段步长）。 -->
                             <SeekBar
                                 android:id="@+id/seekCooldown"
                                 android:layout_width="match_parent"
@@ -1482,6 +1492,54 @@
                                 android:layout_marginTop="6dp"
                                 android:lineSpacingMultiplier="1.35"
                                 android:text="@string/settings_cooldown_hint"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <!-- ===== v5.73：无动作自动降档 ===== -->
+
+                            <View
+                                android:layout_width="match_parent"
+                                android:layout_height="1dp"
+                                android:layout_marginTop="14dp"
+                                android:layout_marginBottom="12dp"
+                                android:background="@color/divider" />
+
+                            <androidx.appcompat.widget.SwitchCompat
+                                android:id="@+id/switchIdleThrottle"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_idle_throttle"
+                                android:textColor="@color/on_surface"
+                                android:textSize="14sp" />
+
+                            <TextView
+                                android:id="@+id/tvIdleAfterValue"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:textColor="@color/accent"
+                                android:textSize="14sp" />
+
+                            <!-- max 由 MainActivity 从 GazeConfig.IDLE_AFTER_STEPS 设置。 -->
+                            <SeekBar
+                                android:id="@+id/seekIdleAfter"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content" />
+
+                            <TextView
+                                android:id="@+id/tvIdleAfterRange"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_idle_after_range"
+                                android:textColor="@color/on_surface_dim"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="6dp"
+                                android:lineSpacingMultiplier="1.35"
+                                android:text="@string/settings_idle_throttle_hint"
                                 android:textColor="@color/on_surface_dim"
                                 android:textSize="12sp" />
                         </LinearLayout>

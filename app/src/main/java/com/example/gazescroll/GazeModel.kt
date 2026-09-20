@@ -291,22 +291,6 @@ data class GazeConfig(
      */
     val cooldownThrottleEnabled: Boolean = true,
 
-    /**
-     * **v5.75：无动作自动降档**（省电，**默认关**）。
-     *
-     * 打开后，只要**连续 [idleAfterMs] 没有翻过页**，分析频率就从约 15fps
-     * 降到约 4fps（见 [FaceGazeAnalyzer.IDLE_MIN_INTERVAL_MS]）；
-     * 一旦翻页立刻回到满帧率。覆盖的是"一直看、没操作"的那段时间，
-     * 也就是刷视频时占比最大的部分。
-     *
-     * **默认关是刻意的**：降到 4fps 会直接让眨眼变难（眨眼判据要求连续几帧闭眼），
-     * 属于"拿响应换电"，必须由用户自己权衡，不能替他决定。
-     */
-    val idleThrottleEnabled: Boolean = false,
-
-    /** 无动作多久后进入低档（毫秒），范围 5000~10000。 */
-    val idleAfterMs: Long = 5_000L,
-
     // ------------------------------------------- v5.39：注视数据采集（测试功能） --
 
     /**
@@ -382,8 +366,6 @@ data class GazeConfig(
                 AdaptiveSwipe.MAX_LIST_DISTANCE,
             ),
             globalCooldownMs = globalCooldownMs.coerceIn(MIN_GLOBAL_COOLDOWN_MS, MAX_GLOBAL_COOLDOWN_MS),
-            // v5.75：无动作自动降档的等待时长。
-            idleAfterMs = idleAfterMs.coerceIn(MIN_IDLE_AFTER_MS, MAX_IDLE_AFTER_MS),
             // v5.35：歪头控音量的角度 / 保持时长 / 档位。
             tiltThresholdDeg = tiltThresholdDeg.coerceIn(8f, 40f),
             tiltHoldMs = tiltHoldMs.coerceIn(200L, 2000L),
@@ -397,36 +379,6 @@ data class GazeConfig(
 
         /** 全局冷却可调节上限：5 秒。 */
         const val MAX_GLOBAL_COOLDOWN_MS = 5000L
-
-        // ============ v5.75：无动作自动降档（省电） ============
-
-        /** 无动作多久后降档的下限：5 秒。 */
-        const val MIN_IDLE_AFTER_MS = 5_000L
-
-        /** 无动作多久后降档的上限：10 秒。 */
-        const val MAX_IDLE_AFTER_MS = 10_000L
-
-        /** 无动作降档滑块的步长：1 秒（6 档，够用且好对准）。 */
-        const val IDLE_AFTER_STEP_MS = 1_000L
-
-        /** 无动作降档滑块的档数。 */
-        const val IDLE_AFTER_STEPS =
-            ((MAX_IDLE_AFTER_MS - MIN_IDLE_AFTER_MS) / IDLE_AFTER_STEP_MS).toInt()
-
-        /** 档位 -> 毫秒。 */
-        fun idleAfterMsForStep(step: Int): Long =
-            (MIN_IDLE_AFTER_MS + step.coerceIn(0, IDLE_AFTER_STEPS) * IDLE_AFTER_STEP_MS)
-                .coerceIn(MIN_IDLE_AFTER_MS, MAX_IDLE_AFTER_MS)
-
-        /** 毫秒 -> 最接近的档位。 */
-        fun idleAfterStepForMs(ms: Long): Int {
-            val clamped = ms.coerceIn(MIN_IDLE_AFTER_MS, MAX_IDLE_AFTER_MS)
-            return ((clamped - MIN_IDLE_AFTER_MS) / IDLE_AFTER_STEP_MS).toInt()
-                .coerceIn(0, IDLE_AFTER_STEPS)
-        }
-
-        /** 把任意毫秒值吸附到步长。 */
-        fun snapIdleAfter(ms: Long): Long = idleAfterMsForStep(idleAfterStepForMs(ms))
 
         // ============ v5.60：交给用户自己调的四个参数（滑块范围与步长） ============
 

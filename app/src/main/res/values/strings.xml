@@ -190,15 +190,7 @@
     <string name="card_gate_title">注视门</string>
     <string name="card_gate_desc">眼睛盯着屏幕时才允许触发</string>
     <string name="card_guard_title">防误触</string>
-    <string name="card_guard_desc">防误触 + 省电模式</string>
-
-    <!-- ================= v5.75：省电模式（防误触卡的二级菜单里） ================= -->
-
-    <string name="settings_idle_throttle">省电模式：没动作时自动降档</string>
-    <string name="settings_idle_after_value">连续 %1$s 没翻页后，开始省电</string>
-    <string name="settings_idle_after_range">可调 5 ~ 10 秒</string>
-    <string name="settings_idle_throttle_hint">这个开关管的是另一段时间：不是翻页后的冷静期，而是你「一直看、没动作」的那段。\n打开后，只要连续上面设定的秒数没有翻过页，摄像头就会从每秒约 15 次判定降到约 4 次，一旦翻页立刻恢复满速。\n代价要说清楚：降档期间眨眼会更难被认出来（眨眼要求连续几帧都闭眼，帧少了就凑不齐），点头/仰头也会略微迟钝一点。所以这一项默认是关的 —— 想省电就开，想要最灵敏就关着。</string>
-
+    <string name="card_guard_desc">冷却时间 + 静止锁定</string>
     <string name="card_swipe_title">自适应滑动幅度</string>
     <string name="card_swipe_desc">按当前 App 自动调整滑动距离</string>
     <string name="card_targets_title">生效的应用</string>

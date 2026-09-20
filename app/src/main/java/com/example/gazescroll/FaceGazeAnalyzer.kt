@@ -240,6 +240,41 @@ class FaceGazeAnalyzer(
         /** No face for this long moves the analyzer into standby. */
         const val STANDBY_AFTER_NO_FACE_MS = 5000L
 
+        /**
+         * **v5.72：冷却期"偷懒档"的判定间隔**（200ms ≈ 5fps）。
+         *
+         * ## 为什么可以降
+         *
+         * 翻页之后的冷却期（用户设的 2000ms）里，[GlobalTriggerGate] 把**每一个**
+         * 判定结果都丢掉 —— 摄像头和 ML Kit 却照样满速跑，纯属白烧电。
+         * 这一档就是把这段时间的分析次数压下来。相机**全程保持绑定、一次都不重开**
+         * （这正是它比"关相机"安全的地方）。
+         *
+         * ## 为什么不能降到底（这是硬约束，别改小）
+         *
+         * 眨眼是**数帧数**的判据：[BlinkDetector] 要求"连续
+         * `requiredClosedFrames` 帧都闭眼"（2 帧，近距离档会放大到最多 6 帧）。
+         * 实测帧率约 11~17fps，所以 3 帧 ≈ 180~270ms。**帧率一降，
+         * 这个"连续 N 帧"就等价于要求闭眼更久**：降到 5fps 就是"连续 3 帧 = 600ms"，
+         * 正常人根本眨不出来 —— v5.11 那次"眨眼被挡掉"就是这么来的。
+         *
+         * 所以降帧**只覆盖冷却期的大部分**，见 [cooldownTailMs]。
+         */
+        const val COOLDOWN_MIN_INTERVAL_MS = 200L
+
+        /**
+         * **v5.72：冷却期最后这段必须恢复满帧率。**
+         *
+         * 用户设的「触发速度」是 300ms（`headPoseMotionWindowMs`），动作的**起手**
+         * 必须晚于"上一次翻页 + 2 秒"才会被判定 —— 也就是说 2 秒一到，
+         * 用户很可能**立刻**就开始下一个动作。如果那一刻才从 5fps 切回 15fps，
+         * 检测器手上只有零星几帧，"连续 N 帧闭眼"根本凑不出来，眨眼会失灵。
+         *
+         * 400ms 让检测器在冷却结束前先攒回 6 帧左右（15fps），
+         * 于是 2.0 秒一到，判据与降帧前**完全一致**。
+         */
+        const val COOLDOWN_TAIL_MS = 400L
+
         /** 一帧之间脸框高度占比变化超过这个值，判定为「有东西贴上来了」。 */
         private const val FACE_RATIO_JUMP = 0.35f
     }
@@ -263,6 +298,51 @@ class FaceGazeAnalyzer(
     /** Screen is off: drop every frame without touching ML Kit. */
     @Volatile
     var paused: Boolean = false
+
+    // ------------------------------------------- v5.72：冷却期"偷懒档" --
+
+    /**
+     * 冷却期偷懒档是否启用（用户可关）。由服务在设置变化时同步进来。
+     *
+     * 关掉就退回 v5.71 的行为（冷却期也满帧跑），用来做 A/B 实测对照。
+     */
+    @Volatile
+    var cooldownThrottleEnabled: Boolean = true
+
+    /**
+     * 冷却还剩多少毫秒；0 表示**不在冷却里**。
+     *
+     * 由服务每帧更新一次（它本来就知道 `globalGate.remainingMs()`）。
+     * 这里刻意**不**自己去问闸门：analyzer 只负责"少干活"，
+     * 不参与任何判定，判定状态由服务单向喂进来。
+     */
+    @Volatile
+    var cooldownRemainMs: Long = 0L
+
+    /** 本帧用的是哪一档，供诊断行显示（也是实测时确认它真的生效的依据）。 */
+    @Volatile
+    var lastTier: String = "active"
+        private set
+
+    /**
+     * 按当前状态决定这一帧要不要丢。
+     *
+     * 优先级：息屏 > 无人脸待机 > 冷却偷懒档 > 满速。
+     */
+    private fun currentMinIntervalMs(): Long {
+        if (standby) {
+            lastTier = "standby"
+            return STANDBY_INTERVAL_MS
+        }
+        val remain = cooldownRemainMs
+        if (cooldownThrottleEnabled && remain > COOLDOWN_TAIL_MS) {
+            // 还在冷却的**前段**：这段时间无论看到什么都会被闸门丢掉，可以偷懒。
+            lastTier = "cooling"
+            return COOLDOWN_MIN_INTERVAL_MS
+        }
+        lastTier = if (remain > 0L) "cooling-tail" else "active"
+        return ACTIVE_MIN_INTERVAL_MS
+    }
 
     /** Per-eye EMA state for the legacy gaze axis, so a dropped eye cannot snap it. */
     private var smoothLeft: Float? = null
@@ -295,7 +375,8 @@ class FaceGazeAnalyzer(
         val now = SystemClock.elapsedRealtime()
 
         // Frame gating — the throttle lives here, not in CameraX.
-        val minInterval = if (standby) STANDBY_INTERVAL_MS else ACTIVE_MIN_INTERVAL_MS
+        // v5.72：档位由 currentMinIntervalMs() 决定（待机 / 冷却偷懒 / 满速）。
+        val minInterval = currentMinIntervalMs()
         if (now - lastAnalyzedMs < minInterval) {
             imageProxy.close()
             return

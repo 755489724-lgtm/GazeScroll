@@ -276,6 +276,21 @@ data class GazeConfig(
      */
     val globalCooldownMs: Long = GlobalTriggerGate.DEFAULT_COOLDOWN_MS,
 
+    /**
+     * **v5.72：冷却期"偷懒档"**（省电）。
+     *
+     * 打开后，冷却期的前段把分析频率从约 15fps 降到约 5fps
+     * （见 [FaceGazeAnalyzer.COOLDOWN_MIN_INTERVAL_MS]），
+     * 冷却结束前 [FaceGazeAnalyzer.COOLDOWN_TAIL_MS] 恢复满帧率。
+     *
+     * **不改变任何判定**：冷却期本来就是"看到什么都不算"，
+     * 降频只是少做那些注定被丢弃的推理；恢复尾段是为了让"连续 N 帧闭眼"
+     * 这类数帧数的判据在冷却结束的瞬间与降频前完全一致。
+     *
+     * 默认开。设成 false 可以退回 v5.71 的行为，用于 A/B 实测对照。
+     */
+    val cooldownThrottleEnabled: Boolean = true,
+
     // ------------------------------------------- v5.39：注视数据采集（测试功能） --
 
     /**

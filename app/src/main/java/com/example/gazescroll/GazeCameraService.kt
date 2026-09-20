@@ -1211,6 +1211,13 @@ private const val REF_LOG_INTERVAL_MS = 400L
         if (running.get()) {
             // 先同步闸门，再打诊断日志，日志里的 cooling 才是本帧的真实状态。
             globalGate.syncConfig(cfg.globalCooldownEnabled, cfg.globalCooldownMs, now)
+            // v5.72：把"冷却还剩多久"告诉分析器，它据此决定下一帧要不要偷懒。
+            // 放在 syncConfig 之后：本帧读到的一定是本帧的真实冷却状态。
+            // 注意**只喂状态、不做判定** —— 拦不拦这一次翻页仍然只由 globalGate 决定。
+            analyzer?.let { a ->
+                a.cooldownThrottleEnabled = cfg.cooldownThrottleEnabled
+                a.cooldownRemainMs = globalGate.remainingMs(now)
+            }
             // 遮挡优先于一切：挡住脸的时候不判定任何动作。
             handleOcclusion(frame, now)
             maybeLogDiagnostics(frame, cfg, now)
@@ -2160,6 +2167,10 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 // 冷却是否在拦：跑 adb logcat -s GazeDiag:V 时能直接看到还剩多少毫秒。
                 " cooldown=${if (cfg.globalCooldownEnabled) "${cfg.globalCooldownMs}ms" else "off"}" +
                 " cooling=${globalGate.remainingMs(now)}" +
+                // v5.72：本帧用的是哪一档（active / cooling / cooling-tail / standby）。
+                // 实测省电时必须能看到它 —— 否则"降频到底有没有生效"只能靠猜。
+                " tier=${analyzer?.lastTier ?: "-"}" +
+                " throttle=${if (cfg.cooldownThrottleEnabled) "on" else "off"}" +
                 " standby=${frame.standby}"
         Log.i("GazeDiag", line)
         // 落盘按 15 秒节流：完整诊断行很长（约 1.5 KB），3 秒一次的话

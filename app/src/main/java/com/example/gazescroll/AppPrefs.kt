@@ -37,6 +37,9 @@ object AppPrefs {
     private const val K_GLOBAL_COOLDOWN_ENABLED = "globalCooldownEnabled"
     private const val K_GLOBAL_COOLDOWN_MS = "globalCooldownMs"
 
+    /** v5.72：冷却期偷懒档（省电），见 [GazeConfig.cooldownThrottleEnabled]。 */
+    private const val K_COOLDOWN_THROTTLE = "cooldownThrottleEnabled"
+
     /** v4.2 遗留键，只用于升级时把用户原本的冷却时长继承过来。 */
     private const val K_LEGACY_BLINK_COOLDOWN = "blinkCooldownMs"
     private const val K_LEGACY_HEAD_COOLDOWN = "headPoseCooldownMs"
@@ -197,6 +200,8 @@ object AppPrefs {
             // 全局冷却：默认开启、默认 1.5 秒，App 重启后保留用户设置。
             globalCooldownEnabled = sp.getBoolean(K_GLOBAL_COOLDOWN_ENABLED, d.globalCooldownEnabled),
             globalCooldownMs = sp.getLong(K_GLOBAL_COOLDOWN_MS, legacyCooldownOrNull(sp) ?: d.globalCooldownMs),
+            // v5.72：冷却期偷懒档（省电）。默认开，用户可关。
+            cooldownThrottleEnabled = sp.getBoolean(K_COOLDOWN_THROTTLE, d.cooldownThrottleEnabled),
             blinkClosedBelow = sp.getFloat(K_BLINK_CLOSED_BELOW, d.blinkClosedBelow),
             blinkOpenAbove = sp.getFloat(K_BLINK_OPEN_ABOVE, d.blinkOpenAbove),
             blinkClosedFrames = sp.getInt(K_BLINK_CLOSED_FRAMES, d.blinkClosedFrames),
@@ -243,6 +248,7 @@ object AppPrefs {
             .putFloat(K_STATIC_LOCK_FACTOR, s.staticLockFactor)
             .putBoolean(K_GLOBAL_COOLDOWN_ENABLED, s.globalCooldownEnabled)
             .putLong(K_GLOBAL_COOLDOWN_MS, s.globalCooldownMs)
+            .putBoolean(K_COOLDOWN_THROTTLE, s.cooldownThrottleEnabled)
             .putFloat(K_BLINK_CLOSED_BELOW, s.blinkClosedBelow)
             .putFloat(K_BLINK_OPEN_ABOVE, s.blinkOpenAbove)
             .putInt(K_BLINK_CLOSED_FRAMES, s.blinkClosedFrames)

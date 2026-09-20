@@ -8,7 +8,12 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 
 /**
  * Tracks which app is currently in the foreground and whether it is one of the
@@ -157,6 +162,46 @@ object AppStateManager {
 
     /** v5.67：上一次写诊断心跳的时间。见 `pollOnce`。 */
     private var lastHeartbeatAtMs = 0L
+
+    /** v5.68：上一次记录「无障碍实例为空导致轮询放弃」的时间（10 秒节流）。 */
+    private var lastNoA11yAtMs = 0L
+
+    /** v5.69：上一次 pollOnce 进入 / 退出的时刻，用来量"消息队列被饿死"的空档。 */
+    private var lastPollEnterMs = 0L
+    private var lastPollExitMs = 0L
+
+    /**
+     * v5.70：`readWindow` 这一段历史上出现过的最长耗时（毫秒）。
+     *
+     * 故意**不用 @Volatile**：它只在主线程上读写（读窗口本来就在主循环里），
+     * 加了反而误导后来人以为有跨线程访问。
+     */
+    private var longestWindowReadMs = 0L
+
+    /**
+     * v5.69：空档超过这个值就记一条 `poll-gap`。
+     *
+     * 轮询间隔是 [POLL_INTERVAL_MS]（800ms），加上一轮的工作量，正常空档不到 1 秒。
+     * 3 秒留了足够余量：只有真的被"饿"了才会记，不会误报。
+     */
+    private const val SLOW_GAP_MS = 3_000L
+
+    /**
+     * v5.69：单段耗时超过这个值就记一条 `slow-phase`（点名是哪一段慢）。
+     *
+     * 500ms 远大于正常水平（各段都在毫秒级），所以正常运行时一条都不会写。
+     */
+    private const val SLOW_PHASE_MS = 500L
+
+    /**
+     * v5.70：读一次活动窗口最多等多久（毫秒）。
+     *
+     * 实测正常是**毫秒级**，卡住时是 8 秒起（另一次 78 秒）。500ms 留了足够余量：
+     * 正常读不会被误判超时，而一旦它开始卡，主循环最多被拖 500ms × 2 段
+     * （windows + rootInActiveWindow），仍然远小于 800ms 的轮询间隔，
+     * 循环不会失速。超时的代价只是这一轮"读不到窗口"，而读不到按 fail-open 处理。
+     */
+    private const val WINDOW_READ_TIMEOUT_MS = 500L
     private var loggedFirstPoll = false
 
     /** 连续观察到「前台其实是目标应用、我们却认为不是」的起始时刻（v5.7）。 */
@@ -187,13 +232,19 @@ object AppStateManager {
         if (pollRunnable != null) return
         val runnable = object : Runnable {
             override fun run() {
-                runCatching { pollOnce() }
+                // v5.68：原来的 `runCatching { pollOnce() }` **不留任何痕迹** ——
+                // 一旦 pollOnce 每轮都抛异常，心跳与"轮询停了"在诊断文件里长得一模一样，
+                // 实测排查时正是被这一点卡住（2026-09-20 那次复现）。
+                // 异常现在在 pollOnce() 里显式落盘成 poll-error，并能区分
+                // "卡在轮询内部"与"消息队列根本没轮到轮询"（见 poll-gap）。
+                pollOnce()
                 handler.postDelayed(this, POLL_INTERVAL_MS)
             }
         }
         pollRunnable = runnable
         handler.postDelayed(runnable, POLL_INTERVAL_MS)
         Log.i(TAG, "foreground tracking started")
+        DiagLog.append(appContext, "poll-start", "foreground tracking started")
     }
 
     /**
@@ -412,33 +463,66 @@ object AppStateManager {
     // ---------------------------------------------------------------- polling --
 
     private fun pollOnce() {
+        // v5.69：enter / exit 一对标记。
+        //
+        // 为什么需要它们（2026-09-20 实测现场）：主线程整整 78 秒没有处理任何消息
+        // （`beat`/`selfcheck`/`diag` 全停，进程活着、CPU 为 0、非 frozen），
+        // 外力（下拉状态栏 / kill -3）一戳就恢复 —— 说明是**消息队列被长时间饿死**。
+        // 但"饿死"有两种，修法完全不同：
+        //   ① 卡在 pollOnce **内部**（某个阻塞调用）→ exit 与下一次 enter 之间有空档，
+        //      而且 `slow-phase` 会点名是哪一段慢；
+        //   ② 卡在**轮询之外**（消息队列根本没轮到它跑）→ 上一次 exit 之后长时间没有新 enter。
+        // 所以 enter 与 exit 都必须记，缺一不可。
+        val enterMs = SystemClock.elapsedRealtime()
+        val gap = if (lastPollExitMs == 0L) 0L else enterMs - lastPollExitMs
+        lastPollEnterMs = enterMs
+        if (gap >= SLOW_GAP_MS) {
+            DiagLog.append(
+                appContext,
+                "poll-gap",
+                "gap=${gap}ms between exit and enter — the loop did NOT run; " +
+                    "starvation is outside pollOnce() (message queue), not inside it",
+            )
+        }
+        runCatching { pollOnceInner() }
+            .onFailure {
+                DiagLog.append(appContext, "poll-error", "${it.javaClass.name}: ${it.message}")
+                Log.w(TAG, "pollOnceInner failed", it)
+            }
+        lastPollExitMs = SystemClock.elapsedRealtime()
+    }
+
+    private fun pollOnceInner() {
+        // v5.68：心跳必须放在**最开头**，在任何早退之前。
+        //
+        // 原来它放在无障碍检查之后，于是三种情况在日志里分不开：
+        //   ① 轮询彻底没跑；② 跑了但 `service == null` 早退；③ pollOnce 每轮抛异常。
+        // 2026-09-20 那次复现就卡在这个盲点上（日志停在某一秒，之后一行都没有）。
+        // 放到最前面之后，只要还有心跳就说明轮询活着，问题就缩小到早退/异常；
+        // 心跳彻底断掉才是调度侧的问题。
+        val beatNow = SystemClock.elapsedRealtime()
+        if (beatNow - lastHeartbeatAtMs >= HEARTBEAT_INTERVAL_MS) {
+            lastHeartbeatAtMs = beatNow
+            DiagLog.append(
+                appContext,
+                "beat",
+                "targetActive=$targetActive fg=$foregroundPackage lastWindow=${lastPolledWindow ?: "null"}",
+            )
+        }
+
         val ctx = appContext ?: return
+        val t0 = SystemClock.elapsedRealtime()
         checkBlind()
+        val tCheckBlind = SystemClock.elapsedRealtime()
 
         // 设置页可能刚改了「全局使用翻页」，每次轮询都重新同步一次，
         // 保证用户一打开开关就立刻生效，而不用等下一次窗口事件。
         syncGlobalPaging(ctx)
+        val tSync = SystemClock.elapsedRealtime()
 
         // Chain-launch watchdog: a target app is in front but the camera service
         // is gone (killed by the system, or never started) — bring it straight back.
         if (targetActive) GazeCameraService.ensureRunning(ctx)
-
-        // v5.67：**无条件心跳**，每 10 秒一行。
-        //
-        // 为什么必须有它：`window` 那一路是「读数变了才记」，所以文件里一片空白
-        // 既可能是"轮询停了"也可能是"读数一直没变"，两者**分不开**。
-        // 排查「待机醒不过来」时，第一件要确定的就是轮询到底还活着没有 ——
-        // 心跳一旦断掉，就是 `pollOnce()` 不再被调用，根因在调度侧而不是判定侧。
-        val nowHeartbeat = SystemClock.elapsedRealtime()
-        if (nowHeartbeat - lastHeartbeatAtMs >= HEARTBEAT_INTERVAL_MS) {
-            lastHeartbeatAtMs = nowHeartbeat
-            DiagLog.append(
-                appContext,
-                "heartbeat",
-                "targetActive=$targetActive fg=$foregroundPackage pending=$pendingPackage " +
-                    "lastWindow=${lastPolledWindow ?: "null"} globalPaging=$globalPaging",
-            )
-        }
 
         // v5.3：**主动存活检查**，这条是「重开抖音必须下拉状态栏才生效」的根因修复。
         //
@@ -452,11 +536,33 @@ object AppStateManager {
         //
         // 现在改成不依赖包名变化：只要「当前允许翻页」而流水线实际是死的，就强制重新武装。
         if (targetActive) GazeCameraService.ensurePipelineAlive(ctx)
+        val tAlive = SystemClock.elapsedRealtime()
 
         // 1. The source that actually works here.
         val service = GazeAccessibilityService.instance
         if (service != null) {
             val activeWindowPackage = activeWindowPackage(service)
+            val tWindow = SystemClock.elapsedRealtime()
+            // 分段耗时：只有真的慢了才记，正常一轮什么都不写。
+            val slowest = maxOf(
+                tCheckBlind - t0,
+                tSync - tCheckBlind,
+                tAlive - tSync,
+                tWindow - tAlive,
+            )
+            if (slowest >= SLOW_PHASE_MS || tWindow - t0 >= SLOW_PHASE_MS) {
+                DiagLog.append(
+                    appContext,
+                    "slow-phase",
+                    "total=${tWindow - t0}ms " +
+                        "checkBlind=${tCheckBlind - t0}ms " +
+                        "syncGlobal=${tSync - tCheckBlind}ms " +
+                        "ensureAlive=${tAlive - tSync}ms " +
+                        "readWindow=${tWindow - tAlive}ms " +
+                        "maxReadWindowEver=${longestWindowReadMs}ms " +
+                        "=> activeWindow=$activeWindowPackage",
+                )
+            }
             if (activeWindowPackage != lastPolledWindow) {
                 lastPolledWindow = activeWindowPackage
                 Log.i(TAG, "poll: activeWindow=$activeWindowPackage")
@@ -494,6 +600,14 @@ object AppStateManager {
             loggedFirstPoll = true
             Log.w(TAG, "poll: accessibility service not connected; falling back")
         }
+        // v5.68：这个早退以前是**静默**的（只在整个进程里打过一行 logcat），
+        // 而它是「待机醒不过来」的头号嫌疑：拿不到无障碍实例 → 每轮都在这里返回
+        // → 前台永远判不出来 → targetActive 永远错。每次早退都落盘，
+        // 但按 10 秒节流，免得一行/帧地把文件刷爆。
+        if (beatNow - lastNoA11yAtMs >= HEARTBEAT_INTERVAL_MS) {
+            lastNoA11yAtMs = beatNow
+            DiagLog.append(appContext, "no-a11y", "accessibility instance is null — poll gives up")
+        }
         val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return
         val now = System.currentTimeMillis()
         val latest = latestResumedPackage(ctx, usm, now)
@@ -522,8 +636,41 @@ object AppStateManager {
      *     accessibility focus.
      */
     private fun activeWindowPackage(service: GazeAccessibilityService): String? {
+        val readStartMs = SystemClock.elapsedRealtime()        // v5.70：**有界等待**。
+        //
+        // ## 为什么必须加（2026-09-20 实测，真机复现两次）
+        //
+        // `service.windows` / `rootInActiveWindow` 都是**跨进程同步调用** ——
+        // 要问 system_server 的无障碍管理器。原来这里是裸调，没有任何超时保护，
+        // 于是在「亮屏 → 解锁 → 点开抖音」这一段（system_server 正忙）实测卡住：
+        //
+        //     slow-phase total=8043ms checkBlind=0ms syncGlobal=0ms
+        //                ensureAlive=0ms readWindow=8043ms
+        //
+        // **8 秒全部耗在这一行上**，主线程整块停住：日志全停、心跳不跳、
+        // 抖音认不出来 —— 这就是用户报了很久的「息屏后再开抖音没效果」。
+        // 另一次实测卡了 78 秒，然后外力（下拉状态栏 / kill -3 触发的一次
+        // 消息处理）一戳就恢复，也印证了是"被阻塞"而不是"判定错"。
+        //
+        // 加了有界等待之后，读不出来最多等 [WINDOW_READ_TIMEOUT_MS]，
+        // 循环照常跑：心跳不断、诊断不断、下一轮还能再试。
+        // 读不到时返回 null == "未知"，而 [isAllowed] 把"未知"当成允许翻页
+        // （fail-open），所以这个方向是安全的 —— 宁可多开一会儿相机，
+        // 也不能让整条链路被一个慢调用拖死。
+        //
+        // ## 为什么不会堆积后台任务
+        //
+        // 超时后被放弃的那次调用还在后台线程上跑完（跨进程调用无法取消），
+        // 但**它不持有锁、也不再有人等它**，结束后自然被回收；下一次读是
+        // 一个全新的任务，不会越积越多。
+        val windows = runBounded<List<AccessibilityWindowInfo>?>(
+            WINDOW_READ_TIMEOUT_MS,
+        ) { service.windows?.toList() }
+        val readWindowMs = SystemClock.elapsedRealtime() - readStartMs
+        if (readWindowMs > longestWindowReadMs) longestWindowReadMs = readWindowMs
+
         val fromWindows = runCatching {
-            val windows = service.windows ?: return@runCatching null
+            if (windows == null) return@runCatching null
             val target = windows.firstOrNull { it.isActive }
                 ?: windows.firstOrNull { it.isFocused }
                 ?: return@runCatching null
@@ -539,8 +686,39 @@ object AppStateManager {
         }.getOrNull()
         if (fromWindows != null) return fromWindows
 
-        return runCatching {
+        // 这一路同样是有界等待：它也是跨进程调用，同样会卡。
+        return runBounded<String?>(WINDOW_READ_TIMEOUT_MS) {
             service.rootInActiveWindow?.packageName?.toString()
+        }
+    }
+
+    /**
+     * 在后台线程上执行 [block]，最多等 [timeoutMs]；超时返回 null（**不抛异常**）。
+     *
+     * 见 [activeWindowPackage] 里 v5.70 的说明：这是给"不能被拖住的主循环"用的，
+     * 专门包住那些**无法取消、但可以被放弃等待**的跨进程调用。
+     */
+    private fun <T> runBounded(timeoutMs: Long, block: () -> T): T? {
+        val executor = boundedExecutor
+        if (executor == null || executor.isShutdown) return null
+        return runCatching {
+            val task = FutureTask(block)
+            executor.execute(task)
+            task.get(timeoutMs, TimeUnit.MILLISECONDS)
+        }.getOrNull()
+    }
+
+    /**
+     * 给 [runBounded] 用的单线程池：**daemon 线程**，进程结束就消失，不阻止退出。
+     *
+     * 单线程是刻意的：读窗口本身很快，只有一个线程意味着即使连续的调用都卡住，
+     * 也只会有一个"被放弃的任务"在跑，不会并发堆积。
+     */
+    private val boundedExecutor: ExecutorService? by lazy {
+        runCatching {
+            Executors.newSingleThreadExecutor { r ->
+                Thread(r, "gaze-window-read").apply { isDaemon = true }
+            }
         }.getOrNull()
     }
 

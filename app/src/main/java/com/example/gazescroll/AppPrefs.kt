@@ -40,6 +40,10 @@ object AppPrefs {
     /** v5.72：冷却期偷懒档（省电），见 [GazeConfig.cooldownThrottleEnabled]。 */
     private const val K_COOLDOWN_THROTTLE = "cooldownThrottleEnabled"
 
+    /** v5.75：无动作自动降档（省电），见 [GazeConfig.idleThrottleEnabled]。 */
+    private const val K_IDLE_THROTTLE_ENABLED = "idleThrottleEnabled"
+    private const val K_IDLE_AFTER_MS = "idleAfterMs"
+
     /** v4.2 遗留键，只用于升级时把用户原本的冷却时长继承过来。 */
     private const val K_LEGACY_BLINK_COOLDOWN = "blinkCooldownMs"
     private const val K_LEGACY_HEAD_COOLDOWN = "headPoseCooldownMs"
@@ -202,6 +206,9 @@ object AppPrefs {
             globalCooldownMs = sp.getLong(K_GLOBAL_COOLDOWN_MS, legacyCooldownOrNull(sp) ?: d.globalCooldownMs),
             // v5.72：冷却期偷懒档（省电）。默认开，用户可关。
             cooldownThrottleEnabled = sp.getBoolean(K_COOLDOWN_THROTTLE, d.cooldownThrottleEnabled),
+            // v5.75：无动作自动降档（省电）。默认关，用户自己开。
+            idleThrottleEnabled = sp.getBoolean(K_IDLE_THROTTLE_ENABLED, d.idleThrottleEnabled),
+            idleAfterMs = sp.getLong(K_IDLE_AFTER_MS, d.idleAfterMs),
             blinkClosedBelow = sp.getFloat(K_BLINK_CLOSED_BELOW, d.blinkClosedBelow),
             blinkOpenAbove = sp.getFloat(K_BLINK_OPEN_ABOVE, d.blinkOpenAbove),
             blinkClosedFrames = sp.getInt(K_BLINK_CLOSED_FRAMES, d.blinkClosedFrames),
@@ -249,6 +256,8 @@ object AppPrefs {
             .putBoolean(K_GLOBAL_COOLDOWN_ENABLED, s.globalCooldownEnabled)
             .putLong(K_GLOBAL_COOLDOWN_MS, s.globalCooldownMs)
             .putBoolean(K_COOLDOWN_THROTTLE, s.cooldownThrottleEnabled)
+            .putBoolean(K_IDLE_THROTTLE_ENABLED, s.idleThrottleEnabled)
+            .putLong(K_IDLE_AFTER_MS, s.idleAfterMs)
             .putFloat(K_BLINK_CLOSED_BELOW, s.blinkClosedBelow)
             .putFloat(K_BLINK_OPEN_ABOVE, s.blinkOpenAbove)
             .putInt(K_BLINK_CLOSED_FRAMES, s.blinkClosedFrames)

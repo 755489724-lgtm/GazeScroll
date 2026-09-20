@@ -113,6 +113,15 @@ class GazeCameraService : LifecycleService() {
         /** How often the GazeDiag pipeline snapshot is logged. */
         private const val DIAGNOSTIC_INTERVAL_MS = 3000L
 
+        /**
+         * v5.67：同一个诊断快照**落盘**的间隔（比 logcat 那一路松得多）。
+         *
+         * 一行约 1.5 KB，文件上限 4 MiB：3 秒一次只够 40 分钟，
+         * 15 秒一次能留 3 小时以上。而排查真正需要的是**状态变化**
+         * （`state` 那一路是逐次落盘的），这一路只是防止"什么都没发生"时文件空白。
+         */
+        private const val DIAG_FILE_INTERVAL_MS = 15_000L
+
 /** 参考点通道 shadow 日志的最小间隔（v5.22）。 */
 private const val REF_LOG_INTERVAL_MS = 400L
 
@@ -491,6 +500,14 @@ private const val REF_LOG_INTERVAL_MS = 400L
     /** Timestamp of the last GazeDiag line. */
     private var lastDiagnosticAtMs = 0L
 
+    /**
+     * v5.67：上一次把诊断快照写进文件的时间。
+     *
+     * 单独一个时间戳，不复用 [lastDiagnosticAtMs] —— logcat 那一路是 3 秒一次、
+     * 落盘是 15 秒一次，共用一个变量会让两者互相干扰（其中一个永远不触发）。
+     */
+    private var lastDiagFileAtMs = 0L
+
     /** Timestamp of the newest analysed frame; drives the self-heal watchdog. */
     @Volatile
     private var lastFrameAtMs = 0L
@@ -557,9 +574,19 @@ private const val REF_LOG_INTERVAL_MS = 400L
         val from = lastSeenForeground
         lastSeenForeground = pkg
         Log.i(TAG, "app state: active=$active reason=$reason pkg=$pkg")
+        // v5.67：每次状态变化都落盘。这是「老毛病」的核心现场 ——
+        // 醒来成不成功、是哪种 reason 触发的、前台被认成了谁，全在这一行里。
+        DiagLog.append(
+            this,
+            "state",
+            "active=$active reason=$reason pkg=$pkg from=$from " +
+                "targetActive=${AppStateManager.targetActive} " +
+                "globalPaging=${AppStateManager.globalPaging}",
+        )
         if (from != pkg) {
             // v5.7：显式的切换标记 —— 这是"这次切换有没有被看到"的唯一判据。
             Log.i("GazeDiag", "foreground change: $from -> $pkg (target=$active reason=$reason)")
+            DiagLog.append(this, "switch", "$from -> $pkg target=$active reason=$reason")
         }
         when {
             active && reason != "package-change" -> onTargetEntered(reason)
@@ -1570,6 +1597,14 @@ private const val REF_LOG_INTERVAL_MS = 400L
         lastTriggerSource = reason.substringBefore(':')
         lastTriggerReason = reason
         lastTriggerAtMs = SystemClock.elapsedRealtime()
+        // v5.67：真正翻页那一刻落盘。事后核对「哪一次是误触 / 哪一次是我想要的」
+        // 靠的就是这一行 —— logcat 里它会被刷屏冲掉，文件里不会。
+        DiagLog.append(
+            this,
+            "trigger",
+            "reason=$reason dir=$label fg=${AppStateManager.foregroundPackage} " +
+                "gateRemainBefore=0",
+        )
         ensureSwipeExecutor().execute {
             val cfg = GazeRuntime.config
             // 纵向：按当前前台应用挑参数（抖音整屏切换、微博/小红书柔性小幅滚动）。
@@ -2000,9 +2035,9 @@ private const val REF_LOG_INTERVAL_MS = 400L
         if (now - lastDiagnosticAtMs < DIAGNOSTIC_INTERVAL_MS) return
         lastDiagnosticAtMs = now
         val mouth = mouthDetector
-        Log.i(
-            "GazeDiag",
-            "face=${frame.faceDetected}" +
+        // v5.67：这一行是每 3 秒一次的主诊断快照。它的**内容一字未改**，
+        // 只是先拼成变量，好让 logcat 和诊断文件拿到同一份。
+        val line = "face=${frame.faceDetected}" +
                 " eyeL=${frame.leftEyeOpenProbability?.let { "%.2f".format(it) } ?: "-"}" +
                 " eyeR=${frame.rightEyeOpenProbability?.let { "%.2f".format(it) } ?: "-"}" +
                 " pitch=${frame.headEulerAngleX?.let { "%.1f".format(it) } ?: "-"}" +
@@ -2125,8 +2160,16 @@ private const val REF_LOG_INTERVAL_MS = 400L
                 // 冷却是否在拦：跑 adb logcat -s GazeDiag:V 时能直接看到还剩多少毫秒。
                 " cooldown=${if (cfg.globalCooldownEnabled) "${cfg.globalCooldownMs}ms" else "off"}" +
                 " cooling=${globalGate.remainingMs(now)}" +
-                " standby=${frame.standby}",
-        )
+                " standby=${frame.standby}"
+        Log.i("GazeDiag", line)
+        // 落盘按 15 秒节流：完整诊断行很长（约 1.5 KB），3 秒一次的话
+        // 4 MiB 只够 40 分钟。15 秒一次能留 3 小时以上，而排查「老毛病」
+        // 真正需要的是**状态变化**（上面 state 那一路已经逐次记录了），
+        // 这一路只是防止「什么都没发生」时文件里一片空白。
+        if (now - lastDiagFileAtMs >= DIAG_FILE_INTERVAL_MS) {
+            lastDiagFileAtMs = now
+            DiagLog.append(this, "diag", line)
+        }
     }
 
     // ------------------------------------------------------- self-heal / entry --
@@ -2195,6 +2238,11 @@ private const val REF_LOG_INTERVAL_MS = 400L
         Log.i(
             "GazeDiag",
             "window changed to ${AppStateManager.foregroundPackage} -> detector reactivated (reason=$reason)",
+        )
+        DiagLog.append(
+            this,
+            "enter",
+            "target entered pkg=${AppStateManager.foregroundPackage} reason=$reason",
         )
         blinkDetector?.reset()
         tiltDetector?.reset()
@@ -2557,34 +2605,38 @@ private const val REF_LOG_INTERVAL_MS = 400L
         val now = SystemClock.elapsedRealtime()
         val framesAgo = if (lastFrameAtMs == 0L) -1L else now - lastFrameAtMs
         val stale = framesAgo < 0 || framesAgo > FRAME_TIMEOUT_MS
-        Log.i(
-            "GazeSelfCheck",
-            "$trigger powerInteractive=${power?.isInteractive} screenActive=$screenActive " +
-                "running=${running.get()} shouldAnalyze=${shouldAnalyze()} " +
-                "analyzing=${!analyzer!!.paused} targetActive=${AppStateManager.targetActive} " +
-                "forceActive=${AppStateManager.forceActive} " +
-                "foreground=${AppStateManager.foregroundPackage} " +
-                "globalPaging=${AppStateManager.globalPaging} " +
-                "cameraProvider=${cameraProvider != null} cameraBound=$cameraBound " +
-                "framesAgoMs=$framesAgo stale=$stale " +
-                "graceMs=${(analysisGraceUntilMs - now).coerceAtLeast(0L)} " +
-                "restartAttempts=$restartAttempts probeFailures=$probeFailures " +
-                "rebinding=${wakeRetryAttempt > 0} " +
-                "hardResyncs=$hardResyncCount " +
-                "noFrameForMs=${if (staleBeganAtMs == 0L) 0L else now - staleBeganAtMs} " +
-                "a11yEnabled=${AccessibilityBootstrap.isServiceEnabled(this)} " +
-                "a11yConnected=${GazeAccessibilityService.isConnected()} " +
-                // v5.7：区分「系统没发事件」与「事件到了我们判错了」。这两个值在排查
-                // 「重开抖音不触发」时是第一分叉：a11yEvents 停涨说明只能靠轮询兜底。
-                "a11yEvents=${GazeAccessibilityService.windowEventCount} " +
-                "a11yEventAgoMs=${GazeAccessibilityService.lastWindowEventAtMs.let { if (it == 0L) -1L else now - it }}" +
-                "a11yForceRebinds=$a11yForceRebinds " +
-                "swipeReady=${SwipeInjector.isReady(this)} " +
-                "backend=${SwipeInjector.activeBackend(this)} " +
-                "injFailures=$injectionFailures " +
-                "occlRemainMs=${(occlusionUntilMs - now).coerceAtLeast(0L)} " +
-                "hardLock=$staticHardLock detectorArmed=$headPoseActive",
-        )
+        // v5.67：这一长串先拼成变量，因为要**同时**给 logcat 和诊断文件用。
+        // 写法上刻意保持与 v5.66 逐字一致（同一个字符串、同一份内容），
+        // 只是多了一次 append —— 不改任何取值、不改任何判据。
+        val line = "$trigger powerInteractive=${power?.isInteractive} screenActive=$screenActive " +
+            "running=${running.get()} shouldAnalyze=${shouldAnalyze()} " +
+            "analyzing=${!analyzer!!.paused} targetActive=${AppStateManager.targetActive} " +
+            "forceActive=${AppStateManager.forceActive} " +
+            "foreground=${AppStateManager.foregroundPackage} " +
+            "globalPaging=${AppStateManager.globalPaging} " +
+            "cameraProvider=${cameraProvider != null} cameraBound=$cameraBound " +
+            "framesAgoMs=$framesAgo stale=$stale " +
+            "graceMs=${(analysisGraceUntilMs - now).coerceAtLeast(0L)} " +
+            "restartAttempts=$restartAttempts probeFailures=$probeFailures " +
+            "rebinding=${wakeRetryAttempt > 0} " +
+            "hardResyncs=$hardResyncCount " +
+            "noFrameForMs=${if (staleBeganAtMs == 0L) 0L else now - staleBeganAtMs} " +
+            "a11yEnabled=${AccessibilityBootstrap.isServiceEnabled(this)} " +
+            "a11yConnected=${GazeAccessibilityService.isConnected()} " +
+            // v5.7：区分「系统没发事件」与「事件到了我们判错了」。这两个值在排查
+            // 「重开抖音不触发」时是第一分叉：a11yEvents 停涨说明只能靠轮询兜底。
+            "a11yEvents=${GazeAccessibilityService.windowEventCount} " +
+            "a11yEventAgoMs=${GazeAccessibilityService.lastWindowEventAtMs.let { if (it == 0L) -1L else now - it }}" +
+            "a11yForceRebinds=$a11yForceRebinds " +
+            "swipeReady=${SwipeInjector.isReady(this)} " +
+            "backend=${SwipeInjector.activeBackend(this)} " +
+            "injFailures=$injectionFailures " +
+            "occlRemainMs=${(occlusionUntilMs - now).coerceAtLeast(0L)} " +
+            "hardLock=$staticHardLock detectorArmed=$headPoseActive"
+        Log.i("GazeSelfCheck", line)
+        // v5.67：同一条内容落盘。这是排查「老毛病」最关键的一行 —— 它带着
+        // targetActive / foreground / a11yEvents / a11yEventAgoMs 这个第一分叉。
+        DiagLog.append(this, "selfcheck", line)
     }
 
     /**

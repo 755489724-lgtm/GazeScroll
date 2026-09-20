@@ -157,6 +157,15 @@
     <string name="settings_probe_last">上次：%1$s</string>
     <string name="settings_probe_hint">这是给「眼睛必须盯着屏幕才触发翻页」这个新功能做数据准备用的**测试功能**：打开后，前置摄像头的每一帧都会把「人脸框位置、十个关键点、画面亮度」写进手机里的 CSV 文件；本版**不做任何判定、也不改变任何一条现有触发规则**。\n用法（盖住前置摄像头就是开关）：\n1) 打开这个开关；\n2) 切到抖音、正常举着手机；\n3) 用整只手盖住前置摄像头 **3 秒** → 松手露脸，看到「录制中」就是已开始；\n4) 按测试脚本一段一段做动作，每换一段先盖住摄像头 **1 秒**（分段）；\n5) 全部做完，盖住摄像头 **3 秒以上** → 结束。\n录制中不会因为「转头看别处」而误判结束：只有画面真的变黑（被手盖住）才算盖住。文件在 App 私有目录 files/probe/ 下，用 adb 取，你不用管。</string>
 
+    <!-- ================= v5.67：诊断日志落盘 ================= -->
+
+    <string name="settings_diag_switch">打开「诊断日志」</string>
+    <string name="settings_diag_state_off">当前：关。不会写任何文件。</string>
+    <string name="settings_diag_state_on">当前：开\n文件：%1$s\n已记录：%2$s</string>
+    <string name="settings_diag_clear">清空诊断日志</string>
+    <string name="settings_diag_cleared">已清空</string>
+    <string name="settings_diag_hint">这是排查问题用的记录，**只记录、不参与任何判定**，也不会改变翻页行为。\n为什么要它：App 自己的日志本来是打在系统的 logcat 里的，但前置摄像头一旦看到人脸，人脸识别库就会每帧刷几百行无关日志，把系统日志缓冲区大约 2 秒就挤满一次 —— 结果我们自己的记录一条都留不住，出了问题查不动。所以改成写进 App 自己的文件，谁也挤不掉它。\n文件很小（超过 4 MB 自动轮转，最多占 8 MB），关掉之后一个字节都不写。</string>
+
     <!-- ================= v5.47：首页卡片 / 右侧设置页 / 主题三档 ================= -->
 
     <string name="home_subtitle">前置摄像头 · 免手翻页</string>

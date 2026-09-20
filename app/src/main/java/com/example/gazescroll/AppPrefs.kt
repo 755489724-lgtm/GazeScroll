@@ -41,6 +41,9 @@ object AppPrefs {
     private const val K_LEGACY_BLINK_COOLDOWN = "blinkCooldownMs"
     private const val K_LEGACY_HEAD_COOLDOWN = "headPoseCooldownMs"
 
+    /** v5.67：诊断日志落盘开关，见 [isDiagLogEnabled]。 */
+    private const val K_DIAG_LOG_ENABLED = "diagLogEnabled"
+
     // v4.4：左右扭头滑动。
     private const val K_H_SWIPE_ENABLED = "horizontalSwipeEnabled"
     private const val K_H_SWIPE_ANGLE = "horizontalSwipeAngleThreshold"
@@ -279,6 +282,20 @@ object AppPrefs {
     }
 
     // ------------------------------------------------------- 全局冷却设置 --
+
+    /**
+     * v5.67：诊断日志落盘开关（默认**开**）。
+     *
+     * 为什么默认开：它治的正是「App 自己的日志一条都留不住」这个老问题
+     * （见 [DiagLog]），而它是**只记录、不参与判定**的。默认关掉等于这个功能白做，
+     * 下次再出问题照样抓瞎。
+     */
+    fun isDiagLogEnabled(ctx: Context): Boolean =
+        sp(ctx).getBoolean(K_DIAG_LOG_ENABLED, true)
+
+    fun setDiagLogEnabled(ctx: Context, enabled: Boolean) {
+        sp(ctx).edit().putBoolean(K_DIAG_LOG_ENABLED, enabled).apply()
+    }
 
     /**
      * 防误触冷却是否开启。默认开启：这是解决「一次点头触发多次翻页」的关键开关，

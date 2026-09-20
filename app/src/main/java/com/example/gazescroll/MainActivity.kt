@@ -114,6 +114,7 @@ class MainActivity : AppCompatActivity() {
         setupMouthTapUi()
         setupTiltVolumeUi()
         setupProbeUi()
+        setupDiagUi()
         setupGazeGateUi()
         setupAdaptiveSwipeUi()
         setupGlobalPagingUi()
@@ -774,6 +775,54 @@ class MainActivity : AppCompatActivity() {
         }
         binding.tvProbeLast.text =
             if (s.probeLast.isEmpty()) "" else getString(R.string.settings_probe_last, s.probeLast)
+    }
+
+    // ------------------------------- v5.67：诊断日志落盘（见 [DiagLog]） --
+
+    /**
+     * 「诊断日志」开关 + 状态 + 清空。
+     *
+     * 和上面的注视数据采集同一个路数：**只记录、不判定**，默认开。
+     * 默认开的原因见 [AppPrefs.isDiagLogEnabled] 的注释 —— 这个功能存在的意义
+     * 就是「出问题时能看见」，默认关掉等于白做。
+     */
+    private fun setupDiagUi() {
+        DiagLog.refreshEnabled(this)
+        binding.switchDiagLog.isChecked = AppPrefs.isDiagLogEnabled(this)
+        binding.switchDiagLog.setOnCheckedChangeListener { _, checked ->
+            DiagLog.setEnabled(this, checked)
+            renderDiagUi()
+        }
+        binding.btnDiagClear.setOnClickListener {
+            DiagLog.clear(this)
+            renderDiagUi()
+            toast(getString(R.string.settings_diag_cleared))
+        }
+        renderDiagUi()
+    }
+
+    /** 一行字：关 / 文件路径 + 已记录多少 KB。 */
+    private fun renderDiagUi() {
+        val on = AppPrefs.isDiagLogEnabled(this)
+        binding.tvDiagFile.text = if (!on) {
+            getString(R.string.settings_diag_state_off)
+        } else {
+            val bytes = DiagLog.currentBytes(this)
+            val human = when {
+                bytes >= 1024L * 1024L -> String.format(
+                    java.util.Locale.US,
+                    "%.1f MB",
+                    bytes / 1024.0 / 1024.0,
+                )
+                bytes >= 1024L -> String.format(java.util.Locale.US, "%.0f KB", bytes / 1024.0)
+                else -> "$bytes 字节"
+            }
+            getString(
+                R.string.settings_diag_state_on,
+                DiagLog.currentPath(this) ?: "-",
+                human,
+            )
+        }
     }
 
     // ------------------------------------- v5.43：注视门（眼睛得盯着屏幕） --

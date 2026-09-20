@@ -83,6 +83,14 @@ object AppStateManager {
     private const val BLIND_TIMEOUT_MS = 8_000L
 
     /**
+     * v5.67：诊断心跳间隔（见 `pollOnce`）。
+     *
+     * 10 秒一行、每行约 90 字节 → 一天不到 1 MiB，相对功耗可忽略；
+     * 而它换来的是「轮询还活着吗」这个第一分叉的确定答案。
+     */
+    private const val HEARTBEAT_INTERVAL_MS = 10_000L
+
+    /**
      * 「前台其实是目标应用、我们却认为不是」需要持续多久才判定为判据出错（v5.7）。
      *
      * 2 秒足够跨过一整个应用切换的过渡期（[SETTLE_TO_STANDBY_MS] 只有 400ms，
@@ -146,6 +154,9 @@ object AppStateManager {
 
     /** Previous raw window reading, only for the poll diagnostic log. */
     private var lastPolledWindow: String? = null
+
+    /** v5.67：上一次写诊断心跳的时间。见 `pollOnce`。 */
+    private var lastHeartbeatAtMs = 0L
     private var loggedFirstPoll = false
 
     /** 连续观察到「前台其实是目标应用、我们却认为不是」的起始时刻（v5.7）。 */
@@ -290,6 +301,15 @@ object AppStateManager {
             else -> "change"
         }
         Log.i(TAG, "target state -> $active (reason=$effectiveReason)")
+        // v5.67：这是「老毛病」最重要的一行 —— targetActive 是整条恢复链的总闸，
+        // 它错成 false 时相机/看门狗/liveness 探针会被同一个条件全部挡住。
+        // logcat 里这一行活不过 2 秒（见 DiagLog 的说明），必须落盘。
+        DiagLog.append(
+            appContext,
+            "target",
+            "active=$active reason=$effectiveReason " +
+                "pkg=$packageName prev=$previousPackage prevActive=$previousActive",
+        )
         for (listener in listeners.toList()) {
             runCatching { listener(active, effectiveReason) }
         }
@@ -314,6 +334,11 @@ object AppStateManager {
         Log.w(
             TAG,
             "no foreground observation for ${(now - last) / 1000}s — failing open, staying active",
+        )
+        DiagLog.append(
+            appContext,
+            "blind",
+            "no observation for ${(now - last) / 1000}s -> fail-open, commit pending=$pendingPackage",
         )
         lastObservationAtMs = now
         pendingPackage = null
@@ -370,6 +395,12 @@ object AppStateManager {
                 "for ${now - contradictionSinceMs}ms — forcing an immediate re-evaluation " +
                 "(this is the 'reopen Douyin, nothing works' state)",
         )
+        DiagLog.append(
+            appContext,
+            "contradiction",
+            "window=$actual is allowed but targetActive=false for ${now - contradictionSinceMs}ms " +
+                "-> force fail-open",
+        )
         contradictionSinceMs = 0L
         lastObservationAtMs = now
         pendingPackage = actual
@@ -392,6 +423,23 @@ object AppStateManager {
         // is gone (killed by the system, or never started) — bring it straight back.
         if (targetActive) GazeCameraService.ensureRunning(ctx)
 
+        // v5.67：**无条件心跳**，每 10 秒一行。
+        //
+        // 为什么必须有它：`window` 那一路是「读数变了才记」，所以文件里一片空白
+        // 既可能是"轮询停了"也可能是"读数一直没变"，两者**分不开**。
+        // 排查「待机醒不过来」时，第一件要确定的就是轮询到底还活着没有 ——
+        // 心跳一旦断掉，就是 `pollOnce()` 不再被调用，根因在调度侧而不是判定侧。
+        val nowHeartbeat = SystemClock.elapsedRealtime()
+        if (nowHeartbeat - lastHeartbeatAtMs >= HEARTBEAT_INTERVAL_MS) {
+            lastHeartbeatAtMs = nowHeartbeat
+            DiagLog.append(
+                appContext,
+                "heartbeat",
+                "targetActive=$targetActive fg=$foregroundPackage pending=$pendingPackage " +
+                    "lastWindow=${lastPolledWindow ?: "null"} globalPaging=$globalPaging",
+            )
+        }
+
         // v5.3：**主动存活检查**，这条是「重开抖音必须下拉状态栏才生效」的根因修复。
         //
         // 以前整条恢复链只在「前台包名发生变化」时才会跑（见 commitPending 里的
@@ -412,6 +460,16 @@ object AppStateManager {
             if (activeWindowPackage != lastPolledWindow) {
                 lastPolledWindow = activeWindowPackage
                 Log.i(TAG, "poll: activeWindow=$activeWindowPackage")
+                // v5.67：窗口读数**变了**才落盘。这是判定「老毛病」根因的关键证据 ——
+                // 抖音在前台时这个读数是 null（HyperOS 隐藏了它的窗口包名和标题），
+                // 而 null 会走 propose(null) → isAllowed(null)=true → 判成"允许翻页"。
+                // 到底有没有走到那一步，看这一行就知道。
+                DiagLog.append(
+                    appContext,
+                    "window",
+                    "activeWindow=$activeWindowPackage targetActive=$targetActive " +
+                        "pending=$pendingPackage fg=$foregroundPackage",
+                )
             }
 
             // v5.7：先做一次"前台其实是目标应用、我们却认为不是"的独立核对。

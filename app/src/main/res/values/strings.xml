@@ -160,6 +160,8 @@
     <!-- ================= v5.73：省电冷静期 ================= -->
 
     <string name="section_power_saver">省电冷静期</string>
+    <string name="card_power_saver_title">省电冷静期</string>
+    <string name="card_power_saver_desc">翻页后的等待时间越长越省电</string>
     <string name="settings_idle_throttle">无动作时自动降档（更省电）</string>
     <string name="settings_idle_after_value">连续 %1$s 没翻页后，开始省电</string>
     <string name="settings_idle_after_range">可调 5 ~ 10 秒</string>
@@ -198,7 +200,7 @@
     <string name="card_gate_title">注视门</string>
     <string name="card_gate_desc">眼睛盯着屏幕时才允许触发</string>
     <string name="card_guard_title">防误触</string>
-    <string name="card_guard_desc">冷却时间 + 静止锁定</string>
+    <string name="card_guard_desc">近距离静止时锁定，避免误触</string>
     <string name="card_swipe_title">自适应滑动幅度</string>
     <string name="card_swipe_desc">按当前 App 自动调整滑动距离</string>
     <string name="card_targets_title">生效的应用</string>

@@ -472,6 +472,10 @@ class MainActivity : AppCompatActivity() {
      * SharedPreferences，服务端每帧从 [GazeRuntime.config] 同步，无需重启。
      */
     private fun setupCooldownUi() {
+        // v5.73：档数从 GazeConfig 常量设置，不写死在 XML 里。
+        // 写死过一次就踩了坑：改成 2~10 秒后档数从 18 变 22，
+        // 而 XML 里还是 18，滑块就永远拖不到 10 秒（而且不会有任何报错）。
+        binding.seekCooldown.max = GazeConfig.GLOBAL_COOLDOWN_STEPS
         val cfg = GazeRuntime.config
         binding.switchGlobalCooldown.isChecked = cfg.globalCooldownEnabled
 
@@ -1391,6 +1395,13 @@ class MainActivity : AppCompatActivity() {
         FeatureCard(R.id.cardMouth, R.id.headerMouth, R.id.detailMouth, R.id.ivChevMouth),
         FeatureCard(R.id.cardGate, R.id.headerGate, R.id.detailGate, R.id.ivChevGate),
         FeatureCard(R.id.cardGuard, R.id.headerGuard, R.id.detailGuard, R.id.ivChevGuard),
+        // v5.73：省电冷静期独立成卡（原来它是「防误触」卡里的一个段落）。
+        FeatureCard(
+            R.id.cardPowerSaver,
+            R.id.headerPowerSaver,
+            R.id.detailPowerSaver,
+            R.id.ivChevPowerSaver,
+        ),
         FeatureCard(R.id.cardSwipe, R.id.headerSwipe, R.id.detailSwipe, R.id.ivChevSwipe),
         FeatureCard(R.id.cardTargets, R.id.headerTargets, R.id.detailTargets, R.id.ivChevTargets),
         FeatureCard(R.id.cardGlobal, R.id.headerGlobal, R.id.detailGlobal, R.id.ivChevGlobal),
@@ -1920,7 +1931,12 @@ class MainActivity : AppCompatActivity() {
         setDot(binding.dotBlink, true)
         setDot(binding.dotMouth, cfg.mouthTapEnabled)
         setDot(binding.dotGate, cfg.gazeGateMode != GateMode.OFF)
-        setDot(binding.dotGuard, cfg.globalCooldownEnabled || cfg.staticLockEnabled)
+        setDot(binding.dotGuard, cfg.staticLockEnabled)
+        // v5.73：省电卡片的点 —— 冷却开着、或两个省电档有任意一个开着就亮。
+        setDot(
+            binding.dotPowerSaver,
+            cfg.globalCooldownEnabled || cfg.cooldownThrottleEnabled || cfg.idleThrottleEnabled,
+        )
         setDot(binding.dotSwipe, cfg.adaptiveSwipeEnabled)
         setDot(binding.dotTargets, cfg.globalPagingEnabled || targets > 0)
         setDot(binding.dotGlobal, cfg.globalPagingEnabled)

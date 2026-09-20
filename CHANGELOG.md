@@ -1,5 +1,101 @@
 # 更新日志
 
+---
+
+## v5.67（2026-09-20）**空版本：代码与 v5.66 逐字节等价，只动了版本号**
+
+### 这一版干了什么（以及为什么最后什么都没改）
+
+起因是功耗实测。用户在 2026-09-20 提出「翻页后 2 秒冷却期里让摄像头睡 1.8 秒」的省电想法，
+要求先评估。评估顺带做了一次**真机功耗实测**（工具见 `tools\power-measure.ps1` +
+`tools\power-compare.ps1`，两个 10 分钟场景对照），然后发现了一个**比省电更严重的诊断问题**，
+于是先修它 —— 修的结果是：**这条路走不通，但走不通的原因本身很值钱**。
+
+### 1. 先说实测到的功耗数字（v5.66，小米 13）
+
+同一台手机、同亮度、同网络、都不插电，各 10 分钟：
+
+| | Run A（检测开） | Run B（force-stop 掉） | 差 |
+| --- | --- | --- | --- |
+| 电量 | 75% → 71% | 70% → 69% | A 多耗 **2 个百分点** |
+| 充电计数器 | — | — | A 多耗 **89 mAh** |
+| 电池温度 | **37.3 °C** | **32.9 °C** | A 高 **4.4 °C** |
+
+**检测链路的实测代价 ≈ 85~90 mAh / 10 分钟 ≈ 2.0 W ≈ 刷视频时整机功耗的 12%。**
+
+两个独立口径（电量百分比折算 84.8 mAh、充电计数器 89 mAh）互相吻合，所以这个数可信。
+
+**注意：`dumpsys batterystats` 里那行 `camera: 105 mAh` 是省电模型的估算值，不是实测**，
+比真值高约 18%。以后引用功耗**必须**用电量百分比或充电计数器交叉验证，别单独引用它。
+
+顺带确认了一件用户最关心的事：**「频繁休眠/启动会损坏摄像头」这个担心不成立**（CMOS 上下电
+是无磨损的正常序列），真正的风险在相机栈（CameraX/HAL 不为秒级解绑重绑设计，`REBIND_GRACE_MS`
+和 12 秒硬重建这两个补丁的存在就是证据）。
+
+### 2. 这一版想修的：ML Kit 日志刷屏把 App 自己的诊断日志挤没了
+
+**现象（实测数据）**：`FaceDetector` 每分析一帧就打一批
+`D/ThickFaceDetector: Unknown landmark type: N`，**只在检测到人脸时打**。
+实测「有人脸」时 4 秒 960 行 → 16 秒 4416 行，**约 240~380 行/秒**。
+
+而小米 13 的 logcat main 环形缓冲只有 **2 MiB**（`logcat -g` 实测）→ 整块缓冲**约 2 秒被冲干净**。
+后果是 App 自己的诊断日志（`GazeSelfCheck` 自检行、`AppState` 前台判定、`GazeDiag` 触发记录）
+**一律活不过 2 秒**，`adb logcat` 里基本看不到。
+
+**这解释了历史上的两件悬案**：「远程拿不到 logcat」、以及每次排查都像瞎子摸象。
+**不是日志没写，是写完立刻被挤掉。**
+
+### 3. 为什么最后没修成（两条独立原因，都已实测确认，别再走一遍）
+
+**(a) `Log.setLoggable` 被 Android 的非 SDK 接口拦截 —— 反射也过不去。**
+
+先查字节码确认了这批日志的来源：不在 ML Kit 自己的 `Logger` 里（那个类在 bundled 依赖中
+根本不存在），而是 `com.google.mlkit.vision.face.bundled.internal.zza` 直接调
+`android.util.Log.d("ThickFaceDetector", "Unknown landmark type: ...")`。
+所以正解看起来是 `Log.setLoggable(tag, Log.ASSERT)`。
+
+但它编译不过（`@hide`，公开 `android.jar` 里没有 → `Unresolved reference: setLoggable`），
+改用反射后在真机上拿到明确异常：
+
+```
+W FaceGazeAnalyzer: could not silence ThickFaceDetector log spam:
+  android.util.Log.setLoggable [class java.lang.String, int]
+```
+
+这是 Android 10+ 的 hidden-API 拦截（该异常文案就是非 SDK 接口被拒的标志）。
+**普通应用无法调用它，这条路是死的。**
+
+**(b) ML Kit 的 `FaceDetectorOptions` 没有日志开关。**
+
+查过 `face-detection-16.1.7.aar`：Builder 上只有 performanceMode / landmarkMode /
+contourMode / classificationMode / tracking / minFaceSize / promoMode，**没有任何日志级别项**。
+
+**唯一剩下的"从源头减少"的办法是关掉 `LANDMARK_MODE_ALL`**（那 40 多种「未知 landmark 类型」
+就是它带来的）—— 但 `landmarkMode` 是**判定逻辑的输入**，不是日志选项：本项目大量依赖
+`NOSE_BASE` / `MOUTH_BOTTOM` / `LEFT_EYE` / `RIGHT_EYE` / 双颊 / 双耳等关键点
+（`chinRatio`、`noseRelEye`、`chinRelEye`、`mouthNoseGapPx`、注视门…），关掉等于改判据，
+**不符合「不许动判定逻辑」，需要单独的版本 + 用项目自带的 19+25+96 项离线用例重新验证**。
+
+### 4. 结论与下一步方向
+
+**「从 App 内关掉这批日志」做不到。** 但目标是「让 App 自己的诊断日志能被看到」，
+这个目标还有一条**不受非 SDK 限制影响**的路：
+
+> **把诊断日志写到 App 自己的文件里**（`getExternalFilesDir` 下的环形文件，cap 几 MB），
+> 保持**只记录、不参与判定**，可以随时 `adb pull` 或从 App 内导出。
+
+logcat 被刷屏不影响文件。这条留到下一版做，**本版不实现**。
+
+### 5. 本版的实际改动
+
+- `app/build.gradle.kts`：`versionCode` 108 → 109，`versionName` 5.66 → 5.67
+- 源码**没有**任何功能改动 —— `git diff v5.66-logspam-base` 只有上面这两行
+
+回退点：tag `v5.66-logspam-base`（= 改动前的 v5.66 提交，已推到 GitHub），
+改动前的 APK 与源码快照在 `evidence\备份\v5.66-before-logfix-20260920-152637\`。
+
+---
+
 > **当前锚点版本：v5.36（用户认可）** —— v5.37/v5.38 的两轮改动经实测判定为"不如 v5.36"，
 > 已按用户要求**把工作区代码回退到 v5.36**（`git checkout v5.36 -- app tools`，
 > 见下方「回退到 v5.36」一节）。v5.36 的完整备份在 `backup\GazeScroll-v5.36`，

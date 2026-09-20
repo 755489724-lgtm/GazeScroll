@@ -110,7 +110,6 @@ class MainActivity : AppCompatActivity() {
 
         setupSettingsUi()
         setupCooldownUi()
-        setupIdleThrottleUi()
         setupHorizontalSwipeUi()
         setupMouthTapUi()
         setupTiltVolumeUi()
@@ -472,10 +471,6 @@ class MainActivity : AppCompatActivity() {
      * SharedPreferences，服务端每帧从 [GazeRuntime.config] 同步，无需重启。
      */
     private fun setupCooldownUi() {
-        // v5.73：档数从 GazeConfig 常量设置，不写死在 XML 里。
-        // 写死过一次就踩了坑：改成 2~10 秒后档数从 18 变 22，
-        // 而 XML 里还是 18，滑块就永远拖不到 10 秒（而且不会有任何报错）。
-        binding.seekCooldown.max = GazeConfig.GLOBAL_COOLDOWN_STEPS
         val cfg = GazeRuntime.config
         binding.switchGlobalCooldown.isChecked = cfg.globalCooldownEnabled
 
@@ -507,45 +502,6 @@ class MainActivity : AppCompatActivity() {
         renderCooldownUi()
     }
 
-    /**
-     * v5.73：「无动作自动降档」开关 + 等待时长滑块。
-     *
-     * 和冷却滑块分开写，但渲染统一收在 [renderCooldownUi] 里 ——
-     * 两者都属于「省电冷静期」这一段，一起刷新才不会出现一个更新了另一个没更新的错位。
-     */
-    private fun setupIdleThrottleUi() {
-        // 滑块档数来自 GazeConfig 常量，不写在 XML 里（避免两处各写一个数字而对不上）。
-        binding.seekIdleAfter.max = GazeConfig.IDLE_AFTER_STEPS
-        binding.switchIdleThrottle.isChecked = GazeRuntime.config.idleThrottleEnabled
-        binding.switchIdleThrottle.setOnCheckedChangeListener { _, checked ->
-            updateConfig { it.copy(idleThrottleEnabled = checked) }
-            renderCooldownUi()
-        }
-        binding.seekIdleAfter.setOnSeekBarChangeListener(
-            object : android.widget.SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(
-                    seekBar: android.widget.SeekBar?,
-                    progress: Int,
-                    fromUser: Boolean,
-                ) {
-                    if (fromUser) {
-                        updateConfig { it.copy(idleAfterMs = GazeConfig.idleAfterMsForStep(progress)) }
-                    }
-                    renderCooldownUi()
-                }
-
-                override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
-
-                override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
-                    updateConfig {
-                        it.copy(idleAfterMs = GazeConfig.idleAfterMsForStep(seekBar?.progress ?: 0))
-                    }
-                    renderCooldownUi()
-                }
-            },
-        )
-    }
-
     /** 把滑块档位换算成毫秒（并夹进合法区间）。 */
     private fun progressToCooldownMs(progress: Int): Long = GazeConfig.cooldownMsForStep(progress)
 
@@ -567,23 +523,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvCooldownRange.isEnabled = enabled
         binding.tvCooldownValue.setAlpha(if (enabled) 1f else 0.45f)
         binding.tvCooldownRange.setAlpha(if (enabled) 1f else 0.45f)
-
-        // v5.73：无动作自动降档。开关关闭时把滑块灰掉，避免"能拖但不生效"的困惑。
-        val idleOn = cfg.idleThrottleEnabled
-        val idleMs = GazeConfig.snapIdleAfter(cfg.idleAfterMs)
-        val idleProgress = GazeConfig.idleAfterStepForMs(idleMs)
-        if (binding.seekIdleAfter.progress != idleProgress) {
-            binding.seekIdleAfter.progress = idleProgress
-        }
-        binding.tvIdleAfterValue.text = getString(
-            R.string.settings_idle_after_value,
-            GazeConfig.formatCooldown(idleMs),
-        )
-        binding.seekIdleAfter.isEnabled = idleOn
-        binding.tvIdleAfterRange.isEnabled = idleOn
-        binding.seekIdleAfter.setAlpha(if (idleOn) 1f else 0.45f)
-        binding.tvIdleAfterValue.setAlpha(if (idleOn) 1f else 0.45f)
-        binding.tvIdleAfterRange.setAlpha(if (idleOn) 1f else 0.45f)
         renderCooldownLive(GazeRuntime.snapshot)
     }
 
@@ -1395,13 +1334,6 @@ class MainActivity : AppCompatActivity() {
         FeatureCard(R.id.cardMouth, R.id.headerMouth, R.id.detailMouth, R.id.ivChevMouth),
         FeatureCard(R.id.cardGate, R.id.headerGate, R.id.detailGate, R.id.ivChevGate),
         FeatureCard(R.id.cardGuard, R.id.headerGuard, R.id.detailGuard, R.id.ivChevGuard),
-        // v5.73：省电冷静期独立成卡（原来它是「防误触」卡里的一个段落）。
-        FeatureCard(
-            R.id.cardPowerSaver,
-            R.id.headerPowerSaver,
-            R.id.detailPowerSaver,
-            R.id.ivChevPowerSaver,
-        ),
         FeatureCard(R.id.cardSwipe, R.id.headerSwipe, R.id.detailSwipe, R.id.ivChevSwipe),
         FeatureCard(R.id.cardTargets, R.id.headerTargets, R.id.detailTargets, R.id.ivChevTargets),
         FeatureCard(R.id.cardGlobal, R.id.headerGlobal, R.id.detailGlobal, R.id.ivChevGlobal),
@@ -1931,12 +1863,7 @@ class MainActivity : AppCompatActivity() {
         setDot(binding.dotBlink, true)
         setDot(binding.dotMouth, cfg.mouthTapEnabled)
         setDot(binding.dotGate, cfg.gazeGateMode != GateMode.OFF)
-        setDot(binding.dotGuard, cfg.staticLockEnabled)
-        // v5.73：省电卡片的点 —— 冷却开着、或两个省电档有任意一个开着就亮。
-        setDot(
-            binding.dotPowerSaver,
-            cfg.globalCooldownEnabled || cfg.cooldownThrottleEnabled || cfg.idleThrottleEnabled,
-        )
+        setDot(binding.dotGuard, cfg.globalCooldownEnabled || cfg.staticLockEnabled)
         setDot(binding.dotSwipe, cfg.adaptiveSwipeEnabled)
         setDot(binding.dotTargets, cfg.globalPagingEnabled || targets > 0)
         setDot(binding.dotGlobal, cfg.globalPagingEnabled)

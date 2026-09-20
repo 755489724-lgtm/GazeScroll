@@ -275,17 +275,6 @@ class FaceGazeAnalyzer(
          */
         const val COOLDOWN_TAIL_MS = 400L
 
-        /**
-         * **v5.73：无动作自动降档的频率**（250ms ≈ 4fps）。
-         *
-         * 比冷却档（200ms）略温和一点，因为它覆盖的是**可能随时要动作**的时间：
-         * 用户盯着视频看，随时可能点头/眨眼。降到 4fps 时一个 150ms 的眨眼
-         * 只落在 1 帧上，而眨眼判据要求「连续 [BlinkDetector.requiredClosedFrames] 帧」
-         * —— 所以这一档**必然**让眨眼更难触发。这是刻意的取舍：
-         * 它默认关闭，由用户在看到"省电"和"要眨两下"之间自己选。
-         */
-        const val IDLE_MIN_INTERVAL_MS = 250L
-
         /** 一帧之间脸框高度占比变化超过这个值，判定为「有东西贴上来了」。 */
         private const val FACE_RATIO_JUMP = 0.35f
     }
@@ -335,43 +324,10 @@ class FaceGazeAnalyzer(
     var lastTier: String = "active"
         private set
 
-    // ------------------------------------- v5.73：无动作自动降档（省电） --
-
-    /**
-     * 「无动作自动降档」是否启用（用户可关，默认**关**）。
-     *
-     * 关是刻意的：这一档会**在用户准备下一个动作时也处于低帧率**，
-     * 直接影响手感，属于"拿响应换电"的选项，必须由用户自己决定开不开。
-     */
-    @Volatile
-    var idleThrottleEnabled: Boolean = false
-
-    /** 无动作多久后进入低档（用户可调，5~10 秒）。 */
-    @Volatile
-    var idleAfterMs: Long = 5_000L
-
-    /**
-     * 触发计数器（由服务每帧喂进来）。
-     *
-     * 变化 = "用户做过动作"，用它把无动作计时清零。
-     * 服务那边本来就是 `GazeRuntime.snapshot.triggers`，读一次整数而已。
-     */
-    @Volatile
-    var triggersSeen: Int = 0
-
-    /** 最近一次"用户翻过页"的时刻，用于无动作计时。 */
-    private var lastTriggerAtMs: Long = 0L
-
-    /** 上一次看到的触发计数，用来发现"刚刚翻过页"。 */
-    private var lastTriggersSeen: Int = -1
-
     /**
      * 按当前状态决定这一帧要不要丢。
      *
-     * 优先级：息屏 > 无人脸待机 > 冷却偷懒档 > 无动作降档 > 满速。
-     *
-     * 顺序是有讲究的：冷却档比无动作档**更省**（200ms vs 250ms），
-     * 而且冷却期内本来就什么都不算，所以能进冷却档就进冷却档。
+     * 优先级：息屏 > 无人脸待机 > 冷却偷懒档 > 满速。
      */
     private fun currentMinIntervalMs(): Long {
         if (standby) {
@@ -384,51 +340,8 @@ class FaceGazeAnalyzer(
             lastTier = "cooling"
             return COOLDOWN_MIN_INTERVAL_MS
         }
-        // v5.73：无动作降档。放在冷却尾段**之前**判断 —— 尾段的满帧率是为了
-        // "冷却一结束就能立刻判"，而无动作状态下本来就没有下一个动作要判。
-        if (idleThrottleEnabled && remain <= 0L && isIdleNow()) {
-            lastTier = "idle"
-            return IDLE_MIN_INTERVAL_MS
-        }
         lastTier = if (remain > 0L) "cooling-tail" else "active"
         return ACTIVE_MIN_INTERVAL_MS
-    }
-
-    /**
-     * 无动作判定：**距离上一次真正翻页**超过了 [idleAfterMs]。
-     *
-     * ## 判据为什么是"翻页"而不是"人脸"
-     *
-     * 刷视频时人脸一直在画面里，用"有没有脸"记时永远不会空闲 —— 那样这一档
-     * 等于没做。用户真正"没在操作"的判据是：**有一段时间没翻过页了**。
-     * 所以这里盯的是 [triggersSeen] 的变化（服务每帧把
-     * `GazeRuntime.snapshot.triggers` 喂进来）。
-     *
-     * 副作用是好的：只要翻了一次页，计时立刻清零回到满帧率；
-     * 而"准备下一个动作"发生在冷却期里，那时本来就在冷却档，不受影响。
-     */
-    private fun isIdleNow(): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (lastTriggerAtMs == 0L) lastTriggerAtMs = now
-        return now - lastTriggerAtMs >= idleAfterMs
-    }
-
-    /**
-     * 服务每帧调用：把触发计数喂进来，检测到"刚翻过页"就把无动作计时清零。
-     *
-     * **只记账，不做任何判定** —— 翻不翻页仍然完全由服务那边的闸门决定。
-     */
-    fun noteTriggers(nowMs: Long, triggers: Int) {
-        if (lastTriggersSeen < 0) {
-            // 第一次见到：以当前值为基准，避免把"启动前累积的旧触发"当成刚发生。
-            lastTriggersSeen = triggers
-            if (lastTriggerAtMs == 0L) lastTriggerAtMs = nowMs
-            return
-        }
-        if (triggers != lastTriggersSeen) {
-            lastTriggersSeen = triggers
-            lastTriggerAtMs = nowMs
-        }
     }
 
     /** Per-eye EMA state for the legacy gaze axis, so a dropped eye cannot snap it. */

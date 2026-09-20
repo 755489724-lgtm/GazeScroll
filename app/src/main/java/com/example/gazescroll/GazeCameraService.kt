@@ -1217,11 +1217,6 @@ private const val REF_LOG_INTERVAL_MS = 400L
             analyzer?.let { a ->
                 a.cooldownThrottleEnabled = cfg.cooldownThrottleEnabled
                 a.cooldownRemainMs = globalGate.remainingMs(now)
-                // v5.73：无动作自动降档。只喂两个数（开关 + 触发计数），
-                // 判据本身在分析器内部，服务不参与。
-                a.idleThrottleEnabled = cfg.idleThrottleEnabled
-                a.idleAfterMs = cfg.idleAfterMs
-                a.noteTriggers(now, GazeRuntime.snapshot.triggers)
             }
             // 遮挡优先于一切：挡住脸的时候不判定任何动作。
             handleOcclusion(frame, now)

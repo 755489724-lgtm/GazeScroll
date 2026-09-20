@@ -43,8 +43,8 @@
 
     <string name="settings_cooldown_title">防误触冷却</string>
     <string name="settings_cooldown_switch">启用冷却时间</string>
-    <string name="settings_cooldown_range">可调范围 2 ~ 10 秒（默认 2 秒）</string>
-    <string name="settings_cooldown_hint">摄像头是逐帧（约 15 帧/秒）检测的，一次点头或眨眼会连续命中好几帧，于是被当成好几次翻页，出现「一滑好几页」甚至上下乱跳。\n打开后：眨眼和点头「共用同一个冷却计时器」——任意一个动作触发翻页后，冷却期内所有动作一律忽略，冷却结束才响应下一次。\n这个时间越长越省电：冷静期里判定结果本来就会被丢掉，摄像头在这段时间是白干活的；时间越长，白干活的比例越低，也就越省电。代价是连续翻页变慢 —— 调到 10 秒就意味着最快也要 10 秒才能翻下一页。</string>
+    <string name="settings_cooldown_range">可调范围 0.5 ~ 5 秒（默认 1.5 秒）</string>
+    <string name="settings_cooldown_hint">摄像头是逐帧（约 15 帧/秒）检测的，一次点头或眨眼会连续命中好几帧，于是被当成好几次翻页，出现「一滑好几页」甚至上下乱跳。\n打开后：眨眼和点头「共用同一个冷却计时器」——任意一个动作触发翻页后，冷却期内所有动作一律忽略，冷却结束才响应下一次。\n一次动作仍然翻一页、重复触发明显变多，就把这个时间调大。</string>
     <string name="settings_cooldown_live_off">冷却：已关闭（每个动作每一帧都可能触发翻页）</string>
     <string name="settings_cooldown_live_idle">冷却：待命，现在可以触发</string>
     <string name="settings_cooldown_live_active">冷却中… 还剩 %1$s</string>
@@ -157,16 +157,6 @@
     <string name="settings_probe_last">上次：%1$s</string>
     <string name="settings_probe_hint">这是给「眼睛必须盯着屏幕才触发翻页」这个新功能做数据准备用的**测试功能**：打开后，前置摄像头的每一帧都会把「人脸框位置、十个关键点、画面亮度」写进手机里的 CSV 文件；本版**不做任何判定、也不改变任何一条现有触发规则**。\n用法（盖住前置摄像头就是开关）：\n1) 打开这个开关；\n2) 切到抖音、正常举着手机；\n3) 用整只手盖住前置摄像头 **3 秒** → 松手露脸，看到「录制中」就是已开始；\n4) 按测试脚本一段一段做动作，每换一段先盖住摄像头 **1 秒**（分段）；\n5) 全部做完，盖住摄像头 **3 秒以上** → 结束。\n录制中不会因为「转头看别处」而误判结束：只有画面真的变黑（被手盖住）才算盖住。文件在 App 私有目录 files/probe/ 下，用 adb 取，你不用管。</string>
 
-    <!-- ================= v5.73：省电冷静期 ================= -->
-
-    <string name="section_power_saver">省电冷静期</string>
-    <string name="card_power_saver_title">省电冷静期</string>
-    <string name="card_power_saver_desc">翻页后的等待时间越长越省电</string>
-    <string name="settings_idle_throttle">无动作时自动降档（更省电）</string>
-    <string name="settings_idle_after_value">连续 %1$s 没翻页后，开始省电</string>
-    <string name="settings_idle_after_range">可调 5 ~ 10 秒</string>
-    <string name="settings_idle_throttle_hint">这个开关管的是另一段时间：不是翻页后的冷静期，而是你「一直看、没动作」的那段。\n打开后，只要连续上面设定的秒数没有翻过页，摄像头就会从每秒约 15 次判定降到约 4 次，一旦翻页立刻恢复。\n代价要说清楚：降档期间眨眼会更难被认出来（眨眼要求连续几帧都闭眼，帧少了就凑不齐），点头/仰头也会略微迟钝一点。所以这一项默认是关的，开不开由你决定 —— 想省电就开，想要最灵敏就关着。\n（翻页后的冷静期降档是另一回事，那个默认就开着，不影响手感。）</string>
-
     <!-- ================= v5.67：诊断日志落盘 ================= -->
 
     <string name="settings_diag_switch">打开「诊断日志」</string>
@@ -200,7 +190,7 @@
     <string name="card_gate_title">注视门</string>
     <string name="card_gate_desc">眼睛盯着屏幕时才允许触发</string>
     <string name="card_guard_title">防误触</string>
-    <string name="card_guard_desc">近距离静止时锁定，避免误触</string>
+    <string name="card_guard_desc">冷却时间 + 静止锁定</string>
     <string name="card_swipe_title">自适应滑动幅度</string>
     <string name="card_swipe_desc">按当前 App 自动调整滑动距离</string>
     <string name="card_targets_title">生效的应用</string>
